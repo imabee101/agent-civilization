@@ -23,6 +23,20 @@ export interface PacingConfig {
 
 const ALPHA = 0.2;
 
+/**
+ * How soon a node's next turn is due, relative to the base interval. Hot: something
+ * happened to it (a message, a word heard, a new error, a body threshold, a
+ * structure underfoot it had not seen). Cold: nothing changed since its last turn.
+ * A scheduling detail only: it never changes what a node may do.
+ */
+export type Urgency = "hot" | "warm" | "cold";
+export const SALIENCE: Record<Urgency, number> = { hot: 0.5, warm: 1, cold: 3 };
+
+/** Ticks after a turn started before the next one is due, never less than one. */
+export function dueIn(interval: number, urgency: Urgency): number {
+  return Math.max(1, Math.ceil(interval * SALIENCE[urgency]));
+}
+
 export class Pacing {
   readonly cfg: PacingConfig;
   avgLatencyMs = 0;

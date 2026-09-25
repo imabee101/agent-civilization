@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { Pacing } from "../../src/engine/pacing";
 
+import { dueIn } from "../../src/engine/pacing";
+
+describe("dueIn", () => {
+  test("hot halves the interval, cold triples it, never under one tick", () => {
+    expect(dueIn(16, "hot")).toBe(8);
+    expect(dueIn(16, "warm")).toBe(16);
+    expect(dueIn(16, "cold")).toBe(48);
+    expect(dueIn(1, "hot")).toBe(1);
+    expect(dueIn(5, "hot")).toBe(3);
+  });
+});
+
 describe("Pacing", () => {
   test("EMA latency and decisions per minute", () => {
     const p = new Pacing({ tickMs: 500, turnIntervalTicks: 10, concurrency: 1, maxTickMs: 0 });
