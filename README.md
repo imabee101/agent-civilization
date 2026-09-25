@@ -263,6 +263,11 @@ every tick regardless.
 
 ## Persistence
 
+Routine history rows (moves, gathers, rests, eats, repeated handler errors)
+are kept for `historyNoiseDays` (7) of world time; everything with a story
+value and every decision is kept forever. Only the newest 300 ruins survive.
+Those two limits are what let a world run for years.
+
 The world snapshots itself to `data/world.json` every 120 ticks and on
 `SIGINT`/`SIGTERM`, and restores from it on the next start. Sandboxes are
 rebuilt from each node's files, so handlers come back. `--fresh` ignores the

@@ -9,6 +9,7 @@ ExecStart=/opt/agent-civ/llama.cpp/bin/llama-server \
   -m /opt/agent-civ/models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_0.gguf \
   --host 127.0.0.1 --port 8080 -c 18432 -np 3 -t 8 -tb 16 \
   --jinja --alias qwen3-4b-2507-abliterated
+Slice=agentciv.slice
 DynamicUser=yes
 Restart=on-failure
 RestartSec=3

@@ -206,6 +206,17 @@ export class HistoryStore {
     }));
   }
 
+  /**
+   * Drop importance-0 rows (moved, gathered, rested, ate, handler errors)
+   * older than `keepTicks` before the newest tick. Everything with a story
+   * value, and every decision, is kept forever. Returns rows removed.
+   */
+  prune(keepTicks: number): number {
+    const hi = (this.db.query("SELECT MAX(tick) AS hi FROM events").get() as { hi: number | null }).hi ?? 0;
+    const r = this.db.query("DELETE FROM events WHERE importance = 0 AND tick < $cut").run({ cut: hi - keepTicks });
+    return r.changes;
+  }
+
   stats(): HistoryStats {
     const ev = this.db.query("SELECT COUNT(*) AS n, MIN(tick) AS lo, MAX(tick) AS hi FROM events").get() as { n: number; lo: number | null; hi: number | null };
     const de = this.db.query("SELECT COUNT(*) AS n FROM decisions").get() as { n: number };

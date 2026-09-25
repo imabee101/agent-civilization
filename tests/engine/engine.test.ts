@@ -204,6 +204,21 @@ describe("Engine turns", () => {
     expect(brain.requests[1]!.user).toContain("LAST ERROR: your reply was cut off at the 50-token limit");
   });
 
+  test("a handler that throws the same error every tick is written down once", async () => {
+    const e = await mk(new ScriptedBrain());
+    const [a] = e.world.livingAgents();
+    e.nodes.get(a!.id)!.sandbox.loadScript("function onTick(){ plant(); }");
+    for (let i = 0; i < 5; i++) await e.tick();
+    expect(e.recentEvents().filter((ev) => ev.kind === "handler-error").length).toBe(1);
+    expect(a!.log.filter((l) => l.includes("onTick error")).length).toBe(1);
+    expect(a!.lastError).toContain("plant()");
+    e.nodes.get(a!.id)!.sandbox.loadScript("function onTick(){ rest(); }");
+    await e.tick();
+    e.nodes.get(a!.id)!.sandbox.loadScript("function onTick(){ plant(); }");
+    await e.tick();
+    expect(e.recentEvents().filter((ev) => ev.kind === "handler-error").length).toBe(2);
+  });
+
   test("an output with no code is recorded as such", async () => {
     const e = await mk(new ScriptedBrain(["   "]));
     const [a] = e.world.livingAgents();
