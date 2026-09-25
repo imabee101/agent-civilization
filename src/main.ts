@@ -47,14 +47,26 @@ const shutdown = async (signal: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
   log(`${signal}: saving snapshot and shutting down`);
+  // A step that hangs (a socket that never closes, a stream that never ends) must not hold the
+  // process past what systemd allows; the snapshot is the only thing worth waiting for.
+  let step = "snapshot";
+  const deadline = setTimeout(() => {
+    log(`shutdown: still in "${step}" after 10 s; exiting anyway`);
+    process.exit(0);
+  }, 10_000);
+  deadline.unref();
   try {
     await engine.saveSnapshot();
   } catch (e) {
     log(`snapshot failed: ${(e as Error).message}`);
   }
+  step = "backups";
   stopBackups();
+  step = "engine";
   await engine.shutdown();
+  step = "history";
   engine.history?.close();
+  step = "server";
   await app.close();
   process.exit(0);
 };

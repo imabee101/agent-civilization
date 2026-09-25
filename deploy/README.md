@@ -15,7 +15,7 @@ Runs on the workstation `192.168.101.7` (`local.imabee.com`), reachable from the
 ## Commands
 
 ```bash
-bun run build && sudo ./deploy/install.sh     # install or update; idempotent
+bun run build && sudo ./deploy/install.sh     # install or update; idempotent; refuses a Bun other than .bun-version
 sudo /opt/agent-civ/renew-tls.sh              # force a check now
 journalctl -u agent-civ -u agent-civ-llm -f
 ```
@@ -23,6 +23,9 @@ journalctl -u agent-civ -u agent-civ-llm -f
 ## Gotchas
 
 - Bind is `192.168.101.7` only: `.130` on the same NIC is the apsy edge's `:443`.
+- `install.sh` stops both services before it copies anything: a mapped binary replaced under a running
+  process dies with SIGBUS (it happened once, 85 s into a shutdown that had hung). The game exits within
+  10 s of SIGTERM on its own; `TimeoutStopSec=30` is the backstop.
 - `/etc/agent-civ/approle.env` (root, 0600) holds the AppRole. It is node-bound
   because a timer cannot unlock secd. To rebuild the Vault side after a restore:
   `secd run --with vault=local/nuc/vault/k2 -- sudo --preserve-env=VAULT_TOKEN bash -c 'set -a; . /etc/agent-civ/approle.env; set +a; exec python3 <nuc-k3s>/scripts/vault-approle.py --addr k2.imabee.com --name agent-civ --domains civ.imabee.com --no-subdomains --ttl 8760h --key-type ec --role-id-env VAULT_ROLE_ID --secret-id-env VAULT_SECRET_ID'`

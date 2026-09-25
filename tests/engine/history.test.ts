@@ -85,6 +85,32 @@ describe("HistoryStore", () => {
     expect(h.decisions()[0]!.error).toBeUndefined();
   });
 
+  test("the system prompt is stored once per distinct text and read back whole; old rows keep their own copy", async () => {
+    const h = new HistoryStore();
+    stores.push(h);
+    const long = "S".repeat(5000);
+    h.recordDecision(dec(1, { prompt: { system: long, user: "U1" } }));
+    h.recordDecision(dec(2, { prompt: { system: long, user: "U2" } }));
+    h.recordDecision(dec(3, { prompt: { system: "other", user: "U3" } }));
+    expect((h.db.query("SELECT COUNT(*) AS n FROM prompts").get() as { n: number }).n).toBe(2);
+    expect((h.db.query("SELECT SUM(LENGTH(system_prompt)) AS n FROM decisions").get() as { n: number }).n).toBe(0);
+    expect(h.decisions().map((d) => d.prompt.system.length)).toEqual([5000, 5000, 5]);
+    // A file written before the prompts table existed: system_prompt holds the text, no system_hash column.
+    const path = `${import.meta.dir}/../../scratch/history-old-${Date.now()}.sqlite`;
+    const { Database } = await import("bun:sqlite");
+    const old = new Database(path, { create: true });
+    old.exec(`CREATE TABLE decisions (id INTEGER PRIMARY KEY, tick INTEGER NOT NULL, agent_id TEXT NOT NULL, agent_name TEXT NOT NULL, backend TEXT NOT NULL, model TEXT NOT NULL, system_prompt TEXT NOT NULL, user_prompt TEXT NOT NULL, output TEXT NOT NULL, code TEXT, result TEXT, error TEXT, latency_ms INTEGER NOT NULL, tokens INTEGER, tokens_per_sec REAL, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL);
+      INSERT INTO decisions VALUES (1, 1, 'n0', 'A', 'b', 'm', 'OLD SYSTEM', 'U', 'out', NULL, NULL, NULL, 5, NULL, NULL, 1, 2);`);
+    old.close();
+    const reopened = new HistoryStore(path);
+    stores.push(reopened);
+    expect(reopened.decisions()[0]!.prompt.system).toBe("OLD SYSTEM");
+    reopened.recordDecision(dec(2, { prompt: { system: "NEW", user: "U" } }));
+    expect(reopened.decisions().map((d) => d.prompt.system)).toEqual(["OLD SYSTEM", "NEW"]);
+    const { unlink } = await import("node:fs/promises");
+    for (const suffix of ["", "-wal", "-shm"]) await unlink(path + suffix).catch(() => {});
+  });
+
   test("stats and clear", () => {
     const h = new HistoryStore();
     stores.push(h);

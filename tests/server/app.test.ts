@@ -179,6 +179,7 @@ describe("WebSocket", () => {
     const hello = (await c.next("hello")) as Extract<ServerMessage, { type: "hello" }>;
     expect(hello.state.agents.length).toBe(2);
     expect(hello.tiles.length).toBe(engine.world.tiles.length);
+    expect(hello.systemPrompt.length).toBeGreaterThan(1000);
     const [a] = engine.world.livingAgents();
     c.send({ type: "watch", agentId: a!.id });
     const node = (await c.next("node")) as Extract<ServerMessage, { type: "node" }>;

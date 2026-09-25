@@ -44,6 +44,8 @@ export interface EngineConfig extends PacingConfig {
   healthEveryMs: number;
   /** Ms to wait before retrying the brain after a failed call. */
   brainRetryMs: number;
+  /** Times a failed turn is tried again on the same facts, after `brainRetryMs`, before it is given up. */
+  brainRetries: number;
   /** Starter files every new node gets. */
   starterFiles: Record<string, string>;
 }
@@ -76,6 +78,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   historyNoiseDays: 7,
   healthEveryMs: 30_000,
   brainRetryMs: 5_000,
+  brainRetries: 1,
   starterFiles: { "main.js": STARTER_MAIN_JS },
 };
 
@@ -115,6 +118,11 @@ const CHARS_PER_TOKEN = 3.5;
 /** Tokens left free in a slot's context beyond prompt and reply. */
 const CONTEXT_MARGIN_TOKENS = 256;
 
+/** A decision as pushed to clients: the system prompt is the same for every decision and travels once in hello. */
+function onWire(d: DecisionRecord): DecisionRecord {
+  return { ...d, prompt: { system: "", user: d.prompt.user } };
+}
+
 /** A node's own upkeep and the turn's own bookkeeping: not news, so a node whose handlers keep it fed can stay cold. */
 const ROUTINE_EVENTS: ReadonlySet<string> = new Set(["executed-code", "code-error", "rested", "gathered", "ate", "moved", "dropped"]);
 
@@ -141,6 +149,10 @@ export class Engine {
   /** Config keys the caller set, so what the backend reports never overrides a choice a person made. */
   private readonly given: ReadonlySet<string>;
   private probing = false;
+  private checking = false;
+  /** When the brain was last seen failing, for the "back after" note. */
+  private outageSince = 0;
+  private lastRuinStamp = "";
   private lastHealthAt = 0;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
@@ -457,10 +469,18 @@ export class Engine {
     return !this.brainStatus.connected && this.brain.kind !== "random";
   }
 
-  /** Advance one tick: deliver, run handlers, step the world, schedule turns. While the brain is down, only retry turns. */
+  /**
+   * Advance one tick: deliver, run handlers, step the world, schedule turns. While the brain is
+   * down nothing is dispatched: a health probe every `brainRetryMs` decides when turns resume,
+   * so no node spends its turn on a server that is still loading.
+   */
   async tick(): Promise<void> {
     if (this.brainOutage()) {
-      this.pumpTurns();
+      if (Date.now() >= this.brainBlockedUntil && !this.checking) {
+        this.brainBlockedUntil = Date.now() + this.cfg.brainRetryMs;
+        this.checking = true;
+        void this.checkBrain().finally(() => (this.checking = false));
+      }
       return;
     }
     if (this.ticking) return;
@@ -600,12 +620,13 @@ export class Engine {
     const abort = new AbortController();
     this.turnAborts.add(abort);
     const body = { tick: this.world.tick, stomach: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
-    const tally = this.world.drainTally(agentId);
+    // The tally is only taken once the brain has answered: a failed call leaves the node's events for its next turn.
+    const tally = { ...this.world.peekTally(agentId) };
     delete tally["executed-code"];
     delete tally["code-error"];
     const since = rt.lastTurn ? { from: rt.lastTurn, to: body, events: tally } : undefined;
     const tileNow = this.world.tileAt(agent);
-    rt.lastTurn = { ...body, inboxTick: agent.inbox.at(-1)?.tick, heardTick: agent.heard.at(-1)?.tick, lastError: agent.lastError, structureKey: tileNow?.structure ? `${tileNow.q},${tileNow.r}` : undefined };
+    const thisTurn = { ...body, inboxTick: agent.inbox.at(-1)?.tick, heardTick: agent.heard.at(-1)?.tick, lastError: agent.lastError, structureKey: tileNow?.structure ? `${tileNow.q},${tileNow.r}` : undefined };
     const facts = {
       maxTokens: this.cfg.maxTokens,
       maxChars: this.cfg.promptMaxChars > 0 ? this.cfg.promptMaxChars : undefined,
@@ -624,19 +645,39 @@ export class Engine {
     this.emitThinking(agentId, "", false, true);
     this.emitTick();
     let record: DecisionRecord | undefined;
+    let succeeded = false;
     try {
-      const result = await this.brain.decide(
-        { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, stop: [FENCE_STOP], context: { visibleNodeIds } },
-        {
-          signal: abort.signal,
-          onToken: (chunk) => {
-            const text = (this.thinking.get(agentId) ?? "") + chunk;
-            this.thinking.set(agentId, text);
-            this.emitThinking(agentId, text, false);
-          },
+      const req = { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, stop: [FENCE_STOP], context: { visibleNodeIds } };
+      const opts = {
+        signal: abort.signal,
+        onToken: (chunk: string) => {
+          const text = (this.thinking.get(agentId) ?? "") + chunk;
+          this.thinking.set(agentId, text);
+          this.emitThinking(agentId, text, false);
         },
-      );
+      };
+      // A failed call is tried again on the same facts, once, after the back-off; a reset or shutdown aborts the wait.
+      let result;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          result = await this.brain.decide(req, opts);
+          break;
+        } catch (e) {
+          if (abort.signal.aborted || attempt >= this.cfg.brainRetries) throw e;
+          this.world.addLog(agentId, `brain error: ${((e as Error).message ?? String(e)).slice(0, 120)}; trying again`);
+          this.thinking.set(agentId, "");
+          await new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, this.cfg.brainRetryMs);
+            abort.signal.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
+          });
+          if (abort.signal.aborted) throw e;
+        }
+      }
       if (epoch !== this.epoch) return undefined;
+      succeeded = true;
+      this.world.drainTally(agentId);
+      rt.lastTurn = thisTurn;
+      this.noteBrainBack();
       this.brainStatus = { ...this.brainStatus, connected: true, lastError: undefined, model: this.brain.model || this.brainStatus.model };
       this.pacing.recordDecision(result.latencyMs, result.tokensPerSec, Date.now(), { tokens: result.tokens, level });
       if (result.timings) {
@@ -717,6 +758,7 @@ export class Engine {
     } catch (e) {
       if (epoch !== this.epoch) return undefined;
       const message = (e as Error).message ?? String(e);
+      if (this.brainStatus.connected) this.outageSince = Date.now();
       this.brainStatus = { ...this.brainStatus, connected: false, lastError: message, lastCheckAt: Date.now() };
       this.brainBlockedUntil = Date.now() + this.cfg.brainRetryMs;
       this.world.addLog(agentId, `brain error: ${message}`);
@@ -738,7 +780,7 @@ export class Engine {
     } finally {
       rt.inFlight = false;
       // The error this turn itself produced is not news for the next one; only a fresh error since is.
-      if (rt.lastTurn) rt.lastTurn.lastError = agent.lastError;
+      if (succeeded && rt.lastTurn) rt.lastTurn.lastError = agent.lastError;
       this.pacing.endDecision(startedAt);
       this.turnAborts.delete(abort);
       this.thinking.delete(agentId);
@@ -751,7 +793,7 @@ export class Engine {
     } catch {
       // best-effort
     }
-    this.emit({ type: "decision", decision: record });
+    this.emit({ type: "decision", decision: onWire(record) });
     this.flushEvents();
     this.flushTiles();
     this.emitStats();
@@ -764,6 +806,8 @@ export class Engine {
   async checkBrain(): Promise<BrainStatus> {
     const h = await this.brain.health();
     this.lastHealthAt = Date.now();
+    if (h.ok) this.noteBrainBack();
+    else if (this.brainStatus.connected) this.outageSince = Date.now();
     this.brainStatus = {
       ...this.brainStatus,
       kind: this.brain.kind,
@@ -777,6 +821,15 @@ export class Engine {
     this.emitStats();
     if (h.ok && !this.brainStatus.profile && !this.probing) await this.probeBrain();
     return this.brainStatus;
+  }
+
+  /** The brain answers again after failing: say for how long it was gone. */
+  private noteBrainBack(): void {
+    if (this.brainStatus.connected || !this.outageSince) return;
+    const s = Math.round((Date.now() - this.outageSince) / 1000);
+    this.outageSince = 0;
+    this.world.record("brain-status", 1, undefined, `Brain back after ${s} s`);
+    this.flushEvents();
   }
 
   /**
@@ -851,8 +904,13 @@ export class Engine {
     if (tiles.length) this.emit({ type: "tiles", tiles });
   }
 
+  /** Ruins are the bulk of the state and rarely change: they ride along only when their set changed. */
   private emitTick(): void {
-    this.emit({ type: "tick", state: this.world.stateView(new Set(this.thinking.keys())), tileFood: this.world.tileFood() });
+    const { ruins, ...rest } = this.world.stateView(new Set(this.thinking.keys()));
+    const stamp = this.world.ruinStamp();
+    const state = stamp === this.lastRuinStamp ? rest : { ...rest, ruins };
+    this.lastRuinStamp = stamp;
+    this.emit({ type: "tick", state, tileFood: this.world.tileFood() });
   }
 
   private emitThinking(agentId: string, text: string, done: boolean, force = false): void {
@@ -889,7 +947,8 @@ export class Engine {
       tiles: this.world.tileViews(),
       state: this.world.stateView(new Set(this.thinking.keys())),
       events: this.events.slice(-200),
-      decisions: this.decisions.slice(-50),
+      decisions: this.decisions.slice(-50).map(onWire),
+      systemPrompt: SYSTEM_PROMPT,
       brain: this.brainStatus,
       pacing: this.pacingStats(),
       signals: this.signalsView(),
