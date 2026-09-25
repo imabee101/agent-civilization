@@ -1,0 +1,24 @@
+[Unit]
+Description=Agent Civilization brain: llama-server, Qwen3-1.7B abliterated, loopback only
+After=network.target
+
+[Service]
+# Thinking off: the game wants one code block, and a <think> preamble would
+# spend the 400-token turn budget before any code is written.
+ExecStart=/opt/agent-civ/llama.cpp/bin/llama-server \
+  -m /opt/agent-civ/models/mlabonne_Qwen3-1.7B-abliterated-Q4_0.gguf \
+  --host 127.0.0.1 --port 8080 -c 8192 -np 1 -t 8 -tb 16 \
+  --jinja --reasoning-budget 0 --alias qwen3-1.7b-abliterated
+DynamicUser=yes
+Restart=on-failure
+RestartSec=3
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

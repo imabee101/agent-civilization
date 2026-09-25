@@ -38,9 +38,9 @@ if (cfg.history) {
 }
 const stopBackups = scheduleBackups({ snapshotPath, dir: `${cfg.dataDir}/backups`, keep: cfg.backupsToKeep }, "7 * * * *", log);
 
-const app = createApp({ engine, port: cfg.port, hostname: cfg.hostname, index, log });
+const app = createApp({ engine, port: cfg.port, hostname: cfg.hostname, tls: cfg.tls, index, log });
 engine.start();
-log(`listening on http://${cfg.hostname === "0.0.0.0" ? "localhost" : cfg.hostname}:${app.server.port}`);
+log(`listening on ${cfg.tls ? "https" : "http"}://${cfg.hostname === "0.0.0.0" ? "localhost" : cfg.hostname}:${app.server.port}`);
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {

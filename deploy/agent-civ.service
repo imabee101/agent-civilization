@@ -1,0 +1,29 @@
+[Unit]
+Description=Agent Civilization on https://civ.imabee.com
+After=network-online.target agent-civ-llm.service
+Wants=network-online.target agent-civ-llm.service
+
+[Service]
+# Bound to this workstation's own address only: .130 on the same NIC is the
+# apsy edge's :443.
+ExecStart=/opt/agent-civ/agentciv --host 192.168.101.7 --port 443 \
+  --data /var/lib/agent-civ \
+  --tls-cert ${CREDENTIALS_DIRECTORY}/fullchain.pem --tls-key ${CREDENTIALS_DIRECTORY}/key.pem \
+  --brain openai --base-url http://127.0.0.1:8080/v1 --model qwen3-1.7b-abliterated
+LoadCredential=fullchain.pem:/etc/agent-civ/tls/fullchain.pem
+LoadCredential=key.pem:/etc/agent-civ/tls/key.pem
+DynamicUser=yes
+StateDirectory=agent-civ
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=on-failure
+RestartSec=3
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
