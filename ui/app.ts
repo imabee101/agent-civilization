@@ -129,6 +129,7 @@ function onMessage(m: ServerMessage): void {
       break;
     case "events":
       for (const e of m.events) addEvent(e);
+      world.pushEvents(m.events);
       break;
     case "decision":
       S.decisions.push(m.decision);
