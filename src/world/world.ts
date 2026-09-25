@@ -57,6 +57,9 @@ export interface WorldConfig {
   restEnergy: number;
   moveEnergy: number;
   gatherEnergy: number;
+  /** Speaking and sending cost energy like any other act of the body. */
+  sayEnergy: number;
+  sendEnergy: number;
   buildEnergy: number;
   demolishEnergy: number;
   maxInventoryFood: number;
@@ -109,7 +112,8 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   energyDrainPerTick: 0.15,
   starveHealthPerTick: 1,
   healthRegenPerTick: 0.15,
-  regrowthPerTick: 0.004,
+  // 0.0008 of cap per tick sustains ~28 nodes in spring and ~7 in winter on the default map: winter bites at any real population.
+  regrowthPerTick: 0.0008,
   springRegrowthPerTick: 0.03,
   materialRegrowthPerTick: 0.002,
   gatherAmount: 8,
@@ -118,6 +122,8 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   restEnergy: 12,
   moveEnergy: 2,
   gatherEnergy: 3,
+  sayEnergy: 1,
+  sendEnergy: 2,
   buildEnergy: 6,
   demolishEnergy: 6,
   maxInventoryFood: 60,
@@ -132,7 +138,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   fsMaxPathChars: 64,
   maxMessageBytes: 2048,
   maxSayChars: 280,
-  maxSendsPerTick: 4,
+  maxSendsPerTick: 2,
   maxProfileKeys: 16,
   maxProfileValueChars: 200,
   logLines: 60,
@@ -1132,7 +1138,10 @@ export class World {
     a.intent = { sends: [] };
     const cfg = this.config;
 
-    if (it.say !== undefined && it.say.length > 0) {
+    if (it.say !== undefined && it.say.length > 0 && a.energy < cfg.sayEnergy) {
+      this.addLog(a.id, "say: too tired");
+    } else if (it.say !== undefined && it.say.length > 0) {
+      a.energy -= cfg.sayEnergy;
       a.lastSaid = { tick: this.tick, text: it.say };
       this.emit("spoke", 1, a, `${a.name} said something`, { quote: it.say });
       for (const other of this.livingAgents()) {
@@ -1147,6 +1156,11 @@ export class World {
     for (const s of it.sends) {
       const target = this.agents.get(s.to);
       if (!target || !target.alive) continue;
+      if (a.energy < cfg.sendEnergy) {
+        this.addLog(a.id, `send: too tired to reach ${target.name}`);
+        continue;
+      }
+      a.energy -= cfg.sendEnergy;
       this.pendingDeliveries.push({ kind: "message", to: target.id, from: a.id, payload: s.payload });
       target.inbox.push({ tick: this.tick, from: a.id, fromName: a.name, payload: s.payload });
       if (target.inbox.length > cfg.inboxLines) target.inbox.splice(0, target.inbox.length - cfg.inboxLines);

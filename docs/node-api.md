@@ -28,8 +28,8 @@ THINGS ON THE GROUND
   Some things are buried: you only see them when you stand on their tile. Dead nodes drop everything they carried.
 
 COMMUNICATION
-  say(text)            audible to nodes within a few hexes; they get onHear(fromId, text).
-  send(toId, msg)      deliver any JSON value to a node in range; it gets onMessage(fromId, msg). Max 2 KB.
+  say(text)            audible to nodes within a few hexes; they get onHear(fromId, text). Costs 1 energy.
+  send(toId, msg)      deliver any JSON value to a node in range; it gets onMessage(fromId, msg). Max 2 KB, 2 per tick, 2 energy each.
   sign.write(text)     rewrite the sign on your tile. Anyone can.
   board.read()         posts on a board on or next to your tile -> [{tick,by,byName,text}]
   board.post(text)     add a post there. Oldest posts fall off.
@@ -69,7 +69,7 @@ There are no other rules. Nothing decides for you what a message means, who to t
 | bytes per node filesystem     | 64 KB       | `fsQuotaBytes`      |
 | path length / charset         | 64, `[A-Za-z0-9_.-/]`, no `..` | `fsMaxPathChars` |
 | message size                  | 2 KB        | `maxMessageBytes`   |
-| sends per tick                | 4           | `maxSendsPerTick`   |
+| sends per tick                | 2           | `maxSendsPerTick`   |
 | say length                    | 280 chars   | `maxSayChars`       |
 | hearing radius                | 3 hexes     | `hearRadius`        |
 | send radius                   | 10 hexes    | `sendRadius`        |
@@ -101,7 +101,7 @@ limits in `DEFAULT_SANDBOX_LIMITS` (`src/sandbox/sandbox.ts`).
 | energy drain                    | 0.15     |
 | health loss while starving      | 1        |
 | health regen when food > 50     | 0.15     |
-| tile regrowth                   | 0.4 % of cap |
+| tile regrowth                   | 0.08 % of cap |
 | gather yield / energy cost      | 8 / 3    |
 | move energy cost                | 2        |
 | rest energy gain                | 12       |
@@ -111,6 +111,7 @@ limits in `DEFAULT_SANDBOX_LIMITS` (`src/sandbox/sandbox.ts`).
 | material regrowth               | 0.2 % of cap |
 | gather wood / stone             | 3 / 2    |
 | build / demolish energy cost    | 6 / 6    |
+| say / send energy cost          | 1 / 2    |
 
 ## Build costs
 

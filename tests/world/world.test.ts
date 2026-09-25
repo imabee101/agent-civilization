@@ -443,4 +443,34 @@ describe("no engine-authored social rules", () => {
       expect(body.includes(word)).toBe(false);
     }
   });
+
+  test("speaking and sending cost energy; a tired node stays silent", () => {
+    const w = mk();
+    const a = w.spawnAgent({ at: { q: 0, r: 0 } });
+    const b = w.spawnAgent({ at: { q: 1, r: 0 } });
+    a.energy = 10;
+    w.intentSay(a.id, "hi");
+    w.intentSend(a.id, b.id, JSON.stringify({ k: 1 }));
+    w.step();
+    expect(a.energy).toBeCloseTo(10 - w.config.sayEnergy - w.config.sendEnergy - w.config.energyDrainPerTick, 5);
+    expect(b.heard.length).toBe(1);
+    expect(b.inbox.length).toBe(1);
+    a.energy = 0.5;
+    w.intentSay(a.id, "again");
+    w.intentSend(a.id, b.id, "1");
+    w.step();
+    expect(b.heard.length).toBe(1);
+    expect(b.inbox.length).toBe(1);
+    expect(a.log.some((l) => l.includes("say: too tired"))).toBe(true);
+    expect(a.log.some((l) => l.includes("send: too tired"))).toBe(true);
+  });
+
+  test("at most two sends per tick", () => {
+    const w = mk();
+    const a = w.spawnAgent({ at: { q: 0, r: 0 } });
+    const b = w.spawnAgent({ at: { q: 1, r: 0 } });
+    w.intentSend(a.id, b.id, "1");
+    w.intentSend(a.id, b.id, "2");
+    expect(() => w.intentSend(a.id, b.id, "3")).toThrow(/at most 2/);
+  });
 });

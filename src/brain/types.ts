@@ -24,6 +24,8 @@ export interface DecisionResult {
   tokensPerSec: number;
   /** True when `tokens` was estimated rather than reported. */
   estimated: boolean;
+  /** True when the backend stopped at the token budget rather than at the model's own end. */
+  truncated?: boolean;
 }
 
 export interface DecideOptions {

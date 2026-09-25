@@ -323,17 +323,39 @@ function eventRow(e: WorldEvent): HTMLElement {
   return row;
 }
 function rebuildChronicle(): void {
-  const rows = S.events.filter((e) => S.showAll || isStory(e)).slice(-MAX_ROWS).reverse().map(eventRow);
-  for (const r of rows) r.style.animation = "none";
-  evList.replaceChildren(...rows);
+  lastRow = null;
+  evList.replaceChildren();
+  for (const e of S.events.filter((e) => S.showAll || isStory(e)).slice(-MAX_ROWS)) addEvent(e, { replay: true });
+  for (const r of evList.children) (r as HTMLElement).style.animation = "none";
 }
-function addEvent(e: WorldEvent): void {
-  S.events.push(e);
-  if (S.events.length > MAX_EVENTS) S.events.splice(0, S.events.length - MAX_EVENTS);
-  if (S.showAll || isStory(e)) {
-    evList.prepend(eventRow(e));
-    while (evList.children.length > MAX_ROWS) evList.lastElementChild?.remove();
+/** The same node doing the same thing to the same target with the same words: one row, counted. */
+function sameStory(a: WorldEvent, b: WorldEvent): boolean {
+  return a.kind === b.kind && a.agentId === b.agentId && a.targetId === b.targetId && a.quote === b.quote && a.text === b.text;
+}
+let lastRow: { event: WorldEvent; el: HTMLElement; n: number } | null = null;
+function addEvent(e: WorldEvent, opts: { replay?: boolean } = {}): void {
+  if (!opts.replay) {
+    S.events.push(e);
+    if (S.events.length > MAX_EVENTS) S.events.splice(0, S.events.length - MAX_EVENTS);
   }
+  if (S.showAll || isStory(e)) {
+    if (lastRow && lastRow.el.isConnected && sameStory(lastRow.event, e)) {
+      lastRow.n++;
+      let badge = lastRow.el.querySelector<HTMLElement>(".n");
+      if (!badge) {
+        badge = el("span", "n mono");
+        lastRow.el.appendChild(badge);
+      }
+      badge.textContent = `×${lastRow.n}`;
+      lastRow.el.querySelector(".m")!.textContent = formatEventMeta(e);
+    } else {
+      const row = eventRow(e);
+      evList.prepend(row);
+      lastRow = { event: e, el: row, n: 1 };
+      while (evList.children.length > MAX_ROWS) evList.lastElementChild?.remove();
+    }
+  }
+  if (opts.replay) return;
   if (isRibbonWorthy(e)) showRibbon(e);
   if (S.narrate) narrate(e);
 }
