@@ -475,10 +475,11 @@ export class World {
   }
 
   get phase(): Phase {
+    // Same windows as the UI tint (ui/lib/phase.ts): a quarter of the day is night.
     const p = this.dayProgress;
-    if (p < 0.1) return "dawn";
-    if (p < 0.55) return "day";
-    if (p < 0.65) return "dusk";
+    if (p < 0.15) return "dawn";
+    if (p < 0.6) return "day";
+    if (p < 0.75) return "dusk";
     return "night";
   }
 

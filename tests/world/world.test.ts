@@ -370,7 +370,7 @@ describe("World perception", () => {
     for (const t of o.tiles) expect(t.dist).toBeLessThanOrEqual(2);
     expect(far.id).not.toBe(near.id);
     // night shrinks vision
-    w.tick = 70;
+    w.tick = 80;
     expect(w.phase).toBe("night");
     const n = w.observe(me.id) as any;
     expect(n.visionRadius).toBe(1);

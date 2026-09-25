@@ -402,8 +402,8 @@ export class Engine {
     const agent = this.world.agents.get(agentId);
     if (!rt || !agent || !agent.alive || rt.inFlight) return undefined;
     rt.inFlight = true;
-    this.pacing.inFlight++;
     const startedAt = Date.now();
+    this.pacing.beginDecision(startedAt);
     const body = { tick: this.world.tick, food: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
     const tally = this.world.drainTally(agentId);
     delete tally["executed-code"];
@@ -503,7 +503,7 @@ export class Engine {
       };
     } finally {
       rt.inFlight = false;
-      this.pacing.inFlight = Math.max(0, this.pacing.inFlight - 1);
+      this.pacing.endDecision(startedAt);
       this.thinking.delete(agentId);
       this.emitThinking(agentId, record?.output ?? "", true, true);
     }
