@@ -48,6 +48,12 @@ describe("buildUserPrompt", () => {
     expect(p).toContain("[t2] b");
   });
 
+  test("turn.js is shown after main.js with what it is", () => {
+    const p = buildUserPrompt({ observation: {}, files: { "main.js": "// m", "turn.js": "function onTick(){ rest() }" }, log: [], turn: 2, handlers: ["onTick"] });
+    expect(p.indexOf("main.js:")).toBeLessThan(p.indexOf("turn.js (the code your last turn ran; its handlers are the active ones):"));
+    expect(p).toContain("function onTick(){ rest() }");
+  });
+
   test("stable facts come first so a cached prompt prefix survives between turns", () => {
     const p = buildUserPrompt({ observation: { tick: 9 }, files: { "main.js": "function onTick(){}" }, log: ["[t1] a"], turn: 3, handlers: ["onTick"] });
     const at = (s: string) => p.indexOf(s);

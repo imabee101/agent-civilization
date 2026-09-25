@@ -92,8 +92,8 @@ interface NodeRuntime {
   inFlight: boolean;
   /** Backend slot this node's turns run in, for the life of the node. */
   slot?: number;
-  /** Last handler error recorded, so a loop that throws the same thing every tick is written down once. */
-  lastHandlerError?: string;
+  /** Last error recorded per handler, so a loop that throws the same thing every tick is written down once. */
+  lastHandlerError: Partial<Record<HandlerName, string>>;
 }
 
 type Listener = (msg: ServerMessage) => void;
@@ -234,11 +234,29 @@ export class Engine {
     const existing = this.nodes.get(agentId);
     if (existing) existing.sandbox.dispose();
     const sandbox = await NodeSandbox.create(makeBridge(this.world, agentId), this.cfg.sandbox);
-    const rt: NodeRuntime = { sandbox, loadedScript: undefined, nextTurnTick: this.world.tick, inFlight: existing?.inFlight ?? false };
+    const rt: NodeRuntime = { sandbox, loadedScript: undefined, nextTurnTick: this.world.tick, inFlight: existing?.inFlight ?? false, lastHandlerError: {} };
     rt.slot = existing?.slot ?? this.freeSlot();
     this.nodes.set(agentId, rt);
     this.loadScriptIfChanged(agentId, rt);
+    this.replayTurnScript(agentId, rt);
     return rt;
+  }
+
+  /** A fresh sandbox holds only main.js; the node's last turn code (turn.js) ran on top of it, so it runs again. */
+  private replayTurnScript(agentId: string, rt: NodeRuntime): void {
+    const agent = this.world.agents.get(agentId);
+    const src = agent?.alive ? agent.files["turn.js"] : undefined;
+    if (!agent || src === undefined || rt.sandbox.poisoned) return;
+    const r = rt.sandbox.eval(src, "turn.js");
+    this.pacing.sandboxCalls++;
+    if (r.ok) {
+      const handlers = rt.sandbox.handlers();
+      this.world.addLog(agentId, `turn.js replayed (${handlers.length ? handlers.join(", ") : "no handlers"})`);
+    } else {
+      agent.lastError = `turn.js: ${r.error}`;
+      this.world.addLog(agentId, `turn.js failed to replay: ${r.error}`);
+      this.world.record("code-error", 1, agentId, `${agent.name}'s turn.js failed to replay`, { data: { error: r.error } });
+    }
   }
 
   private loadScriptIfChanged(agentId: string, rt: NodeRuntime): void {
@@ -405,11 +423,11 @@ export class Engine {
       const agent = this.world.agents.get(agentId);
       const key = `${name}: ${r.error}`;
       if (agent) agent.lastError = key;
-      if (rt.lastHandlerError === key) return;
-      rt.lastHandlerError = key;
+      if (rt.lastHandlerError[name] === r.error) return;
+      rt.lastHandlerError[name] = r.error;
       this.world.addLog(agentId, `${name} error: ${r.error}`);
-      this.world.record("handler-error", 0, agentId, `${agent?.name ?? agentId}'s ${name} threw`, { data: { error: r.error } });
-    } else rt.lastHandlerError = undefined;
+      this.world.record("handler-error", 0, agentId, `${agent?.name ?? agentId}'s ${name} threw: ${r.error.slice(0, 120)}`, { data: { error: r.error } });
+    } else delete rt.lastHandlerError[name];
   }
 
   // ------------------------------------------------------------- turns
@@ -513,6 +531,7 @@ export class Engine {
             record.result = r.value;
             rt.lastResult = r.value;
             agent.lastError = undefined;
+            this.world.keepTurnScript(agentId, code);
             this.world.record("executed-code", 1, agentId, `${agent.name} ran ${code.split("\n").length} line(s) of code`, { data: { result: r.value.slice(0, 120) } });
           } else {
             record.error = r.error;

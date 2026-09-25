@@ -41,6 +41,7 @@ COMMUNICATION
 FILES (your private storage; survives your death as a readable ruin)
   fs.read(path) -> string|null   fs.write(path, text)   fs.append(path, text)   fs.list() -> [{path,bytes}]   fs.remove(path)
   ruins.files(ruinId)  ruins.read(ruinId, path)    only for a dead node on an adjacent hex. Old ruins hold old code.
+  turn.js is written by the world: the code your last turn ran. It runs again after main.js whenever your node is rebuilt, and your ruin keeps it.
 
 HELPERS (pure functions)
   hex.distance(a, b)   hex.neighbors({q,r})   hex.toward(from, to) -> direction 0..5

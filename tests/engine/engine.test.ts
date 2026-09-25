@@ -236,6 +236,34 @@ describe("Engine turns", () => {
     e.nodes.get(a!.id)!.sandbox.loadScript("function onTick(){ plant(); }");
     await e.tick();
     expect(e.recentEvents().filter((ev) => ev.kind === "handler-error").length).toBe(2);
+    expect(e.recentEvents().find((ev) => ev.kind === "handler-error")!.text).toMatch(/onTick threw: .*plant\(\)/);
+  });
+
+  test("another handler succeeding in between does not reopen a repeating handler error", async () => {
+    const e = await mk(new ScriptedBrain());
+    const [a, b] = e.world.livingAgents();
+    e.nodes.get(a!.id)!.sandbox.loadScript("function onTick(){ plant(); } function onHear(){ }");
+    e.world.fsWrite(b!.id, "main.js", "function onTick(){ say('hi'); }");
+    b!.q = a!.q;
+    b!.r = a!.r; // within earshot, whatever the spawn spread
+    for (let i = 0; i < 5; i++) await e.tick();
+    expect(a!.heard.length).toBeGreaterThan(0);
+    expect(e.recentEvents().filter((ev) => ev.kind === "handler-error" && ev.agentId === a!.id).length).toBe(1);
+  });
+
+  test("the code a turn ran is kept as turn.js, shown next turn, replayed on rebuild and restore, and left in the ruin", async () => {
+    const code = "var n = 0; function onTick(){ n++; me.set('n', String(n)); }";
+    const brain = new ScriptedBrain([js(code), js("rest()")]);
+    const e = await mk(brain, { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0, features: false } });
+    const [a] = e.world.livingAgents();
+    await e.runTurn(a!.id);
+    expect(a!.files["turn.js"]).toBe(code);
+    await e.tick();
+    expect(a!.profile.n).toBe("1");
+    await e.runTurn(a!.id);
+    expect(brain.requests[1]!.user).toContain("turn.js (the code your last turn ran");
+    expect(brain.requests[1]!.user).toContain(code);
+    expect(a!.files["turn.js"]).toBe("rest()"); // the second turn's code replaced it
   });
 
   test("an output with no code is recorded as such", async () => {
@@ -363,6 +391,25 @@ describe("Engine snapshots", () => {
     expect(e2.nodes.get(a!.id)!.sandbox.handlers()).toEqual(["onTick"]);
     await e2.tick();
     expect(e2.world.getAgent(a!.id).profile.ticks).toBe("1");
+  });
+
+  test("handlers defined by turn code survive a restore and a runtime rebuild; a ruin keeps turn.js", async () => {
+    const code = "var c = 0; function onHear(){ c++; me.set('heard', String(c)); }";
+    const e = await mk(new ScriptedBrain([js(code)]), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 100, starveHealthPerTick: 100, features: false } });
+    const [a] = e.world.livingAgents();
+    await e.runTurn(a!.id);
+    expect(a!.files["main.js"]).toBe(STARTER_MAIN_JS);
+    const snap: EngineSnapshot = JSON.parse(JSON.stringify(e.snapshot()));
+    await e.shutdown();
+    engines.pop();
+    const e2 = await Engine.fromSnapshot(snap, new ScriptedBrain(), { healthEveryMs: 0, snapshotEveryTicks: 0 });
+    engines.push(e2);
+    expect(e2.nodes.get(a!.id)!.sandbox.handlers()).toEqual(["onHear"]);
+    expect(e2.world.getAgent(a!.id).log.some((l) => l.includes("turn.js replayed (onHear)"))).toBe(true);
+    for (let i = 0; i < 4; i++) await e2.tick();
+    const ruin = e2.world.getAgent(a!.id);
+    expect(ruin.alive).toBe(false);
+    expect(ruin.files["turn.js"]).toBe(code);
   });
 
   test("saveSnapshot writes atomically and loadSnapshot reads it back", async () => {
