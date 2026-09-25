@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildUserPrompt, extractCode, SYSTEM_PROMPT } from "../../src/brain/prompt";
+import { buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations, SYSTEM_PROMPT } from "../../src/brain/prompt";
 import { API_DOC } from "../../src/sandbox/api";
 
 describe("extractCode", () => {
@@ -89,6 +89,60 @@ describe("buildUserPrompt", () => {
     const p = buildUserPrompt({ observation: {}, files: { "main.js": "x".repeat(10000) }, log: [], turn: 1, handlers: [] });
     expect(p).toContain("truncated");
     expect(p.length).toBeLessThan(6000);
+  });
+
+  test("bounds message payloads and node lists in the situation", () => {
+    const big = "y".repeat(1000);
+    const nodes = Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, dist: 20 - i }));
+    const p = buildUserPrompt({ observation: { inbox: [{ from: "a", payload: { blob: big } }], nodes }, files: {}, log: [], turn: 1, handlers: [] });
+    expect(p).not.toContain(big);
+    expect(p).toContain("…(1011 chars)");
+    expect(p).toContain('"nodesNotShown":8');
+    expect(p).toContain('"id":"n19","dist":1');
+    expect(p).not.toContain('"id":"n0"');
+  });
+
+  test("shrinks to a character budget: log first, then far tiles, then messages, then files", () => {
+    const tiles = Array.from({ length: 37 }, (_, i) => ({ q: i, r: 0, terrain: "grass", food: 1, dist: i % 4 }));
+    const facts = {
+      observation: { tiles, inbox: Array.from({ length: 8 }, (_, i) => ({ from: `n${i}`, payload: "m".repeat(100) })) },
+      files: { "main.js": "a".repeat(3000), "turn.js": "b".repeat(3000) },
+      log: Array.from({ length: 14 }, (_, i) => `log ${i} ${"z".repeat(80)}`),
+      turn: 2,
+      handlers: [],
+    };
+    const full = buildUserPrompt(facts);
+    const mid = buildUserPrompt({ ...facts, maxChars: full.length - 500 });
+    expect(mid.length).toBeLessThan(full.length);
+    expect(mid).not.toContain("log 0 ");
+    expect(mid).toContain("log 13 ");
+    expect(mid).toContain("a".repeat(3000));
+    const small = buildUserPrompt({ ...facts, maxChars: 3000 });
+    expect(small.length).toBeLessThan(mid.length);
+    expect(small).not.toContain("RECENT LOG");
+    expect(small).not.toContain("a".repeat(1000));
+    expect(small).toContain("// ...truncated");
+    expect(small.split("\n").filter((l) => /^\d+,0 grass/.test(l)).length).toBeLessThan(37);
+    expect(small.endsWith("Your code:")).toBe(true);
+  });
+
+  test("relaxTopLevelDeclarations turns column-0 const/let into var and leaves nested ones alone", () => {
+    expect(relaxTopLevelDeclarations("const a = 1;\nlet b = 2;\nfunction f() {\n  const c = 3;\n  let d = 4;\n}\nconstant = 5;")).toBe("var a = 1;\nvar b = 2;\nfunction f() {\n  const c = 3;\n  let d = 4;\n}\nconstant = 5;");
+    expect(relaxTopLevelDeclarations("const a = 1; let b = 2; for (let i = 0; i < 2; i++) {}")).toBe("var a = 1; var b = 2; for (let i = 0; i < 2; i++) {}");
+  });
+
+  test("longestParsingPrefix cuts at line ends until the parser accepts", () => {
+    const parses = (s: string) => !s.includes("{") || s.split("{").length === s.split("}").length;
+    expect(longestParsingPrefix("a();\nb();\nfunction f() {\n  c();", parses)).toBe("a();\nb();");
+    expect(longestParsingPrefix("function f() {\n  c();", parses)).toBeUndefined();
+    expect(longestParsingPrefix("a();\n\n", parses)).toBe("a();");
+  });
+
+  test("the answer rules ask for short code and explain what persists", () => {
+    const howTo = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("HOW TO ANSWER"));
+    expect(howTo).toContain("under 40 lines");
+    expect(howTo).toContain("cut off");
+    expect(howTo).toContain("persist between turns and may be declared again");
   });
 
   test("system prompt documents the API and asks for code only", () => {

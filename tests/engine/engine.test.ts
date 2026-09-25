@@ -206,21 +206,65 @@ describe("Engine turns", () => {
     expect(brain.requests[1]!.user).toContain("rested x3");
   });
 
-  test("a reply cut off at the token limit runs nothing and says so", async () => {
+  test("a reply cut off at the token limit runs only the complete lines before the cut, and says so", async () => {
     class Cut extends ScriptedBrain {
       override async decide(req: DecisionRequest, opts: DecideOptions = {}) {
         return { ...(await super.decide(req, opts)), truncated: true };
       }
     }
-    const brain = new Cut([js("me.set('status', 'half')"), js("1")], 0);
+    // Two complete statements, then a handler cut mid-body.
+    const brain = new Cut(["```js\nme.set('status', 'half');\nfs.write('a.txt', 'x');\nfunction onHear(from, text) {\n  if (text.includes('hi')) {\n    say(`hello ", "```js\nfunction onTick() {\n  if (me.energy < 20"], 0);
     const e = await mk(brain, { maxTokens: 50 });
     const [a] = e.world.livingAgents();
     const r = (await e.runTurn(a!.id))!;
     expect(r.error).toContain("cut off at the 50-token limit");
-    expect(a!.profile.status).toBeUndefined();
-    expect(e.recentEvents().some((ev) => ev.kind === "code-error" && /cut off/.test(ev.text))).toBe(true);
+    expect(r.error).toContain("only the first 2 of 5 lines were complete and ran");
+    expect(a!.profile.status).toBe("half");
+    expect(a!.files["a.txt"]).toBe("x");
+    expect(e.nodes.get(a!.id)!.sandbox.handlers()).toEqual([]);
+    expect(a!.files["turn.js"]).toBe("me.set('status', 'half');\nfs.write('a.txt', 'x');");
+    const evs = e.recentEvents();
+    expect(evs.some((ev) => ev.kind === "code-error" && /cut off/.test(ev.text))).toBe(true);
+    expect(evs.some((ev) => ev.kind === "executed-code" && ev.data?.partial === true)).toBe(true);
+    // Nothing complete before the cut: nothing runs.
+    const r2 = (await e.runTurn(a!.id))!;
+    expect(brain.requests[1]!.user).toContain("LAST ERROR: your reply was cut off at the 50-token limit; only the first 2 of 5 lines");
+    expect(r2.error).toContain("no complete line could run");
+    expect(r2.result).toBeUndefined();
     await e.runTurn(a!.id);
-    expect(brain.requests[1]!.user).toContain("LAST ERROR: your reply was cut off at the 50-token limit");
+    expect(brain.requests[2]!.user).toContain("LAST ERROR: your reply was cut off at the 50-token limit, so none of it ran");
+  });
+
+  test("top-level const and let persist between turns and may be declared again; main.js and turn.js get the same treatment", async () => {
+    const brain = new ScriptedBrain([js("const stone = 1; let n = 2; me.set('a', stone + n)"), js("const stone = 10; let n = 20; me.set('a', stone + n)")], 0);
+    const e = await mk(brain);
+    const [a] = e.world.livingAgents();
+    expect((await e.runTurn(a!.id))!.error).toBeUndefined();
+    expect(a!.profile.a).toBe("3");
+    expect((await e.runTurn(a!.id))!.error).toBeUndefined();
+    expect(a!.profile.a).toBe("30");
+    // A const at column 0 in main.js reloads cleanly after a change, and turn.js replays over it after a rebuild.
+    e.world.fsWrite(a!.id, "main.js", "const base = 5;\nfunction onTick() { me.set('b', base) }");
+    await e.tick();
+    await e.tick();
+    expect(a!.profile.b).toBe("5");
+    e.world.fsWrite(a!.id, "main.js", "const base = 6;\nfunction onTick() { me.set('b', base) }");
+    await e.tick();
+    await e.tick();
+    expect(a!.profile.b).toBe("6");
+    expect(a!.lastError).toBeUndefined();
+  });
+
+  test("the prompt tells the node its reply budget and shrinks to the character budget", async () => {
+    const brain = new ScriptedBrain([], 0);
+    const e = await mk(brain, { maxTokens: 240, promptMaxChars: 3000 });
+    const [a] = e.world.livingAgents();
+    for (let i = 0; i < 40; i++) e.world.addLog(a!.id, `line ${i} ${"x".repeat(60)}`);
+    await e.runTurn(a!.id);
+    const u = brain.requests[0]!.user;
+    expect(u).toContain("REPLY BUDGET: 240 tokens, about 20 short lines.");
+    expect(u.length).toBeLessThanOrEqual(3000 + 400);
+    expect(u).not.toContain("line 0 ");
   });
 
   test("a handler that throws the same error every tick is written down once", async () => {

@@ -22,6 +22,10 @@ export interface TurnFacts {
   lastResult?: string;
   turn: number;
   handlers: string[];
+  /** Completion budget the reply has, told to the model so it can size its answer. */
+  maxTokens?: number;
+  /** Character budget for this prompt; changing sections shrink until it fits. */
+  maxChars?: number;
 }
 
 export const SYSTEM_PROMPT = `${API_DOC}
@@ -29,10 +33,38 @@ export const SYSTEM_PROMPT = `${API_DOC}
 HOW TO ANSWER
 Reply with exactly one fenced \`\`\`js code block holding the JavaScript you want to run. A block that only holds comments does nothing.
 It runs once, immediately, inside your node. Only what main.js defines keeps running between your turns.
+Keep it short: under 40 lines, no comments, no prose. A reply longer than the token budget is cut off, and only the complete lines before the cut run. Do not restate handlers that already work; change only what must change.
+Names you declare at the top level persist between turns and may be declared again.
 Do not explain. Code only.`;
 
 const MAX_FILE_CHARS = 3000;
 const MAX_LOG_LINES = 14;
+const MAX_INBOX_PAYLOAD_CHARS = 240;
+const MAX_NODES_SHOWN = 12;
+const MAX_RUINS_SHOWN = 8;
+/** Roughly how many short lines of code a token budget holds; told to the model as a target. */
+const TOKENS_PER_LINE = 12;
+
+/** Bound what can be unboundedly long in an observation: message payloads, and how many nodes and ruins are listed. */
+function compactObservation(o: Record<string, unknown>, limits = { inbox: 8, heard: 8 }): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...o };
+  const clip = (v: unknown): unknown => {
+    const s = typeof v === "string" ? v : JSON.stringify(v);
+    if (s === undefined || s.length <= MAX_INBOX_PAYLOAD_CHARS) return v;
+    return `${s.slice(0, MAX_INBOX_PAYLOAD_CHARS)}…(${s.length} chars)`;
+  };
+  if (Array.isArray(out.inbox)) out.inbox = (out.inbox as Record<string, unknown>[]).slice(-limits.inbox).map((m) => ({ ...m, payload: clip(m.payload) }));
+  if (Array.isArray(out.heard)) out.heard = (out.heard as Record<string, unknown>[]).slice(-limits.heard);
+  if (Array.isArray(out.nodes) && out.nodes.length > MAX_NODES_SHOWN) {
+    out.nodes = [...(out.nodes as { dist?: number }[])].sort((a, b) => (a.dist ?? 0) - (b.dist ?? 0)).slice(0, MAX_NODES_SHOWN);
+    out.nodesNotShown = (o.nodes as unknown[]).length - MAX_NODES_SHOWN;
+  }
+  if (Array.isArray(out.ruins) && out.ruins.length > MAX_RUINS_SHOWN) {
+    out.ruins = [...(out.ruins as { dist?: number }[])].sort((a, b) => (a.dist ?? 0) - (b.dist ?? 0)).slice(0, MAX_RUINS_SHOWN);
+    out.ruinsNotShown = (o.ruins as unknown[]).length - MAX_RUINS_SHOWN;
+  }
+  return out;
+}
 
 /** One tile as `q,r terrain food dist` plus any other fields as k=v: the same facts in far fewer tokens. */
 function tileLine(t: Record<string, unknown>): string {
@@ -46,6 +78,26 @@ function tileLine(t: Record<string, unknown>): string {
  * a backend that caches the prompt prefix then re-reads only what changed since the node's last turn.
  */
 export function buildUserPrompt(f: TurnFacts): string {
+  // Shrink steps, applied in order until the prompt fits its budget: the least useful, most volatile facts go first.
+  let limits = { log: MAX_LOG_LINES, tileDist: Infinity, inbox: 8, heard: 8, file: MAX_FILE_CHARS };
+  const steps: ((l: typeof limits) => typeof limits)[] = [
+    (l) => ({ ...l, log: 6 }),
+    (l) => ({ ...l, tileDist: 2 }),
+    (l) => ({ ...l, inbox: 4, heard: 4 }),
+    (l) => ({ ...l, file: 1500 }),
+    (l) => ({ ...l, log: 0, tileDist: 1 }),
+    (l) => ({ ...l, file: 800, inbox: 2, heard: 2 }),
+  ];
+  let text = render(f, limits);
+  for (const step of steps) {
+    if (f.maxChars === undefined || text.length <= f.maxChars) break;
+    limits = step(limits);
+    text = render(f, limits);
+  }
+  return text;
+}
+
+function render(f: TurnFacts, limits: { log: number; tileDist: number; inbox: number; heard: number; file: number }): string {
   const parts: string[] = [];
   const names = Object.keys(f.files).sort();
   if (names.length === 0) parts.push("FILES: none yet. You have no main.js, so nothing happens between your turns.");
@@ -55,7 +107,7 @@ export function buildUserPrompt(f: TurnFacts): string {
     const show = (name: string, label: string) => {
       const src = f.files[name];
       if (src === undefined) return;
-      const shown = src.length > MAX_FILE_CHARS ? src.slice(0, MAX_FILE_CHARS) + "\n// ...truncated" : src;
+      const shown = src.length > limits.file ? src.slice(0, limits.file) + "\n// ...truncated" : src;
       parts.push(`${label}\n\`\`\`js\n${shown}\n\`\`\``);
     };
     show("main.js", "main.js:");
@@ -70,13 +122,40 @@ export function buildUserPrompt(f: TurnFacts): string {
     parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("stomach")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
   }
   const { tiles, ...rest } = f.observation as { tiles?: Record<string, unknown>[] };
-  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(rest)}`);
-  if (tiles?.length) parts.push(`TILES IN VIEW (in code: observe().tiles, objects {q,r,terrain,food,dist,...}):\nq,r terrain food dist\n${tiles.map(tileLine).join("\n")}`);
+  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(compactObservation(rest, { inbox: limits.inbox, heard: limits.heard }))}`);
+  const shownTiles = tiles?.filter((t) => typeof t.dist !== "number" || t.dist <= limits.tileDist);
+  if (shownTiles?.length) parts.push(`TILES IN VIEW (in code: observe().tiles, objects {q,r,terrain,food,dist,...}):\nq,r terrain food dist\n${shownTiles.map(tileLine).join("\n")}`);
   if (f.lastResult !== undefined) parts.push(`LAST TURN RESULT: ${f.lastResult}`);
   if (f.lastError) parts.push(`LAST ERROR: ${f.lastError}`);
-  if (f.log.length) parts.push(`RECENT LOG:\n${f.log.slice(-MAX_LOG_LINES).join("\n")}`);
+  if (f.log.length && limits.log > 0) parts.push(`RECENT LOG:\n${f.log.slice(-limits.log).join("\n")}`);
+  if (f.maxTokens !== undefined) parts.push(`REPLY BUDGET: ${f.maxTokens} tokens, about ${Math.max(5, Math.floor(f.maxTokens / TOKENS_PER_LINE))} short lines. Past it, the reply is cut.`);
   parts.push("Your code:");
   return parts.join("\n\n");
+}
+
+/**
+ * Turn code and main.js run in the node's global scope, where a top-level
+ * `const`/`let` would make a lexical binding that a later turn cannot declare
+ * again. Declaring them as `var` keeps the promise the prompt makes: what you
+ * declare at the top level persists and may be declared again.
+ */
+export function relaxTopLevelDeclarations(src: string): string {
+  // Lines that start at column 0 are taken as top level; on those, a const/let at the line start or after a ';' becomes var.
+  return src
+    .split("\n")
+    .map((line) => (/^\s/.test(line) ? line : line.replace(/(^|;\s*)(const|let)\s+/g, "$1var ")))
+    .join("\n");
+}
+
+/** The longest prefix of `src`, cut at line ends, that `parses` accepts. Used when a reply was cut off mid-program. */
+export function longestParsingPrefix(src: string, parses: (candidate: string) => boolean, maxTries = 80): string | undefined {
+  const lines = src.split("\n");
+  for (let end = lines.length, tries = 0; end > 0 && tries < maxTries; end--, tries++) {
+    const candidate = lines.slice(0, end).join("\n").trimEnd();
+    if (candidate.trim().length === 0) continue;
+    if (parses(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /**

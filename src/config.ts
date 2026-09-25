@@ -54,6 +54,7 @@ usage: agentciv [options]
   --model <name>        model name (env AGENTCIV_MODEL)
   --api-key <key>       bearer token if the backend needs one (env AGENTCIV_API_KEY)
   --max-tokens <n>      completion budget per turn (default 400)
+  --prompt-chars <n>    character budget for the changing part of a turn prompt (default 12000, 0 = no limit)
   --temperature <x>     sampling temperature (default 0.7)
   --prompt-format <f>   chatml | llama3 | plain — llama.cpp native only
   --no-stream           disable streaming
@@ -115,6 +116,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   set("slots", num(get("slots")));
   set("snapshotEveryTicks", num(get("snapshot-ticks")));
   set("maxTokens", num(get("max-tokens")) ?? num(env.AGENTCIV_MAX_TOKENS));
+  set("promptMaxChars", num(get("prompt-chars")) ?? num(env.AGENTCIV_PROMPT_CHARS));
   set("temperature", num(get("temperature")) ?? num(env.AGENTCIV_TEMPERATURE));
 
   const brain = brainConfigFromEnv(env);
