@@ -52,11 +52,14 @@ export function buildUserPrompt(f: TurnFacts): string {
   else {
     const lines = names.map((n) => `- ${n} (${f.files[n]!.length} chars)`);
     parts.push(`FILES:\n${lines.join("\n")}`);
-    const main = f.files["main.js"];
-    if (main !== undefined) {
-      const shown = main.length > MAX_FILE_CHARS ? main.slice(0, MAX_FILE_CHARS) + "\n// ...truncated" : main;
-      parts.push(`main.js:\n\`\`\`js\n${shown}\n\`\`\``);
-    }
+    const show = (name: string, label: string) => {
+      const src = f.files[name];
+      if (src === undefined) return;
+      const shown = src.length > MAX_FILE_CHARS ? src.slice(0, MAX_FILE_CHARS) + "\n// ...truncated" : src;
+      parts.push(`${label}\n\`\`\`js\n${shown}\n\`\`\``);
+    };
+    show("main.js", "main.js:");
+    show("turn.js", "turn.js (the code your last turn ran; its handlers are the active ones):");
   }
   parts.push(`ACTIVE HANDLERS: ${f.handlers.length ? f.handlers.join(", ") : "none"}`);
   parts.push(`TURN ${f.turn}`);

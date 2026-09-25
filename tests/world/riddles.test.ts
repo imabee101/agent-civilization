@@ -132,11 +132,13 @@ describe("the monolith in the world", () => {
     expect(a.log.at(-1)).toContain("waits for 1 more voice");
     expect(stone.structure!.riddle!.no).toBe(1);
     expect(w.tileView(stone).structure).toMatchObject({ voicesNeeded: 2, voices: [{ by: a.id, byName: a.name, tick: w.tick }] });
-    // the same node again is still one voice
+    // the same node again is still one voice, and the stone says nothing new about it
     w.intentSay(a.id, first.answer!);
     w.step();
-    expect(w.drainEvents().some((e) => e.kind === "riddle-answered")).toBe(false);
+    evs = w.drainEvents();
+    expect(evs.some((e) => e.kind === "riddle-answered" || e.kind === "riddle-voice")).toBe(false);
     expect(stone.structure!.voices!.length).toBe(1);
+    expect(stone.structure!.voices![0]!.tick).toBe(w.tick);
     // b hears the answer said next to it and repeats it
     expect(b.heard.at(-1)!.text).toBe(first.answer!);
     w.intentSay(b.id, `${first.answer}`);

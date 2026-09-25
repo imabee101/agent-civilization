@@ -1119,6 +1119,12 @@ export class World {
     if (!opts.silent) this.emit("files-changed", p === "main.js" ? 1 : 0, a, `${a.name} wrote ${p} (${utf8Bytes(content)} bytes)`, { data: { path: p } });
   }
 
+  /** The code a node's last turn ran, kept as turn.js outside the quota so a rebuilt node and its ruin keep what actually ran. */
+  keepTurnScript(agentId: string, code: string): void {
+    const a = this.requireAlive(agentId);
+    a.files["turn.js"] = code;
+  }
+
   fsAppend(agentId: string, path: unknown, content: unknown): void {
     if (typeof content !== "string") throw new WorldError("content must be a string");
     const existing = this.fsRead(agentId, path) ?? "";
@@ -1654,11 +1660,14 @@ export class World {
       this.addLog(a.id, "the monolith stayed silent");
       return;
     }
-    const others = this.freshVoices(s).filter((v) => v.by !== a.id);
+    const fresh = this.freshVoices(s);
+    const others = fresh.filter((v) => v.by !== a.id);
     const needed = this.voicesNeeded();
     if (others.length + 1 < needed) {
+      const again = fresh.length !== others.length;
       s.voices = [...others, { by: a.id, byName: a.name, tick: this.tick }];
       this.dirtyTiles.add(hexKey(t));
+      if (again) return; // the stone already holds this voice; saying it again only keeps it fresh
       const more = needed - s.voices.length;
       this.addLog(a.id, `the monolith heard you; it waits for ${more} more ${more === 1 ? "voice" : "voices"}`);
       this.emit("riddle-voice", 2, a, `${a.name} spoke the monolith's answer; the stone waits for ${more} more ${more === 1 ? "voice" : "voices"}`, {
