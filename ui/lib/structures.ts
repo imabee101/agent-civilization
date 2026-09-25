@@ -5,7 +5,7 @@
  * TypeScript forces this file to grow with the protocol. No meaning is
  * attached to any text found on a structure: it is passed through verbatim.
  */
-import type { BoardPost, CacheEntry, ItemKind, StructureKind, TileView } from "../../src/shared/protocol";
+import type { AnsweredRecord, BoardPost, CacheEntry, ItemKind, StructureKind, TileView } from "../../src/shared/protocol";
 
 /** One-glyph marker per structure kind (used in lists, chips and portraits). */
 export const STRUCTURE_GLYPH: Record<StructureKind, string> = {
@@ -17,6 +17,7 @@ export const STRUCTURE_GLYPH: Record<StructureKind, string> = {
   vault: "⚿",
   spring: "≋",
   plaque: "▭",
+  monolith: "◆",
 };
 
 /** Human label per structure kind. Lower-case, matches the wire word. */
@@ -29,6 +30,7 @@ export const STRUCTURE_LABEL: Record<StructureKind, string> = {
   vault: "vault",
   spring: "spring",
   plaque: "plaque",
+  monolith: "monolith",
 };
 
 /** Marker colour per structure kind as a 24-bit number (PixiJS) . */
@@ -41,6 +43,7 @@ export const STRUCTURE_COLOR: Record<StructureKind, number> = {
   vault: 0xc4b5fd,
   spring: 0x4fd1c5,
   plaque: 0xd9c28a,
+  monolith: 0xf6a83c,
 };
 
 /** One-glyph marker per item kind. */
@@ -55,13 +58,14 @@ export const ITEM_GLYPH: Record<ItemKind, string> = {
 /** Sort order for the "World" list: shared / rare things first. */
 const KIND_ORDER: Record<StructureKind, number> = {
   cache: 0,
-  plaque: 1,
-  board: 2,
-  vault: 3,
-  spring: 4,
-  tower: 5,
-  sign: 6,
-  wall: 7,
+  monolith: 1,
+  plaque: 2,
+  board: 3,
+  vault: 4,
+  spring: 5,
+  tower: 6,
+  sign: 7,
+  wall: 8,
 };
 
 export const STRUCTURE_KINDS: readonly StructureKind[] = (Object.keys(KIND_ORDER) as StructureKind[]).sort((a, b) => KIND_ORDER[a] - KIND_ORDER[b]);
@@ -83,6 +87,7 @@ export function structureCount(s: TileView["structure"]): number {
   if (!s) return 0;
   if (s.kind === "board") return s.posts?.length ?? 0;
   if (s.kind === "cache") return s.entries?.length ?? 0;
+  if (s.kind === "monolith") return s.answered?.length ?? 0;
   return 0;
 }
 
@@ -99,6 +104,10 @@ export function structureSummary(s: NonNullable<TileView["structure"]>): string 
     }
     case "vault":
       return s.locked ? "locked" : "open";
+    case "monolith": {
+      const n = s.answered?.length ?? 0;
+      return `${n} answered`;
+    }
     case "sign":
     case "plaque":
       return s.text ? s.text : "blank";
@@ -142,8 +151,12 @@ export interface TileDossier {
   terrain: string;
   /** key/value rows to show under the head. */
   rows: [string, string][];
-  /** Sign / plaque text, verbatim. */
+  /** Sign / plaque text, or the monolith's riddle, verbatim. */
   text: string | null;
+  /** What the text section is called: "sign text", "riddle"… */
+  textLabel: string;
+  /** Monolith answers, newest first. */
+  answered: AnsweredRecord[];
   /** Board posts, newest first. */
   posts: BoardPost[];
   /** Cache entries in name order. */
@@ -167,6 +180,7 @@ export function tileDossier(t: TileView): TileDossier {
   if (s?.kind === "vault") rows.push(["door", s.locked ? "locked" : "open"]);
   if (s?.kind === "board") rows.push(["posts", String(s.posts?.length ?? 0)]);
   if (s?.kind === "cache") rows.push(["entries", String(s.entries?.length ?? 0)]);
+  if (s?.kind === "monolith") rows.push(["answered", String(s.answered?.length ?? 0)]);
   if (items.length) rows.push(["items", items.join(", ")]);
   return {
     title: s ? STRUCTURE_LABEL[s.kind] : `${t.terrain} tile`,
@@ -175,7 +189,9 @@ export function tileDossier(t: TileView): TileDossier {
     coords: `${t.q}, ${t.r}`,
     terrain: t.terrain,
     rows,
-    text: s && (s.kind === "sign" || s.kind === "plaque") ? s.text ?? "" : null,
+    text: s && (s.kind === "sign" || s.kind === "plaque" || s.kind === "monolith") ? s.text ?? "" : null,
+    textLabel: s?.kind === "monolith" ? "riddle" : `${s ? STRUCTURE_LABEL[s.kind] : "tile"} text`,
+    answered: s?.kind === "monolith" ? [...(s.answered ?? [])].reverse() : [],
     posts: s?.kind === "board" ? [...(s.posts ?? [])].reverse() : [],
     entries: s?.kind === "cache" ? [...(s.entries ?? [])].sort((a, b) => a.name.localeCompare(b.name)) : [],
     items,

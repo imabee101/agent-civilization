@@ -14,7 +14,8 @@ import { DIRECTION_NAMES, hexDistance, hexNeighbor, hexesWithin, inMap, hexKey, 
 import { Rng } from "./rng";
 import { generateName, colorForIndex } from "./names";
 import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
-import type { AgentView, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
+import { answerOf, makeRiddle, matches, type Riddle, type RiddleFacts } from "./riddles";
+import type { AgentView, AnsweredRecord, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
 
 export const SEASONS: readonly Season[] = ["spring", "summer", "autumn", "winter"];
 /** Food regrowth multiplier per season. */
@@ -95,6 +96,8 @@ export interface WorldConfig {
   boards: number;
   /** Place ancient ruins and hidden items at generation. */
   features: boolean;
+  /** Food that appears on the monolith's tile each time its riddle is answered. */
+  monolithFood: number;
 }
 
 export const DEFAULT_WORLD_CONFIG: WorldConfig = {
@@ -157,6 +160,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   towers: 2,
   boards: 2,
   features: true,
+  monolithFood: 40,
 };
 
 export interface Structure {
@@ -167,6 +171,10 @@ export interface Structure {
   entries?: Record<string, CacheEntry & { text: string }>;
   builtBy?: string;
   locked?: boolean;
+  /** Monolith: the riddle carved on it now. */
+  riddle?: Riddle;
+  /** Monolith: everyone who answered, oldest first. */
+  answered?: AnsweredRecord[];
 }
 
 export interface Tile {
@@ -376,13 +384,19 @@ export class World {
     const entries: Record<string, CacheEntry & { text: string }> = {};
     for (const e of INITIAL_CACHE_ENTRIES) entries[e.name] = { name: e.name, by: "ruin", byName: e.by, tick: 0, bytes: utf8Bytes(e.text), text: e.text };
     cacheTile.structure = { kind: "cache", entries };
-    const placed: Record<string, Hex[]> = { cache: [cacheTile], plaque: [], spring: [], tower: [], board: [], vault: [] };
+    const placed: Record<string, Hex[]> = { cache: [cacheTile], plaque: [], monolith: [], spring: [], tower: [], board: [], vault: [] };
 
     // Plaque next to the Cache.
     const plaqueTile = pickTile((t) => hexDistance(t, cacheTile) === 1);
     if (plaqueTile) {
       plaqueTile.structure = { kind: "plaque", text: PLAQUE_TEXT };
       placed.plaque!.push(plaqueTile);
+    }
+    // The monolith: a stone with a riddle on it, a short walk from the Cache.
+    const monolithTile = pickTile((t) => hexDistance(t, cacheTile) >= 2 && hexDistance(t, cacheTile) <= 3);
+    if (monolithTile) {
+      this.placeMonolith(monolithTile);
+      placed.monolith!.push(monolithTile);
     }
 
     // Springs: spread out, not too near the Cache.
@@ -716,6 +730,12 @@ export class World {
     if (s.entries) out.entries = Object.keys(s.entries).length;
     if (s.locked !== undefined) out.locked = s.locked;
     if (s.builtBy) out.builtBy = s.builtBy;
+    if (s.kind === "monolith") {
+      out.text = s.riddle?.text ?? "";
+      out.answered = s.answered?.length ?? 0;
+      const last = s.answered?.at(-1);
+      if (last) out.lastAnsweredBy = last.byName;
+    }
     return out;
   }
 
@@ -728,7 +748,7 @@ export class World {
       name: me.name,
       q: me.q,
       r: me.r,
-      food: Math.round(me.food),
+      stomach: Math.round(me.food),
       energy: Math.round(me.energy),
       health: Math.round(me.health),
       inventory: { ...me.inventory, items: [...me.inventory.items] },
@@ -1185,6 +1205,7 @@ export class World {
       a.energy -= cfg.sayEnergy;
       a.lastSaid = { tick: this.tick, text: it.say };
       this.emit("spoke", 1, a, `${a.name} said something`, { quote: it.say });
+      this.hearMonolith(a, it.say);
       for (const other of this.livingAgents()) {
         if (other.id === a.id) continue;
         if (hexDistance(other, a) <= cfg.hearRadius) {
@@ -1427,6 +1448,10 @@ export class World {
     if (s.entries) v.entries = Object.values(s.entries).map(({ text: _t, ...e }) => e);
     if (s.builtBy) v.builtBy = s.builtBy;
     if (s.locked !== undefined) v.locked = s.locked;
+    if (s.kind === "monolith") {
+      v.text = s.riddle?.text ?? "";
+      v.answered = (s.answered ?? []).map((r) => ({ ...r }));
+    }
     return v;
   }
 
@@ -1548,7 +1573,67 @@ export class World {
       agent.wasExhausted = agent.alive && agent.energy <= 0;
       w.agents.set(agent.id, agent);
     }
+    w.ensureMonolith();
     return w;
+  }
+
+  /** A world saved before the monolith existed gets one: worlds are never reset for a new feature. The plaque's text follows the current lore too. */
+  private ensureMonolith(): void {
+    if (this.tiles.some((t) => t.structure?.kind === "monolith")) return;
+    const cache = this.tiles.find((t) => t.structure?.kind === "cache");
+    if (!cache) return; // a world generated without features stays without them
+    for (const t of this.tiles) if (t.structure?.kind === "plaque") { t.structure.text = PLAQUE_TEXT; this.dirtyTiles.add(hexKey(t)); }
+    const occupied = new Set(this.livingAgents().map(hexKey));
+    const pool = this.tiles.filter((t) => t.terrain !== "water" && !t.structure && !occupied.has(hexKey(t)) && hexDistance(t, cache) >= 2 && hexDistance(t, cache) <= 3);
+    if (pool.length === 0) return;
+    this.placeMonolith(this.rng.pick(pool));
+  }
+
+  private placeMonolith(t: Tile): void {
+    t.structure = { kind: "monolith", answered: [] };
+    this.carveRiddle(t.structure);
+    this.dirtyTiles.add(hexKey(t));
+  }
+
+  private riddleFacts(): RiddleFacts {
+    const cache = this.tiles.find((t) => t.structure?.kind === "cache")?.structure;
+    const newest = this.deadAgents().sort((x, y) => (y.diedTick ?? 0) - (x.diedTick ?? 0))[0];
+    return {
+      towers: this.tiles.filter((t) => t.structure?.kind === "tower").length,
+      population: this.livingAgents().length,
+      cacheEntries: cache?.entries ? Object.keys(cache.entries).length : 0,
+      newestRuin: newest?.name,
+    };
+  }
+
+  private carveRiddle(s: Structure): void {
+    const no = (s.riddle?.no ?? 0) + 1;
+    s.riddle = makeRiddle(this.rng, no, this.tick, this.riddleFacts(), s.riddle?.kind);
+  }
+
+  /** Words spoken on or next to the monolith are held against its riddle. A match is carved into the stone; a miss is a line in the speaker's log. */
+  private hearMonolith(a: Agent, spoken: string): void {
+    const t = this.tiles.find((x) => x.structure?.kind === "monolith" && hexDistance(x, a) <= 1);
+    const s = t?.structure;
+    if (!t || !s?.riddle) return;
+    const answer = answerOf(s.riddle, this.riddleFacts());
+    if (answer === undefined || !matches(spoken, answer)) {
+      this.addLog(a.id, "the monolith stayed silent");
+      return;
+    }
+    const solved = s.riddle;
+    s.answered ??= [];
+    s.answered.push({ by: a.id, byName: a.name, tick: this.tick, era: this.era, no: solved.no });
+    if (s.answered.length > 200) s.answered.splice(0, s.answered.length - 200);
+    t.food += this.config.monolithFood;
+    const item = this.rng.pick(["seeds", "seeds", "relay", "lantern"] as const);
+    t.items.push(item);
+    this.carveRiddle(s);
+    this.dirtyTiles.add(hexKey(t));
+    this.addLog(a.id, `the monolith accepted "${answer}"`);
+    this.emit("riddle-answered", 3, a, `${a.name} answered the monolith's riddle "${solved.text}" with ${answer}. ${this.config.monolithFood} food and ${item} appeared on its tile. A new riddle is carved: "${s.riddle!.text}"`, {
+      data: { riddle: solved.text, answer, era: this.era, next: s.riddle!.text, item },
+    });
   }
 }
 

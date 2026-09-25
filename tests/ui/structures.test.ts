@@ -19,7 +19,7 @@ import {
 } from "../../ui/lib/structures";
 
 // Every StructureKind / ItemKind from protocol.ts; TypeScript flags a missing member.
-const ALL_STRUCTURES: Record<StructureKind, true> = { sign: true, board: true, cache: true, wall: true, tower: true, vault: true, spring: true, plaque: true };
+const ALL_STRUCTURES: Record<StructureKind, true> = { sign: true, board: true, cache: true, wall: true, tower: true, vault: true, spring: true, plaque: true, monolith: true };
 const ALL_ITEMS: Record<ItemKind, true> = { key: true, relay: true, lantern: true, seeds: true, map: true };
 const SKINDS = Object.keys(ALL_STRUCTURES) as StructureKind[];
 const IKINDS = Object.keys(ALL_ITEMS) as ItemKind[];
@@ -83,6 +83,8 @@ describe("listFeatures", () => {
     ];
     const f = listFeatures(tiles);
     expect(f.map((x) => x.kind)).toEqual(["cache", "board", "tower"]);
+    const stone = listFeatures([tile({ q: 3, r: 3, structure: { kind: "monolith", text: "12 times 7.", answered: [{ by: "n1", byName: "Ash", tick: 5, era: 1, no: 1 }] } })])[0]!;
+    expect(stone).toMatchObject({ kind: "monolith", count: 1, summary: "1 answered" });
     expect(f[0]).toMatchObject({ key: "0,0", q: 0, r: 0, glyph: STRUCTURE_GLYPH.cache, label: "cache", count: 1, summary: "1 entry" });
     expect(f[1]!.count).toBe(1);
     expect(f[2]!.count).toBe(0);
@@ -147,6 +149,19 @@ describe("tileDossier", () => {
     const built = tileDossier(tile({ structure: { kind: "tower", builtBy: "n3" } }));
     expect(built.rows).toContainEqual(["built by", "n3"]);
     expect(built.locked).toBeNull();
+  });
+  test("monolith dossier: the riddle is the text, answers come newest first", () => {
+    const answered = [
+      { by: "n1", byName: "Ash", tick: 5, era: 1, no: 1 },
+      { by: "n4", byName: "Fern", tick: 90, era: 2, no: 2 },
+    ];
+    const d = tileDossier(tile({ structure: { kind: "monolith", text: "Read this backwards: REVIR.", answered } }));
+    expect(d.title).toBe("monolith");
+    expect(d.text).toBe("Read this backwards: REVIR.");
+    expect(d.textLabel).toBe("riddle");
+    expect(d.answered.map((a) => a.byName)).toEqual(["Fern", "Ash"]);
+    expect(d.rows).toContainEqual(["answered", "2"]);
+    expect(tileDossier(tile({ structure: { kind: "sign", text: "x" } })).textLabel).toBe("sign text");
   });
   test("every structure kind produces a dossier", () => {
     for (const k of SKINDS) {

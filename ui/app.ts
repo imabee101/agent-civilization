@@ -631,13 +631,26 @@ function renderTileDossier(t: TileView): void {
   const textSec = $("dTileText");
   textSec.hidden = d.text === null;
   if (d.text !== null) {
-    textSec.querySelector(".lbl")!.textContent = `${d.title} text`;
+    textSec.querySelector(".lbl")!.textContent = d.textLabel;
     const pre = textSec.querySelector("pre")!;
     pre.textContent = d.text.length ? d.text : "(blank)";
     pre.classList.toggle("blank", d.text.length === 0);
   }
   const postsSec = $("dTilePosts");
-  postsSec.hidden = t.structure?.kind !== "board";
+  postsSec.hidden = t.structure?.kind !== "board" && t.structure?.kind !== "monolith";
+  if (t.structure?.kind === "monolith") {
+    const ul = postsSec.querySelector("ul")!;
+    ul.replaceChildren(
+      ...d.answered.map((a) => {
+        const li = el("li");
+        const head = el("div", "ph");
+        head.append(el("span", "from", a.byName), el("span", "tk", `era ${a.era} · t${a.tick} · riddle ${a.no}`));
+        li.append(head);
+        return li;
+      }),
+    );
+    if (!d.answered.length) ul.replaceChildren(el("li", "empty", "nobody has answered yet"));
+  }
   if (t.structure?.kind === "board") {
     const ul = postsSec.querySelector("ul")!;
     ul.replaceChildren(
