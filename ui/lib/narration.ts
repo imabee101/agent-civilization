@@ -4,6 +4,7 @@
  * nothing is paraphrased or invented here.
  */
 import type { WorldEvent } from "../../src/shared/protocol";
+import { QUOTE_KINDS } from "./events";
 
 export interface NarrationOptions {
   /** Minimum importance to speak (default 1: skip noise). */
@@ -21,7 +22,7 @@ export function utteranceFor(e: WorldEvent, opts: NarrationOptions = {}): string
   const min = opts.minImportance ?? 1;
   const max = opts.maxChars ?? 280;
   const text = typeof e.text === "string" ? e.text.trim() : "";
-  const quote = (e.kind === "spoke" || e.kind === "sent-message") && typeof e.quote === "string" ? e.quote.trim() : "";
+  const quote = QUOTE_KINDS.has(e.kind) && typeof e.quote === "string" ? e.quote.trim() : "";
   if (!text && !quote) return null;
   if (e.importance < min && !quote) return null;
   let out = text;

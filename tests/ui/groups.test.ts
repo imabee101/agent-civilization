@@ -13,7 +13,7 @@ function agent(over: Partial<AgentView> & { id: string }): AgentView {
     food: 50,
     energy: 50,
     health: 100,
-    inventory: { food: 0 },
+    inventory: { food: 0, wood: 0, stone: 0, items: [] },
     profile: {},
     thinking: false,
     fileCount: 1,

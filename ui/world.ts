@@ -2,10 +2,11 @@
  * PixiJS v8 renderer for the hex world. All camera math lives in lib/camera.ts.
  */
 import { Application, Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
-import type { AgentView, RuinView, TileView, WorldState, Phase } from "../src/shared/protocol";
+import type { AgentView, RuinView, StructureKind, TileView, WorldState, Phase } from "../src/shared/protocol";
 import {
   hexToPixel,
   hexCorners,
+  pixelToHex,
   worldBounds,
   fitCamera,
   clampZoom,
@@ -16,6 +17,7 @@ import {
   type Bounds,
 } from "./lib/camera";
 import { tintFor } from "./lib/phase";
+import { ITEM_GLYPH, STRUCTURE_COLOR, STRUCTURE_LABEL, indexTiles, mergeTiles, tileHasInterest, tileKey } from "./lib/structures";
 
 export const HEX_SIZE = 24;
 export const FIT_PADDING = 8;
@@ -60,7 +62,18 @@ interface AgentSprite {
 
 export interface WorldCallbacks {
   onSelect(agentId: string | null): void;
+  /** A tile with a structure or items was tapped (and no agent stood there). */
+  onSelectTile(key: string | null): void;
   onCameraChange(): void;
+}
+
+/** A structure or item marker drawn on a tile. */
+interface TileMarker {
+  key: string;
+  root: Container;
+  label: Text;
+  x: number;
+  y: number;
 }
 
 const LABEL_STYLE: TextStyleOptions = {
@@ -69,6 +82,21 @@ const LABEL_STYLE: TextStyleOptions = {
   fontWeight: "600",
   fill: 0xe6e9ef,
   stroke: { color: 0x0a0d14, width: 3 },
+};
+const TILE_LABEL_STYLE: TextStyleOptions = {
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 9,
+  fontWeight: "600",
+  fill: 0xe6e9ef,
+  stroke: { color: 0x0a0d14, width: 3 },
+  letterSpacing: 0.6,
+};
+const ITEM_STYLE: TextStyleOptions = {
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 10,
+  fontWeight: "700",
+  fill: 0xffffff,
+  stroke: { color: 0x0a0d14, width: 2 },
 };
 const BUBBLE_STYLE: TextStyleOptions = {
   fontFamily: "Inter, system-ui, sans-serif",
@@ -85,14 +113,24 @@ export class World {
   private world = new Container();
   private terrainG = new Graphics();
   private foodG = new Graphics();
+  private structC = new Container();
+  private springG = new Graphics();
+  private itemsC = new Container();
+  private tileSelG = new Graphics();
   private ruinsG = new Container();
   private agentsC = new Container();
   private overlay = new Graphics();
   private dim = new Graphics();
   private sprites = new Map<string, AgentSprite>();
+  private markers = new Map<string, TileMarker>();
+  private springs: { x: number; y: number }[] = [];
+  private hoveredKey: string | null = null;
+  private labelsForced = false;
   private ruinIds = "";
   tiles: TileView[] = [];
+  tileIndex = new Map<string, number>();
   tileFood: number[] = [];
+  selectedTile: string | null = null;
   mapRadius = 0;
   bounds: Bounds = worldBounds(0, HEX_SIZE);
   cam: CameraState = { cx: 0, cy: 0, zoom: 1 };
@@ -126,7 +164,7 @@ export class World {
     });
     this.host.appendChild(this.app.canvas);
     this.agentsC.sortableChildren = true;
-    this.world.addChild(this.terrainG, this.foodG, this.ruinsG, this.agentsC);
+    this.world.addChild(this.terrainG, this.foodG, this.structC, this.springG, this.itemsC, this.tileSelG, this.ruinsG, this.agentsC);
     this.app.stage.addChild(this.world, this.dim, this.overlay);
     this.app.renderer.on("resize", () => this.onResize());
     window.addEventListener("orientationchange", () => setTimeout(() => this.onResize(), 60));
@@ -147,12 +185,35 @@ export class World {
   setMap(radius: number, tiles: TileView[]): void {
     this.mapRadius = radius;
     this.tiles = tiles;
+    this.tileIndex = indexTiles(tiles);
     this.tileFood = tiles.map((t) => t.food);
     this.bounds = worldBounds(radius, HEX_SIZE);
+    this.hoveredKey = null;
     this.drawTerrain();
+    this.drawStructures();
     this.foodDirty = true;
     this.userMoved = false;
     this.fit();
+  }
+
+  /** Replace changed tiles in place (a `tiles` message) and redraw their markers. */
+  updateTiles(incoming: readonly TileView[]): void {
+    if (!incoming.length) return;
+    const before = this.tiles.length;
+    mergeTiles(this.tiles, this.tileIndex, incoming);
+    if (this.tiles.length !== before) this.tileFood = this.tiles.map((t) => t.food);
+    for (const t of incoming) {
+      const i = this.tileIndex.get(tileKey(t.q, t.r));
+      if (i !== undefined) this.tileFood[i] = t.food;
+    }
+    this.foodDirty = true;
+    this.drawStructures();
+    if (this.selectedTile) this.drawTileSelection();
+  }
+
+  tileAt(key: string): TileView | undefined {
+    const i = this.tileIndex.get(key);
+    return i === undefined ? undefined : this.tiles[i];
   }
 
   /** Fit the whole world to the live viewport (min of both ratios). */
@@ -185,12 +246,22 @@ export class World {
     this.world.scale.set(zoom);
     this.world.position.set(this.viewportW / 2 - cx * zoom, this.viewportH / 2 - cy * zoom);
     for (const s of this.sprites.values()) this.counterScale(s);
+    this.updateMarkerScale();
     this.cbs.onCameraChange();
   }
 
   centerOn(wx: number, wy: number): void {
     this.userMoved = true;
     this.cam = { ...this.cam, cx: wx, cy: wy };
+    this.applyCamera();
+  }
+
+  /** Centre the camera on a hex, zooming in a little if the map is still at fit zoom. */
+  centerOnHex(q: number, r: number): void {
+    const p = hexToPixel(q, r, HEX_SIZE);
+    const zoom = Math.max(this.cam.zoom, clampZoom(this.fitZoomValue * 2.4, this.fitZoomValue));
+    this.userMoved = true;
+    this.cam = { cx: p.x, cy: p.y, zoom };
     this.applyCamera();
   }
 
@@ -231,6 +302,105 @@ export class World {
         const ang = -Math.PI / 2 + (d * 2 * Math.PI) / 3;
         g.circle(c.x + Math.cos(ang) * 6, c.y + Math.sin(ang) * 6 + 2, 2.2);
         g.fill({ color: 0xffd97a, alpha: 0.55 + ratio * 0.45 });
+      }
+    }
+  }
+
+  // ---------- structures & items ----------
+
+  private drawStructures(): void {
+    for (const m of this.markers.values()) m.root.destroy({ children: true });
+    this.markers.clear();
+    this.itemsC.removeChildren().forEach((c) => c.destroy({ children: true }));
+    this.springs = [];
+    for (const t of this.tiles) {
+      if (!tileHasInterest(t)) continue;
+      const key = tileKey(t.q, t.r);
+      const c = hexToPixel(t.q, t.r, HEX_SIZE);
+      const root = new Container();
+      root.position.set(c.x, c.y);
+      const g = new Graphics();
+      root.addChild(g);
+      let labelText = "";
+      if (t.structure) {
+        drawStructure(g, t.structure.kind, !!t.structure.locked);
+        labelText = STRUCTURE_LABEL[t.structure.kind];
+        if (t.structure.kind === "spring") this.springs.push({ x: c.x, y: c.y });
+      }
+      if (t.items && t.items.length) {
+        const ig = new Graphics();
+        const off = t.structure ? { x: HEX_SIZE * 0.42, y: HEX_SIZE * 0.36 } : { x: 0, y: 0 };
+        drawItemCluster(ig, off.x, off.y);
+        const glyph = new Text({ text: t.items.map((k) => ITEM_GLYPH[k]).join(""), style: ITEM_STYLE, resolution: 2 });
+        glyph.anchor.set(0.5);
+        glyph.position.set(off.x, off.y);
+        const ic = new Container();
+        ic.position.set(c.x, c.y);
+        ic.addChild(ig, glyph);
+        this.itemsC.addChild(ic);
+        labelText = labelText ? `${labelText} · ${t.items.join(", ")}` : t.items.join(", ");
+      }
+      const label = new Text({ text: labelText, style: TILE_LABEL_STYLE, resolution: 2 });
+      label.anchor.set(0.5, 0);
+      label.position.set(0, HEX_SIZE * 0.5);
+      label.visible = false;
+      root.addChild(label);
+      this.structC.addChild(root);
+      this.markers.set(key, { key, root, label, x: c.x, y: c.y });
+    }
+    this.updateMarkerScale();
+  }
+
+  /** Labels keep screen size; they show on hover, when zoomed in, or for the selected tile. */
+  private updateMarkerScale(): void {
+    const k = Math.min(1 / Math.max(0.25, this.cam.zoom), 3.2);
+    this.labelsForced = this.cam.zoom >= this.fitZoomValue * 2.2;
+    for (const m of this.markers.values()) {
+      m.label.scale.set(k);
+      m.label.visible = this.labelsForced || m.key === this.hoveredKey || m.key === this.selectedTile;
+    }
+  }
+
+  private setHovered(key: string | null): void {
+    if (key === this.hoveredKey) return;
+    const prev = this.hoveredKey ? this.markers.get(this.hoveredKey) : undefined;
+    this.hoveredKey = key;
+    if (prev) prev.label.visible = this.labelsForced || prev.key === this.selectedTile;
+    const m = key ? this.markers.get(key) : undefined;
+    if (m) m.label.visible = true;
+    this.host.style.cursor = m ? "pointer" : "";
+  }
+
+  setSelectedTile(key: string | null): void {
+    this.selectedTile = key;
+    this.drawTileSelection();
+    this.updateMarkerScale();
+  }
+
+  private drawTileSelection(): void {
+    const g = this.tileSelG;
+    g.clear();
+    const t = this.selectedTile ? this.tileAt(this.selectedTile) : undefined;
+    if (!t) return;
+    const c = hexToPixel(t.q, t.r, HEX_SIZE);
+    if (t.structure?.kind === "tower") {
+      // faint ring: the tiles adjacent to the tower are where send() reaches farther
+      g.circle(c.x, c.y, HEX_SIZE * 2.6).fill({ color: 0xe6e9ef, alpha: 0.06 });
+      g.circle(c.x, c.y, HEX_SIZE * 2.6).stroke({ color: 0xe6e9ef, width: 1, alpha: 0.35 });
+    }
+    g.poly(hexCorners(c.x, c.y, HEX_SIZE - 1.2).flatMap((p) => [p.x, p.y]));
+    g.stroke({ color: 0xffcf6b, width: 2.2, alpha: 0.95 });
+  }
+
+  private drawSprings(now: number): void {
+    const g = this.springG;
+    g.clear();
+    if (!this.springs.length) return;
+    for (const s of this.springs) {
+      for (let i = 0; i < 2; i++) {
+        const t = ((now / 1800) + i * 0.5) % 1;
+        const r = HEX_SIZE * (0.25 + t * 0.55);
+        g.circle(s.x, s.y, r).stroke({ color: 0x4fd1c5, width: 1.4, alpha: (1 - t) * 0.7 });
       }
     }
   }
@@ -424,6 +594,7 @@ export class World {
   private tick(): void {
     const now = performance.now();
     const dt = Math.min(0.1, this.app.ticker.deltaMS / 1000);
+    this.drawSprings(now);
     if (this.foodDirty && now - this.lastFoodDraw > 200) {
       this.drawFood();
       this.foodDirty = false;
@@ -471,7 +642,10 @@ export class World {
       }
     });
     el.addEventListener("pointermove", (e) => {
-      if (!this.pointers.has(e.pointerId)) return;
+      if (!this.pointers.has(e.pointerId)) {
+        if (e.pointerType === "mouse" && this.state) this.setHovered(this.hexKeyAt(e.clientX, e.clientY));
+        return;
+      }
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.pointers.size === 2 && this.pinchStart) {
         const [a, b] = [...this.pointers.values()];
@@ -522,6 +696,15 @@ export class World {
       { passive: false },
     );
     el.addEventListener("dblclick", () => this.fit());
+    el.addEventListener("pointerleave", () => this.setHovered(null));
+  }
+
+  /** Key of the interesting tile (structure / items) under a screen point, or null. */
+  private hexKeyAt(sx: number, sy: number): string | null {
+    const w = screenToWorld({ x: sx, y: sy }, this.cam, this.viewportW, this.viewportH);
+    const h = pixelToHex(w.x, w.y, HEX_SIZE);
+    const key = tileKey(h.q, h.r);
+    return this.markers.has(key) ? key : null;
   }
 
   private handleTap(sx: number, sy: number): void {
@@ -534,6 +717,105 @@ export class World {
       const d = Math.hypot(p.x - w.x, p.y - w.y);
       if (d <= hitR && (!best || d < best.d)) best = { id: a.id, d };
     }
-    this.cbs.onSelect(best ? best.id : null);
+    if (best) {
+      this.cbs.onSelect(best.id);
+      return;
+    }
+    const key = this.hexKeyAt(sx, sy);
+    if (key) this.cbs.onSelectTile(key);
+    else this.cbs.onSelect(null);
+  }
+}
+
+// ---------- marker drawing (pure PixiJS geometry, keyed on StructureKind) ----------
+
+const INK = 0x0a0d14;
+
+function drawStructure(g: Graphics, kind: StructureKind, locked: boolean): void {
+  const col = STRUCTURE_COLOR[kind];
+  const S = HEX_SIZE;
+  switch (kind) {
+    case "wall": {
+      // solid dark hex: reads as impassable
+      g.poly(hexCorners(0, 0, S - 1).flatMap((p) => [p.x, p.y])).fill({ color: col });
+      g.poly(hexCorners(0, 0, S - 1).flatMap((p) => [p.x, p.y])).stroke({ color: 0x3a3f4a, width: 1.4, alpha: 0.9 });
+      // mortar lines
+      for (let y = -S * 0.5; y <= S * 0.5; y += S * 0.33) g.moveTo(-S * 0.55, y).lineTo(S * 0.55, y);
+      g.stroke({ color: 0x2c3038, width: 1, alpha: 0.9 });
+      break;
+    }
+    case "sign": {
+      // small post with a plank
+      g.moveTo(0, S * 0.35).lineTo(0, -S * 0.15).stroke({ color: 0x6b5232, width: 2.2 });
+      g.roundRect(-S * 0.3, -S * 0.42, S * 0.6, S * 0.3, 2).fill({ color: col });
+      g.roundRect(-S * 0.3, -S * 0.42, S * 0.6, S * 0.3, 2).stroke({ color: INK, width: 1, alpha: 0.8 });
+      g.moveTo(-S * 0.2, -S * 0.27).lineTo(S * 0.2, -S * 0.27).stroke({ color: INK, width: 1, alpha: 0.6 });
+      break;
+    }
+    case "board": {
+      // rectangle on two legs with pinned notes
+      g.moveTo(-S * 0.25, S * 0.4).lineTo(-S * 0.25, S * 0.05).moveTo(S * 0.25, S * 0.4).lineTo(S * 0.25, S * 0.05).stroke({ color: 0x6b5232, width: 2 });
+      g.roundRect(-S * 0.42, -S * 0.42, S * 0.84, S * 0.5, 2).fill({ color: 0x2a2416 });
+      g.roundRect(-S * 0.42, -S * 0.42, S * 0.84, S * 0.5, 2).stroke({ color: col, width: 1.4 });
+      g.rect(-S * 0.32, -S * 0.32, S * 0.3, S * 0.13).fill({ color: col, alpha: 0.85 });
+      g.rect(S * 0.05, -S * 0.32, S * 0.26, S * 0.13).fill({ color: 0xe6e9ef, alpha: 0.7 });
+      g.rect(-S * 0.32, -S * 0.12, S * 0.5, S * 0.1).fill({ color: 0xe6e9ef, alpha: 0.5 });
+      break;
+    }
+    case "cache": {
+      // stacked folders
+      for (let i = 2; i >= 0; i--) {
+        const dx = -S * 0.36 + i * S * 0.07;
+        const dy = -S * 0.2 - i * S * 0.12;
+        g.roundRect(dx, dy, S * 0.66, S * 0.42, 2).fill({ color: i === 0 ? col : 0x2f8f9c });
+        g.roundRect(dx, dy - S * 0.08, S * 0.26, S * 0.12, 1.5).fill({ color: i === 0 ? col : 0x2f8f9c });
+        g.roundRect(dx, dy, S * 0.66, S * 0.42, 2).stroke({ color: INK, width: 1, alpha: 0.8 });
+      }
+      break;
+    }
+    case "plaque": {
+      // stone tablet with engraved lines
+      g.roundRect(-S * 0.3, -S * 0.4, S * 0.6, S * 0.74, 4).fill({ color: col });
+      g.roundRect(-S * 0.3, -S * 0.4, S * 0.6, S * 0.74, 4).stroke({ color: INK, width: 1.2, alpha: 0.85 });
+      for (let i = 0; i < 3; i++) g.moveTo(-S * 0.18, -S * 0.22 + i * S * 0.16).lineTo(S * 0.18, -S * 0.22 + i * S * 0.16);
+      g.stroke({ color: INK, width: 1, alpha: 0.6 });
+      break;
+    }
+    case "tower": {
+      // tall triangle with a light on top
+      g.poly([0, -S * 0.62, -S * 0.3, S * 0.4, S * 0.3, S * 0.4]).fill({ color: col });
+      g.poly([0, -S * 0.62, -S * 0.3, S * 0.4, S * 0.3, S * 0.4]).stroke({ color: INK, width: 1.2, alpha: 0.85 });
+      g.circle(0, -S * 0.62, S * 0.12).fill({ color: 0x7ff3ff });
+      g.circle(0, -S * 0.62, S * 0.24).fill({ color: 0x7ff3ff, alpha: 0.25 });
+      break;
+    }
+    case "vault": {
+      // padlock; dimmed while locked
+      const a = locked ? 0.55 : 1;
+      g.roundRect(-S * 0.32, -S * 0.05, S * 0.64, S * 0.46, 3).fill({ color: col, alpha: a });
+      g.roundRect(-S * 0.32, -S * 0.05, S * 0.64, S * 0.46, 3).stroke({ color: INK, width: 1.2, alpha: 0.85 * a });
+      const cx = locked ? 0 : S * 0.16;
+      g.arc(cx, -S * 0.08, S * 0.2, Math.PI, 0).stroke({ color: locked ? col : 0xe6e9ef, width: 2.4, alpha: a });
+      g.circle(0, S * 0.16, S * 0.07).fill({ color: INK, alpha: 0.9 * a });
+      break;
+    }
+    case "spring": {
+      // teal pool with a soft glow (ripples are animated separately)
+      g.circle(0, 0, S * 0.62).fill({ color: col, alpha: 0.18 });
+      g.circle(0, 0, S * 0.36).fill({ color: 0x1f4f7a, alpha: 0.9 });
+      g.circle(0, 0, S * 0.36).stroke({ color: col, width: 1.4, alpha: 0.9 });
+      g.circle(-S * 0.1, -S * 0.1, S * 0.08).fill({ color: 0xbffcf5, alpha: 0.8 });
+      break;
+    }
+  }
+}
+
+function drawItemCluster(g: Graphics, x: number, y: number): void {
+  const S = HEX_SIZE;
+  g.circle(x, y, S * 0.36).fill({ color: 0xffffff, alpha: 0.1 });
+  g.circle(x, y, S * 0.36).stroke({ color: 0xffffff, width: 1, alpha: 0.35 });
+  for (let i = 0; i < 3; i++) {
+    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / 3;
+    g.circle(x + Math.cos(ang) * S * 0.36, y + Math.sin(ang) * S * 0.36, 1.6).fill({ color: 0xffffff, alpha: 0.9 });
   }
 }

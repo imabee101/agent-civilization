@@ -7,9 +7,9 @@
  */
 import type { EventKind, WorldEvent } from "../../src/shared/protocol";
 
-export type EventCategory = "life" | "comms" | "code" | "survival" | "motion" | "system";
+export type EventCategory = "life" | "comms" | "code" | "survival" | "motion" | "build" | "items" | "system";
 
-export const CATEGORIES: readonly EventCategory[] = ["life", "comms", "code", "survival", "motion", "system"];
+export const CATEGORIES: readonly EventCategory[] = ["life", "comms", "code", "survival", "motion", "build", "items", "system"];
 
 const CATEGORY_OF: Record<EventKind, EventCategory> = {
   spawned: "life",
@@ -29,6 +29,15 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
   exhausted: "survival",
   moved: "motion",
   "ruin-read": "motion",
+  built: "build",
+  demolished: "build",
+  planted: "build",
+  "vault-opened": "build",
+  posted: "comms",
+  cached: "comms",
+  "took-item": "items",
+  "dropped-item": "items",
+  found: "items",
   snapshot: "system",
   "world-reset": "system",
   "brain-status": "system",
@@ -52,6 +61,15 @@ const ICON_OF: Record<EventKind, string> = {
   exhausted: "~",
   moved: "➜",
   "ruin-read": "◌",
+  built: "⌂",
+  demolished: "⊟",
+  planted: "❁",
+  "vault-opened": "⚿",
+  posted: "▤",
+  cached: "❒",
+  "took-item": "↑",
+  "dropped-item": "↓",
+  found: "✧",
   snapshot: "◈",
   "world-reset": "↻",
   "brain-status": "◍",
@@ -87,6 +105,10 @@ export function colorOfCategory(cat: EventCategory): string {
       return "var(--ally)";
     case "motion":
       return "var(--dim)";
+    case "build":
+      return "var(--accent)";
+    case "items":
+      return "var(--ally)";
     case "system":
     default:
       return "var(--dim)";
@@ -115,13 +137,20 @@ export function isRibbonWorthy(e: Pick<WorldEvent, "importance">): boolean {
   return e.importance >= 3;
 }
 
-/** Only real speech carries a quote. Never synthesise one. */
+/**
+ * Kinds whose `quote` is literal agent-authored text: what was said or sent,
+ * the text of a post or sign, the name made in the cache.
+ */
+export const QUOTE_KINDS: ReadonlySet<EventKind> = new Set<EventKind>(["spoke", "sent-message", "posted", "cached", "built"]);
+
+/** Only literal agent text carries a quote. Never synthesise one. */
 export function hasQuote(e: Pick<WorldEvent, "kind" | "quote">): boolean {
-  return (e.kind === "spoke" || e.kind === "sent-message") && typeof e.quote === "string" && e.quote.length > 0;
+  return QUOTE_KINDS.has(e.kind) && typeof e.quote === "string" && e.quote.length > 0;
 }
 
 /** Kicker text for the ribbon, derived from the category only. */
 export function ribbonKicker(kind: EventKind): string {
+  if (kind === "vault-opened") return "a door opens";
   const cat = categoryOf(kind);
   switch (cat) {
     case "life":
@@ -134,6 +163,10 @@ export function ribbonKicker(kind: EventKind): string {
       return "survival";
     case "motion":
       return "movement";
+    case "build":
+      return "something made";
+    case "items":
+      return "something carried";
     case "system":
     default:
       return "the world";

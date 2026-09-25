@@ -95,7 +95,7 @@
   </aside>
 
   <!-- Selected-agent dossier -->
-  <section id="dossier" class="glass" aria-label="Selected node" hidden>
+  <section id="dossier" class="glass" aria-label="Selected node or tile" data-mode="agent" hidden>
     <button class="close" id="dossierClose" aria-label="Close">×</button>
     <div class="d-head">
       <span class="portrait" id="dPortrait">?</span>
@@ -104,19 +104,42 @@
         <div class="d-chips" id="dChips"></div>
       </div>
     </div>
-    <div class="d-bars">
+    <div class="d-bars d-agent">
       <div class="bar"><span class="lbl">health</span><div class="track"><div class="fill health" id="dHealth"></div></div><span class="mono val" id="dHealthV">0</span></div>
       <div class="bar"><span class="lbl">food</span><div class="track"><div class="fill food" id="dFood"></div></div><span class="mono val" id="dFoodV">0</span></div>
       <div class="bar"><span class="lbl">energy</span><div class="track"><div class="fill energy" id="dEnergy"></div></div><span class="mono val" id="dEnergyV">0</span></div>
     </div>
+    <div class="d-inv d-agent">
+      <span class="lbl">inventory</span>
+      <div class="chips" id="dInv"></div>
+    </div>
     <div class="d-kv" id="dKV"></div>
-    <div class="d-thought">
+    <div class="d-thought d-agent">
       <span class="lbl">live thought</span>
       <div class="thought mono" id="dThought"><span class="ttext"></span><span class="caret" aria-hidden="true"></span></div>
     </div>
-    <div class="d-cols">
+    <div class="d-cols d-agent">
       <div class="col"><span class="lbl">recent log</span><ul id="dLog" class="mini-list mono"></ul></div>
       <div class="col"><span class="lbl">inbox &amp; heard</span><ul id="dInbox" class="mini-list"></ul></div>
+    </div>
+    <!-- Tile mode: structure text, board posts, cache directory listing, items. All agent text is literal. -->
+    <div id="dTile" class="d-tile" hidden>
+      <div class="d-sec" id="dTileText" hidden>
+        <span class="lbl">text</span>
+        <pre class="t-text"></pre>
+      </div>
+      <div class="d-sec" id="dTilePosts" hidden>
+        <span class="lbl">posts · newest first</span>
+        <ul class="post-list"></ul>
+      </div>
+      <div class="d-sec" id="dTileEntries" hidden>
+        <span class="lbl">directory listing <span class="mono">0</span></span>
+        <div class="dir mono"></div>
+      </div>
+      <div class="d-sec" id="dTileItems" hidden>
+        <span class="lbl">items here</span>
+        <div class="chips"></div>
+      </div>
     </div>
   </section>
 

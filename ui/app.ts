@@ -28,6 +28,7 @@ import { utteranceFor } from "./lib/narration";
 import { sunElevation } from "./lib/phase";
 import { hexToPixel } from "./lib/camera";
 import { HEX_SIZE } from "./world";
+import { ITEM_GLYPH, formatCacheEntry, indexTiles, listFeatures, mergeTiles, structureCss, tileDossier } from "./lib/structures";
 
 // ---------- tiny DOM helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -52,6 +53,7 @@ const isMobile = () => window.matchMedia(MOBILE_MQ).matches;
 const S = {
   config: null as WorldConfigView | null,
   tiles: [] as TileView[],
+  tileIndex: new Map<string, number>(),
   state: null as WorldState | null,
   events: [] as WorldEvent[],
   decisions: [] as DecisionRecord[],
@@ -61,6 +63,7 @@ const S = {
   pacing: null as PacingStats | null,
   connected: false,
   selectedId: null as string | null,
+  selectedTile: null as string | null,
   watchedId: null as string | null,
   nerdTab: "brain" as "brain" | "nodes" | "pacing",
   nerdDecisionId: null as number | null,
@@ -84,6 +87,7 @@ function send(msg: ClientMessage): void {
 const stage = $("stage");
 const world = new World(stage, {
   onSelect: (id) => selectAgent(id),
+  onSelectTile: (key) => selectTile(key),
   onCameraChange: () => {
     minimap.view = world.visibleRect();
     minimap.draw();
@@ -114,6 +118,9 @@ function onMessage(m: ServerMessage): void {
       renderDossierLive();
       if (S.nerdTab === "nodes" && document.body.classList.contains("nerd-open")) renderNodeList();
       break;
+    case "tiles":
+      applyTiles(m.tiles);
+      break;
     case "events":
       for (const e of m.events) addEvent(e);
       break;
@@ -142,9 +149,18 @@ function onMessage(m: ServerMessage): void {
   }
 }
 
+/** A `tiles` message: replace the changed tiles in place and refresh whatever shows them. */
+function applyTiles(tiles: TileView[]): void {
+  const changed = mergeTiles(S.tiles, S.tileIndex, tiles);
+  world.updateTiles(tiles);
+  if (S.selectedTile && changed.includes(S.selectedTile)) renderDossier();
+  if (S.nerdTab === "nodes" && document.body.classList.contains("nerd-open")) renderNodeList();
+}
+
 function applyHello(h: HelloMessage): void {
   S.config = h.config;
   S.tiles = h.tiles;
+  S.tileIndex = indexTiles(h.tiles);
   S.state = h.state;
   S.events = h.events.slice(-MAX_EVENTS);
   S.decisions = h.decisions.slice(-MAX_DECISIONS);
@@ -166,6 +182,8 @@ function applyHello(h: HelloMessage): void {
   renderPlayback();
   S.groupsKey = "";
   renderGroups();
+  if (S.selectedTile && !S.tileIndex.has(S.selectedTile)) S.selectedTile = null;
+  world.setSelectedTile(S.selectedTile);
   if (S.selectedId && !h.state.agents.some((a) => a.id === S.selectedId)) selectAgent(null);
   else renderDossier();
   renderNerd();
@@ -347,13 +365,32 @@ function narrate(e: WorldEvent): void {
 // ---------- dossier ----------
 const dossier = $("dossier");
 function selectAgent(id: string | null): void {
-  if (id === S.selectedId) {
-    if (id === null) return;
-  }
+  if (id === S.selectedId && id === null && S.selectedTile === null) return;
   S.selectedId = id;
+  if (S.selectedTile !== null) {
+    S.selectedTile = null;
+    world.setSelectedTile(null);
+  }
   world.setSelected(id);
   watch(id);
   renderDossier();
+}
+/** Select a tile with a structure / items (no agent). Clears any agent selection. */
+function selectTile(key: string | null): void {
+  if (key === S.selectedTile) return;
+  S.selectedTile = key;
+  if (S.selectedId !== null) {
+    S.selectedId = null;
+    world.setSelected(null);
+    watch(null);
+  }
+  world.setSelectedTile(key);
+  renderDossier();
+}
+function selectedTile(): TileView | undefined {
+  if (S.selectedTile === null) return undefined;
+  const i = S.tileIndex.get(S.selectedTile);
+  return i === undefined ? undefined : S.tiles[i];
 }
 function watch(id: string | null): void {
   if (id === S.watchedId) return;
@@ -363,23 +400,32 @@ function watch(id: string | null): void {
 function selectedAgent(): AgentView | undefined {
   return S.state?.agents.find((a) => a.id === S.selectedId);
 }
-function renderDossier(): void {
-  const a = selectedAgent();
-  if (!a) {
-    dossier.hidden = true;
-    return;
-  }
+function showDossier(mode: "agent" | "tile"): void {
   const wasHidden = dossier.hidden;
   dossier.hidden = false;
+  dossier.dataset.mode = mode;
+  for (const n of dossier.querySelectorAll<HTMLElement>(".d-agent")) n.hidden = mode !== "agent";
+  $("dTile").hidden = mode !== "tile";
   if (wasHidden) {
     dossier.style.animation = "none";
     void dossier.offsetHeight;
     dossier.style.animation = "";
   }
+}
+function renderDossier(): void {
+  const a = selectedAgent();
+  if (!a) {
+    const t = selectedTile();
+    if (t) renderTileDossier(t);
+    else dossier.hidden = true;
+    return;
+  }
+  showDossier("agent");
   const portrait = $("dPortrait");
   portrait.textContent = a.profile.emblem ? [...a.profile.emblem].slice(0, 2).join("") : [...a.name][0]?.toUpperCase() ?? "?";
   portrait.style.setProperty("--pc", safeColor(a.profile.color) ?? a.color);
   portrait.classList.toggle("dead", !a.alive);
+  portrait.classList.remove("struct");
   $("dName").textContent = a.alive ? a.name : `${a.name} (ruin)`;
   const chips = $("dChips");
   chips.replaceChildren();
@@ -412,7 +458,6 @@ function renderDossierLive(): void {
   const rows: [string, string, boolean?][] = [];
   if (a.profile.status) rows.push(["status", a.profile.status]);
   rows.push(["position", `${a.q}, ${a.r}`]);
-  rows.push(["inventory", `${a.inventory.food} food`]);
   rows.push(["files", `${a.fileCount} · ${fmtBytes(a.fsBytes)}`]);
   rows.push(["turns", String(a.turns)]);
   rows.push(["born", `tick ${a.bornTick}`]);
@@ -426,6 +471,109 @@ function renderDossierLive(): void {
       return r;
     }),
   );
+  renderInventory(a);
+}
+/** Inventory row: food / wood / stone counts plus one chip per carried item. */
+function renderInventory(a: AgentView): void {
+  const inv = a.inventory;
+  const box = $("dInv");
+  const mat = (k: string, v: number) => {
+    const c = el("span", `chip mat${v > 0 ? "" : " zero"}`);
+    c.append(el("span", "k", k), el("span", "v mono", String(v)));
+    return c;
+  };
+  const items = Array.isArray(inv.items) ? inv.items : [];
+  box.replaceChildren(
+    mat("food", inv.food),
+    mat("wood", inv.wood),
+    mat("stone", inv.stone),
+    ...items.map((k) => {
+      const c = el("span", "chip item");
+      c.append(el("span", "g", ITEM_GLYPH[k] ?? "•"), el("span", "v", k));
+      return c;
+    }),
+  );
+}
+/** Tile mode: a structure and/or items lying on a tile nobody stands on. Agent text goes through textContent only. */
+function renderTileDossier(t: TileView): void {
+  showDossier("tile");
+  const d = tileDossier(t);
+  const portrait = $("dPortrait");
+  portrait.textContent = d.glyph;
+  portrait.style.setProperty("--pc", d.colorCss);
+  portrait.classList.remove("dead");
+  portrait.classList.add("struct");
+  $("dName").textContent = d.title;
+  const chips = $("dChips");
+  chips.replaceChildren();
+  const cc = el("span", "chip");
+  cc.append(el("span", "k", "at "), el("span", "v mono", d.coords));
+  chips.appendChild(cc);
+  chips.appendChild(el("span", "chip", d.terrain));
+  if (d.locked !== null) chips.appendChild(el("span", `chip ${d.locked ? "locked" : "open"}`, d.locked ? "locked" : "open"));
+  for (const k of d.items) {
+    const c = el("span", "chip item");
+    c.append(el("span", "g", ITEM_GLYPH[k] ?? "•"), el("span", "v", k));
+    chips.appendChild(c);
+  }
+  $("dKV").replaceChildren(
+    ...d.rows.map(([k, v]) => {
+      const r = el("div", "kv");
+      r.append(el("span", "k", k), el("span", "v", v));
+      r.title = v;
+      return r;
+    }),
+  );
+  const textSec = $("dTileText");
+  textSec.hidden = d.text === null;
+  if (d.text !== null) {
+    textSec.querySelector(".lbl")!.textContent = `${d.title} text`;
+    const pre = textSec.querySelector("pre")!;
+    pre.textContent = d.text.length ? d.text : "(blank)";
+    pre.classList.toggle("blank", d.text.length === 0);
+  }
+  const postsSec = $("dTilePosts");
+  postsSec.hidden = t.structure?.kind !== "board";
+  if (t.structure?.kind === "board") {
+    const ul = postsSec.querySelector("ul")!;
+    ul.replaceChildren(
+      ...d.posts.map((p) => {
+        const li = el("li");
+        const head = el("div", "ph");
+        head.append(el("span", "from", p.byName), el("span", "tk", `t${p.tick}`));
+        const body = el("div", "pt");
+        body.textContent = p.text;
+        li.append(head, body);
+        return li;
+      }),
+    );
+    if (!d.posts.length) ul.replaceChildren(el("li", "empty", "no posts yet"));
+  }
+  const entSec = $("dTileEntries");
+  entSec.hidden = t.structure?.kind !== "cache";
+  if (t.structure?.kind === "cache") {
+    const list = entSec.querySelector(".dir")!;
+    const rows = d.entries.map((e) => {
+      const f = formatCacheEntry(e);
+      const r = el("div", "dent");
+      r.append(el("span", "nm", f.name), el("span", "by", f.by), el("span", "tk", f.tick), el("span", "sz", f.bytes));
+      r.title = `${f.name} · by ${f.by} · ${f.tick} · ${e.bytes} bytes`;
+      return r;
+    });
+    list.replaceChildren(...rows);
+    if (!rows.length) list.replaceChildren(el("div", "empty", "empty directory"));
+    entSec.querySelector(".lbl .mono")!.textContent = `${d.entries.length}`;
+  }
+  $("dTileItems").hidden = d.items.length === 0;
+  if (d.items.length) {
+    $("dTileItems").querySelector(".chips")!.replaceChildren(
+      ...d.items.map((k) => {
+        const c = el("span", "chip item");
+        c.append(el("span", "g", ITEM_GLYPH[k] ?? "•"), el("span", "v", k));
+        return c;
+      }),
+    );
+  }
 }
 function renderThought(): void {
   const box = $("dThought");
@@ -570,6 +718,35 @@ function renderNodeList(): void {
     }),
   );
   if (!nodes.length && !ruinsOnly.length) list.replaceChildren(el("div", "empty-note", "No nodes yet."));
+  renderWorldList(list);
+}
+/** "World" section of the Nodes tab: every structure, cache first, click to fly there. */
+function renderWorldList(list: HTMLElement): void {
+  const feats = listFeatures(S.tiles);
+  const head = el("div", "dl-sec");
+  head.append(el("span", "lbl", "world"), el("span", "mono", `${feats.length}`));
+  list.appendChild(head);
+  if (!feats.length) {
+    list.appendChild(el("div", "empty-note", "No structures in this world."));
+    return;
+  }
+  for (const f of feats) {
+    const b = el("button", `drow feat${f.key === S.selectedTile ? " active" : ""}`);
+    const sw = el("span", "sw glyph", f.glyph);
+    sw.style.color = structureCss(f.kind);
+    b.append(sw, el("span", "who", f.label), el("span", "tk", `${f.q}, ${f.r}`), el("span", "prev", f.count ? `${f.summary}` : f.summary));
+    b.title = `${f.label} at ${f.q}, ${f.r}`;
+    b.addEventListener("click", () => goToTile(f.key));
+    list.appendChild(b);
+  }
+}
+/** Centre the camera on a tile and open its dossier. Closes the drawer so the map is visible. */
+function goToTile(key: string): void {
+  const t = world.tileAt(key);
+  if (!t) return;
+  openNerd(false);
+  world.centerOnHex(t.q, t.r);
+  selectTile(key);
 }
 function renderNodeDetail(): void {
   const box = $("nodeDetail");
@@ -672,6 +849,7 @@ window.addEventListener("keydown", (e) => {
     send({ type: S.pacing?.paused ? "resume" : "pause" });
   } else if (e.key === "Escape") {
     if (document.body.classList.contains("nerd-open")) openNerd(false);
+    else if (S.selectedTile !== null) selectTile(null);
     else selectAgent(null);
   } else if (e.key === "f") world.fit();
   else if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
@@ -712,7 +890,17 @@ function toast(text: string): void {
 // ---------- expose a little for dev checks ----------
 declare global {
   interface Window {
-    __llmwar?: { world: World; state: () => WorldState | null; selectAgent: (id: string | null) => void; setMobileTab: (t: "world" | "groups" | "chronicle" | "hood") => void; agentScreenPos: (id: string) => { x: number; y: number } | null };
+    __llmwar?: {
+      world: World;
+      state: () => WorldState | null;
+      tiles: () => TileView[];
+      selectAgent: (id: string | null) => void;
+      selectTile: (key: string | null) => void;
+      goToTile: (key: string) => void;
+      setMobileTab: (t: "world" | "groups" | "chronicle" | "hood") => void;
+      agentScreenPos: (id: string) => { x: number; y: number } | null;
+      tileScreenPos: (key: string) => { x: number; y: number } | null;
+    };
   }
 }
 
@@ -733,16 +921,25 @@ async function boot(): Promise<void> {
   });
   transport.onMessage(onMessage);
   renderBadge();
+  const screenPos = (q: number, r: number) => {
+    const p = hexToPixel(q, r, HEX_SIZE);
+    return { x: (p.x - world.cam.cx) * world.cam.zoom + world.viewportW / 2, y: (p.y - world.cam.cy) * world.cam.zoom + world.viewportH / 2 };
+  };
   window.__llmwar = {
     world,
     state: () => S.state,
+    tiles: () => S.tiles,
     selectAgent,
+    selectTile,
+    goToTile,
     setMobileTab,
+    tileScreenPos: (key) => {
+      const t = world.tileAt(key);
+      return t ? screenPos(t.q, t.r) : null;
+    },
     agentScreenPos: (id) => {
       const a = S.state?.agents.find((x) => x.id === id);
-      if (!a) return null;
-      const p = hexToPixel(a.q, a.r, HEX_SIZE);
-      return { x: (p.x - world.cam.cx) * world.cam.zoom + world.viewportW / 2, y: (p.y - world.cam.cy) * world.cam.zoom + world.viewportH / 2 };
+      return a ? screenPos(a.q, a.r) : null;
     },
   };
 }

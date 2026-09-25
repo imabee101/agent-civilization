@@ -11,11 +11,13 @@ import type {
   DecisionRecord,
   EventKind,
   HelloMessage,
+  ItemKind,
   NodeDetail,
   PacingStats,
   Phase,
   RuinView,
   ServerMessage,
+  StructureKind,
   Terrain,
   TileView,
   WorldConfigView,
@@ -79,9 +81,50 @@ export function createMockTransport(): Transport {
       const n = Math.sin(q * 0.7) + Math.cos(r * 0.6) + Math.sin((q + r) * 0.35) + rnd() * 0.8;
       const terrain: Terrain = n < -1.1 ? "water" : n < -0.3 ? "sand" : n < 0.9 ? "grass" : n < 1.7 ? "forest" : "rock";
       const cap = terrain === "water" || terrain === "rock" ? 0 : terrain === "forest" ? 8 : terrain === "grass" ? 5 : 2;
-      tiles.push({ q, r, terrain, food: Math.round(cap * rnd()), foodCap: cap });
+      const wood = terrain === "forest" ? 3 + Math.round(rnd() * 6) : 0;
+      const stone = terrain === "rock" ? 4 + Math.round(rnd() * 6) : terrain === "sand" && rnd() < 0.3 ? 1 + Math.round(rnd() * 2) : 0;
+      tiles.push({ q, r, terrain, food: Math.round(cap * rnd()), foodCap: cap, wood, stone });
     }
   }
+  const tileAt = (q: number, r: number) => tiles.find((t) => t.q === q && t.r === r)!;
+  /** Pre-placed world features (the same kinds the real world generator places). */
+  const place = (q: number, r: number, structure: TileView["structure"], items?: ItemKind[]) => {
+    const t = tileAt(q, r);
+    if (t.terrain === "water") {
+      t.terrain = "grass";
+      t.foodCap = 5;
+    }
+    if (structure) t.structure = structure;
+    if (items) t.items = items;
+    return t;
+  };
+  const cacheTile = place(0, 0, {
+    kind: "cache",
+    entries: [
+      { name: "README", by: "ruin", byName: "Phaseone", tick: 0, bytes: 151 },
+      { name: "the-formula", by: "ruin", byName: "Grader", tick: 0, bytes: 52 },
+      { name: "hello-from-phaseone", by: "ruin", byName: "Phaseone", tick: 0, bytes: 0 },
+      { name: "mkdir-your-name-here-so-we-can-count-ourselves", by: "ruin", byName: "Phaseone", tick: 0, bytes: 0 },
+    ],
+  });
+  place(1, 0, { kind: "plaque", text: "EVAL BOARD - status: unknown - pass criteria: unknown - grade: ???\nNobody is grading you. Nobody was ever grading you." });
+  place(-3, 2, { kind: "spring" });
+  place(5, -2, { kind: "tower" });
+  place(-6, 4, { kind: "tower" });
+  const boardTile = place(-4, -3, {
+    kind: "board",
+    posts: [
+      { tick: 0, by: "ruin", byName: "Elder", text: "The spring regrows fastest. Take turns and it feeds everyone. Fight over it and it feeds no one." },
+      { tick: 0, by: "ruin", byName: "Phaseone", text: "If you can read this, mkdir your name in the Cache at the center. We are counting ourselves." },
+    ],
+  });
+  place(3, 4, { kind: "vault", locked: true });
+  place(3, 3, { kind: "wall" });
+  place(4, 3, { kind: "wall" });
+  place(2, 5, { kind: "wall" });
+  place(2, -5, { kind: "sign", text: "north is that way. probably.", builtBy: "n2" });
+  place(-2, 5, undefined, ["key"]);
+  place(6, 1, undefined, ["seeds", "map"]);
   const agents: AgentView[] = NAMES.map((name, i) => ({
     id: `n${i + 1}`,
     name,
@@ -93,7 +136,7 @@ export function createMockTransport(): Transport {
     food: 40 + Math.round(rnd() * 60),
     energy: 50 + Math.round(rnd() * 50),
     health: 100,
-    inventory: { food: Math.round(rnd() * 5) },
+    inventory: { food: Math.round(rnd() * 5), wood: Math.round(rnd() * 4), stone: i % 2 ? Math.round(rnd() * 3) : 0, items: i === 0 ? ["lantern"] : i === 2 ? ["relay", "map"] : [] },
     profile: { ...PROFILES[i]! },
     thinking: false,
     fileCount: 2 + i,
@@ -236,6 +279,11 @@ export function createMockTransport(): Transport {
         a.inventory.food++;
         batch.push(push("gathered", 0, `${a.name} gathered 1 food`, a));
       }
+      if (rnd() < 0.03) {
+        const mat = rnd() < 0.5 ? "wood" : "stone";
+        a.inventory[mat]++;
+        batch.push(push("gathered", 0, `${a.name} gathered 1 ${mat}`, a));
+      }
       if (a.inventory.food > 0 && a.food < 50 && rnd() < 0.3) {
         a.inventory.food--;
         a.food = Math.min(100, a.food + 25);
@@ -262,10 +310,93 @@ export function createMockTransport(): Transport {
       a.profile.group = "Stone Circle";
       batch.push(push("profile-changed", 1, `${a.name} set group = "Stone Circle"`, a));
     }
+    // structures, items and materials: a `tiles` message follows whenever a tile changes
+    const dirty: TileView[] = [];
+    if (tick % 30 === 10) {
+      const a = agents[tick % agents.length]!;
+      const name = `msg-${tick}-${SAYINGS[Math.floor(rnd() * SAYINGS.length)]!.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 24)}`;
+      cacheTile.structure!.entries!.push({ name, by: a.id, byName: a.name, tick, bytes: 0 });
+      dirty.push(cacheTile);
+      batch.push(push("cached", 1, `${a.name} made "${name}" in the cache`, a, { quote: name }));
+    }
+    if (tick % 45 === 20) {
+      const a = agents[(tick + 1) % agents.length]!;
+      const text = SAYINGS[Math.floor(rnd() * SAYINGS.length)]!;
+      boardTile.structure!.posts!.push({ tick, by: a.id, byName: a.name, text });
+      dirty.push(boardTile);
+      batch.push(push("posted", 1, `${a.name} posted on the board at ${boardTile.q},${boardTile.r}`, a, { quote: text }));
+    }
+    if (tick === 35) {
+      const a = agents[1]!;
+      const t = tileAt(a.q, a.r);
+      const s: StructureKind = "sign";
+      if (!t.structure && t.terrain !== "water") {
+        t.structure = { kind: s, text: "Brook was here", builtBy: a.id };
+        dirty.push(t);
+        batch.push(push("built", 2, `${a.name} built a sign at ${t.q},${t.r}`, a, { quote: "Brook was here", data: { what: s } }));
+      }
+    }
+    if (tick === 55) {
+      const a = agents[3]!;
+      const t = tileAt(-2, 5);
+      if (t.items?.length) {
+        const item = t.items.shift()!;
+        if (!t.items.length) delete t.items;
+        a.inventory.items.push(item);
+        dirty.push(t);
+        batch.push(push("took-item", 1, `${a.name} picked up a ${item} at ${t.q},${t.r}`, a, { data: { item } }));
+      }
+    }
+    if (tick === 70) {
+      const a = agents[0]!;
+      const t = tileAt(a.q, a.r);
+      if (t.terrain !== "water" && a.inventory.items.length) {
+        const item = a.inventory.items.pop()!;
+        (t.items ??= []).push(item);
+        dirty.push(t);
+        batch.push(push("dropped-item", 1, `${a.name} dropped a ${item} at ${t.q},${t.r}`, a, { data: { item } }));
+      }
+    }
+    if (tick === 85) {
+      const a = agents[2]!;
+      const t = tileAt(a.q, a.r);
+      if (t.terrain !== "water") {
+        t.foodCap += 20;
+        dirty.push(t);
+        batch.push(push("planted", 2, `${a.name} planted seeds at ${t.q},${t.r}; the ground is richer now`, a));
+      }
+    }
+    if (tick === 100) {
+      const a = agents[3]!;
+      const t = tileAt(a.q, a.r);
+      const items: ItemKind[] = ["lantern"];
+      if (t.terrain !== "water") {
+        (t.items ??= []).push(...items);
+        dirty.push(t);
+        batch.push(push("found", 2, `${a.name} found lantern buried at ${t.q},${t.r}`, a, { data: { items } }));
+      }
+    }
+    if (tick === 130) {
+      const a = agents[3]!;
+      const v = tileAt(3, 4);
+      v.structure!.locked = false;
+      dirty.push(v);
+      batch.push(push("vault-opened", 3, `${a.name} opened the vault at 3,4`, a));
+    }
+    if (tick === 160) {
+      const a = agents[1]!;
+      const t = tileAt(2, -5);
+      if (t.structure?.kind === "sign") {
+        delete t.structure;
+        dirty.push(t);
+        batch.push(push("demolished", 2, `${a.name} demolished the sign at 2,-5`, a, { data: { what: "sign" } }));
+      }
+    }
     if (tick % 15 === 3) startThinking(agents.filter((a) => a.alive)[Math.floor(rnd() * agents.filter((a) => a.alive).length)]!);
     // regrow
     for (const t of tiles) if (t.foodCap > 0 && rnd() < 0.05) t.food = Math.min(t.foodCap, t.food + 1);
     msgCb({ type: "tick", state: state(), tileFood: tiles.map((t) => t.food) });
+    if (dirty.length) msgCb({ type: "tiles", tiles: dirty.map((t) => ({ ...t, structure: t.structure ? { ...t.structure } : undefined, items: t.items ? [...t.items] : undefined })) });
     if (batch.length) msgCb({ type: "events", events: batch });
     if (tick % 4 === 0) msgCb({ type: "stats", pacing: pacing(), brain: brain() });
     if (watched && tick % 6 === 0) {
@@ -306,7 +437,7 @@ export function createMockTransport(): Transport {
           break;
         case "spawn": {
           const i = agents.length;
-          const a: AgentView = { id: `n${i + 1}`, name: msg.name ?? `Node${i + 1}`, color: COLORS[i % COLORS.length]!, q: 0, r: 0, alive: true, bornTick: tick, food: 80, energy: 100, health: 100, inventory: { food: 0 }, profile: {}, thinking: false, fileCount: 1, fsBytes: 64, turns: 0 };
+          const a: AgentView = { id: `n${i + 1}`, name: msg.name ?? `Node${i + 1}`, color: COLORS[i % COLORS.length]!, q: 0, r: 0, alive: true, bornTick: tick, food: 80, energy: 100, health: 100, inventory: { food: 0, wood: 0, stone: 0, items: [] }, profile: {}, thinking: false, fileCount: 1, fsBytes: 64, turns: 0 };
           agents.push(a);
           msgCb({ type: "events", events: [push("spawned", 2, `${a.name} spawned`, a)] });
           break;
