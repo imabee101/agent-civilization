@@ -171,7 +171,7 @@ export function createMockTransport(): Transport {
     const ticksPerSeason = config.seasonDays * config.ticksPerDay;
     return { tick, day, era: 1, phase: phaseOf(dp), season: seasonOf(day), seasonProgress: (tick % ticksPerSeason) / ticksPerSeason, dayProgress: dp, agents: agents.map((a) => ({ ...a, profile: { ...a.profile }, inventory: { ...a.inventory, items: [...a.inventory.items] } })), ruins: [...ruins] };
   };
-  const brain = (): BrainStatus => ({ kind: "openai-compatible", model: "tiny-3b-instruct", baseUrl: "http://localhost:11434", connected: tick % 200 < 170, detail: "mock" });
+  const brain = (): BrainStatus => ({ kind: "openai-compatible", model: "tiny-3b-instruct", baseUrl: "http://localhost:11434", connected: tick % 200 < 170, detail: "mock", profile: { kind: "bandwidth-bound", prefillTps: 118, decodeTps: 17.2, slots: 12, ctxPerSlot: 6144, cacheable: true, modelFile: "tiny-3b-instruct-Q4_K_M.gguf", quant: "Q4_K_M", probedAt: Date.now() - tick * 500 } });
   const pacing = (): PacingStats => ({
     mode: paused ? "idle" : tick % 300 < 200 ? "realtime" : "queued",
     tps: paused ? 0 : 2 * speed,
@@ -188,6 +188,12 @@ export function createMockTransport(): Transport {
     avgTickCpuMs: 0.42,
     sandboxCalls: tick * 6,
     uptimeMs: tick * 500,
+    concurrency: 1 + (Math.floor(tick / 120) % 2),
+    concurrencyCeiling: 3,
+    governed: true,
+    prefillTps: 96 + Math.round(rnd() * 20),
+    decodeTps: 15 + Math.round(rnd() * 30) / 10,
+    cacheHit: 0.31,
   });
   const push = (kind: EventKind, importance: 0 | 1 | 2 | 3, text: string, a?: AgentView, extra: Partial<WorldEvent> = {}) => {
     const e: WorldEvent = { id: evId++, tick, day: Math.floor(tick / config.ticksPerDay) + 1, kind, importance, text, agentId: a?.id, agentName: a?.name, ...extra };

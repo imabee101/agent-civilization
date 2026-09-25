@@ -5,8 +5,8 @@
  * It contains no rules about what nodes may do to each other. It moves
  * bytes and time forward. That's it.
  */
-import { SYSTEM_PROMPT, buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations } from "../brain/prompt";
-import type { Brain } from "../brain/types";
+import { FENCE_STOP, SYSTEM_PROMPT, buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations } from "../brain/prompt";
+import { classifyBackend, type BackendProfile, type Brain } from "../brain/types";
 import { NodeSandbox, type SandboxLimits } from "../sandbox/sandbox";
 import type { HandlerName } from "../sandbox/api";
 import type { BrainStatus, DecisionRecord, HelloMessage, NodeDetail, PacingStats, ServerMessage, SignalsView, Speed, WorldEvent } from "../shared/protocol";
@@ -26,9 +26,9 @@ export interface EngineConfig extends PacingConfig {
   arrivalEveryTicks: number;
   maxTokens: number;
   temperature: number;
-  /** Character budget for the changing part of a turn prompt; sections shrink until it fits. 0 = no limit. */
+  /** Character budget for the changing part of a turn prompt; sections shrink until it fits. 0 = no limit. Set from the backend's context unless given. */
   promptMaxChars: number;
-  /** Backend slots to pin nodes to, one node per slot while it lives (0 = let the backend choose). */
+  /** Backend slots to pin nodes to, one node per slot while it lives (0 = let the backend choose). Set from the backend unless given. */
   slots: number;
   /** Ticks between automatic snapshots (0 disables). */
   snapshotEveryTicks: number;
@@ -110,6 +110,11 @@ type Listener = (msg: ServerMessage) => void;
 /** Own events that make a node's next turn hot: its body crossed a line, it found something, the stone heard it, the operator touched it. */
 const HOT_EVENTS = ["starving", "exhausted", "found", "riddle-voice", "riddle-answered", "vault-opened", "gate-opened", "operator", "died"] as const;
 const URGENCY_RANK: Record<Urgency, number> = { hot: 2, warm: 1, cold: 0 };
+/** Chars per token to size a prompt budget from a context length: measured on this prompt's mix of JSON and code. */
+const CHARS_PER_TOKEN = 3.5;
+/** Tokens left free in a slot's context beyond prompt and reply. */
+const CONTEXT_MARGIN_TOKENS = 256;
+
 /** A node's own upkeep and the turn's own bookkeeping: not news, so a node whose handlers keep it fed can stay cold. */
 const ROUTINE_EVENTS: ReadonlySet<string> = new Set(["executed-code", "code-error", "rested", "gathered", "ate", "moved", "dropped"]);
 
@@ -133,6 +138,9 @@ export class Engine {
   private thinkingLastSent = new Map<string, number>();
   private brainStatus: BrainStatus;
   private brainBlockedUntil = 0;
+  /** Config keys the caller set, so what the backend reports never overrides a choice a person made. */
+  private readonly given: ReadonlySet<string>;
+  private probing = false;
   private lastHealthAt = 0;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
@@ -146,6 +154,7 @@ export class Engine {
 
   constructor(brain: Brain, cfg: Partial<EngineConfig> = {}, world?: World) {
     this.cfg = { ...DEFAULT_ENGINE_CONFIG, ...cfg, world: { ...cfg.world }, sandbox: { ...cfg.sandbox } };
+    this.given = new Set(Object.keys(cfg));
     this.brain = brain;
     this.world = world ?? new World(this.cfg.world);
     this.pacing = new Pacing({ tickMs: this.cfg.tickMs, turnIntervalTicks: this.cfg.turnIntervalTicks, concurrency: this.cfg.concurrency, maxTickMs: this.cfg.maxTickMs });
@@ -569,17 +578,18 @@ export class Engine {
       .map((x) => ({ ...x, urgency: this.urgencyOf(x.a, x.rt) }))
       .filter((x) => x.rt.turnStartedTick === undefined || tick >= x.rt.turnStartedTick + dueIn(interval, x.urgency))
       .sort((x, y) => URGENCY_RANK[y.urgency] - URGENCY_RANK[x.urgency] || (x.rt.turnStartedTick ?? -1) - (y.rt.turnStartedTick ?? -1));
-    this.pacing.queued = Math.max(0, due.length - Math.max(0, this.cfg.concurrency - this.pacing.inFlight));
+    const concurrency = this.pacing.concurrency;
+    this.pacing.queued = Math.max(0, due.length - Math.max(0, concurrency - this.pacing.inFlight));
     for (const { a, rt } of due) {
-      if (this.pacing.inFlight >= this.cfg.concurrency) break;
+      if (this.pacing.inFlight >= concurrency) break;
       rt.turnStartedTick = tick;
       rt.nextTurnTick = tick + interval;
-      void this.runTurn(a.id);
+      void this.runTurn(a.id, concurrency);
     }
   }
 
-  /** Ask the brain for one turn for a node and execute what comes back. */
-  async runTurn(agentId: string): Promise<DecisionRecord | undefined> {
+  /** Ask the brain for one turn for a node and execute what comes back. `level` is the concurrency it was dispatched at. */
+  async runTurn(agentId: string, level = this.pacing.concurrency): Promise<DecisionRecord | undefined> {
     const rt = this.nodes.get(agentId);
     const agent = this.world.agents.get(agentId);
     if (!rt || !agent || !agent.alive || agent.quarantined || rt.inFlight) return undefined;
@@ -616,7 +626,7 @@ export class Engine {
     let record: DecisionRecord | undefined;
     try {
       const result = await this.brain.decide(
-        { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, context: { visibleNodeIds } },
+        { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, stop: [FENCE_STOP], context: { visibleNodeIds } },
         {
           signal: abort.signal,
           onToken: (chunk) => {
@@ -628,7 +638,11 @@ export class Engine {
       );
       if (epoch !== this.epoch) return undefined;
       this.brainStatus = { ...this.brainStatus, connected: true, lastError: undefined, model: this.brain.model || this.brainStatus.model };
-      this.pacing.recordDecision(result.latencyMs, result.tokensPerSec);
+      this.pacing.recordDecision(result.latencyMs, result.tokensPerSec, Date.now(), { tokens: result.tokens, level });
+      if (result.timings) {
+        this.pacing.recordTimings(result.timings);
+        this.reclassify();
+      }
       const code = extractCode(result.text);
       record = {
         id: this.nextDecisionId++,
@@ -643,6 +657,7 @@ export class Engine {
         latencyMs: Math.round(result.latencyMs),
         tokens: result.tokens,
         tokensPerSec: Math.round(result.tokensPerSec * 10) / 10,
+        ...(result.timings ? { timings: result.timings } : {}),
         startedAt,
         finishedAt: Date.now(),
       };
@@ -750,6 +765,7 @@ export class Engine {
     const h = await this.brain.health();
     this.lastHealthAt = Date.now();
     this.brainStatus = {
+      ...this.brainStatus,
       kind: this.brain.kind,
       model: this.brain.model || this.brainStatus.model,
       baseUrl: this.brain.baseUrl,
@@ -759,7 +775,52 @@ export class Engine {
       lastCheckAt: this.lastHealthAt,
     };
     this.emitStats();
+    if (h.ok && !this.brainStatus.profile && !this.probing) await this.probeBrain();
     return this.brainStatus;
+  }
+
+  /**
+   * Measure the backend once it answers, and set from the measurement what a person did not
+   * set by hand: the slots to pin nodes to, the prompt budget the slot's context allows, and
+   * whether turns are governed. Nothing here is a toggle; the numbers decide.
+   */
+  async probeBrain(): Promise<BackendProfile | undefined> {
+    if (!this.brain.probe || this.probing) return undefined;
+    this.probing = true;
+    try {
+      const profile = await this.brain.probe();
+      if (!profile) return undefined;
+      this.applyProfile(profile);
+      return profile;
+    } finally {
+      this.probing = false;
+    }
+  }
+
+  applyProfile(profile: BackendProfile): void {
+    this.brainStatus = { ...this.brainStatus, profile };
+    this.pacing.setBackendKind(profile.kind);
+    if (!this.given.has("slots") && profile.slots) this.cfg.slots = profile.slots;
+    if (!this.given.has("promptMaxChars") && profile.ctxPerSlot) {
+      const forPrompt = (profile.ctxPerSlot - this.cfg.maxTokens - CONTEXT_MARGIN_TOKENS) * CHARS_PER_TOKEN - SYSTEM_PROMPT.length;
+      this.cfg.promptMaxChars = Math.max(2000, Math.floor(forPrompt));
+    }
+    // Nodes attached before the probe hold no slot; give them one now.
+    for (const rt of this.nodes.values()) if (rt.slot === undefined) rt.slot = this.freeSlot();
+    this.world.record("brain-status", 1, undefined, `Brain measured: ${profile.kind}, ${profile.prefillTps} prompt tokens/s, ${profile.decodeTps} output tokens/s${profile.slots ? `, ${profile.slots} slots of ${profile.ctxPerSlot ?? "?"} tokens` : ""}; running ${this.pacing.concurrency} turn(s) at once`);
+    this.flushEvents();
+    this.emitStats();
+  }
+
+  /** Real turns keep the profile honest: a backend that got faster or slower underneath is reclassified from its own timings. */
+  private reclassify(): void {
+    const p = this.brainStatus.profile;
+    if (!p || this.pacing.decodeTps === 0) return;
+    const kind = classifyBackend(this.pacing.prefillTps || p.prefillTps, this.pacing.decodeTps);
+    if (kind === p.kind) return;
+    this.brainStatus = { ...this.brainStatus, profile: { ...p, kind, prefillTps: Math.round(this.pacing.prefillTps * 10) / 10, decodeTps: Math.round(this.pacing.decodeTps * 10) / 10 } };
+    this.pacing.setBackendKind(kind);
+    this.world.record("brain-status", 1, undefined, `Brain reclassified as ${kind} from its own timings; running ${this.pacing.concurrency} turn(s) at once`);
   }
 
   /** Swap the brain at runtime. */

@@ -242,8 +242,46 @@ export interface DecisionRecord {
   latencyMs: number;
   tokens?: number;
   tokensPerSec?: number;
+  timings?: BackendTimings;
   startedAt: number;
   finishedAt: number;
+}
+
+/**
+ * What kind of backend the engine found itself talking to, from what it measured:
+ * a bandwidth-bound one (a CPU, or a GPU too small for its model) loses throughput
+ * when turns run in parallel and is governed; a fast one is left alone.
+ */
+export type BackendKind = "bandwidth-bound" | "fast";
+
+export interface BackendProfile {
+  kind: BackendKind;
+  /** Single-stream prompt processing rate, tokens per second. */
+  prefillTps: number;
+  /** Single-stream generation rate, tokens per second. */
+  decodeTps: number;
+  /** Server slots (parallel sequences) when the server reports them. */
+  slots?: number;
+  /** Context tokens per slot when the server reports it. */
+  ctxPerSlot?: number;
+  /** Whether the server reuses a cached prompt prefix between turns. */
+  cacheable: boolean;
+  modelFile?: string;
+  quant?: string;
+  probedAt: number;
+}
+
+/** What the backend reported about where a turn's time went. Present only when the server sends it. */
+export interface BackendTimings {
+  /** Prompt tokens in total, including the cached prefix. */
+  promptTokens: number;
+  /** Prompt tokens the server did not have to process again. */
+  cachedTokens: number;
+  /** Time spent processing the uncached prompt tokens. */
+  promptMs: number;
+  outputTokens: number;
+  /** Time spent generating output tokens. */
+  outputMs: number;
 }
 
 export interface BrainStatus {
@@ -254,6 +292,8 @@ export interface BrainStatus {
   detail?: string;
   lastError?: string;
   lastCheckAt?: number;
+  /** Measured once the brain answers, re-derived from real turns after that. */
+  profile?: BackendProfile;
 }
 
 /** paced: ticks slowed so a slow brain still reaches every node on schedule. */
@@ -285,6 +325,17 @@ export interface PacingStats {
   sandboxCalls: number;
   /** Uptime in ms since the world was created/restored. */
   uptimeMs: number;
+  /** Model turns the engine will run at once right now. */
+  concurrency: number;
+  /** The most it may ever run at once (--concurrency). */
+  concurrencyCeiling: number;
+  /** True while the level is chosen by measured throughput; false when the backend keeps up and gets the ceiling. */
+  governed: boolean;
+  /** Prompt processing and generation rates from the backend's own timings, moving averages; 0 when the backend reports none. */
+  prefillTps: number;
+  decodeTps: number;
+  /** Share of prompt tokens the backend found in its cache, moving average; 0 when unknown. */
+  cacheHit: number;
 }
 
 export interface WorldConfigView {

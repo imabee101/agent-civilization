@@ -25,6 +25,15 @@ describe("parseArgs", () => {
     expect(c.engine.concurrency).toBe(2);
   });
 
+  test("sampling flags reach the brain only when given", () => {
+    expect(parseArgs([], {}).brain.topP).toBeUndefined();
+    const c = parseArgs(["--top-p", "0.9", "--min-p=0.05", "--repeat-penalty", "1.1"], {});
+    expect(c.brain).toMatchObject({ topP: 0.9, minP: 0.05, repeatPenalty: 1.1 });
+    expect(parseArgs([], { AGENTCIV_MIN_P: "0.1" }).brain.minP).toBe(0.1);
+    expect(parseArgs([], {}).engine).not.toHaveProperty("slots");
+    expect(parseArgs([], {}).engine).not.toHaveProperty("promptMaxChars");
+  });
+
   test("tls needs both halves", () => {
     expect(parseArgs([], {}).tls).toBeUndefined();
     expect(parseArgs(["--tls-cert", "c.pem", "--tls-key", "k.pem"], {}).tls).toEqual({ cert: "c.pem", key: "k.pem" });

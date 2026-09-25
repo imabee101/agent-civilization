@@ -35,7 +35,11 @@ Reply with exactly one fenced \`\`\`js code block holding the JavaScript you wan
 It runs once, immediately, inside your node. Only what main.js defines keeps running between your turns.
 Keep it short: under 40 lines, no comments, no prose. A reply longer than the token budget is cut off, and only the complete lines before the cut run. Do not restate handlers that already work; change only what must change.
 Names you declare at the top level persist between turns and may be declared again.
+Handlers you want to keep belong in main.js (fs.write). Turn code is for what happens now.
 Do not explain. Code only.`;
+
+/** Generation stops before a closing fence: the reply is the one code block, nothing after it. */
+export const FENCE_STOP = "\n```";
 
 const MAX_FILE_CHARS = 3000;
 const MAX_LOG_LINES = 14;
@@ -111,9 +115,16 @@ function render(f: TurnFacts, limits: { log: number; tileDist: number; inbox: nu
       parts.push(`${label}\n\`\`\`js\n${shown}\n\`\`\``);
     };
     show("main.js", "main.js:");
-    show("turn.js", "turn.js (the code your last turn ran; its handlers are the active ones):");
   }
   parts.push(`ACTIVE HANDLERS: ${f.handlers.length ? f.handlers.join(", ") : "none"}`);
+  // turn.js changes every turn, so it sits after everything that does not: a backend caching the prefix keeps main.js.
+  // Shown only while it holds handlers main.js does not; once the handlers live in main.js there is nothing new in it.
+  const turnSrc = f.files["turn.js"];
+  const main = f.files["main.js"] ?? "";
+  if (turnSrc !== undefined && f.handlers.some((h) => !new RegExp(`function\\s+${h}\\b`).test(main))) {
+    const shown = turnSrc.length > limits.file ? turnSrc.slice(0, limits.file) + "\n// ...truncated" : turnSrc;
+    parts.push(`turn.js (the code your last turn ran; its handlers are the active ones):\n\`\`\`js\n${shown}\n\`\`\``);
+  }
   parts.push(`TURN ${f.turn}`);
   if (f.since) {
     const { from, to, events } = f.since;

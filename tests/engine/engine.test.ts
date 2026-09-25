@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Engine, STARTER_MAIN_JS, type EngineSnapshot } from "../../src/engine/engine";
 import type { ServerMessage } from "../../src/shared/protocol";
-import type { DecideOptions, DecisionRequest } from "../../src/brain/types";
+import type { BackendProfile, DecideOptions, DecisionRequest } from "../../src/brain/types";
 import { ScriptedBrain, js } from "./helpers";
 
 const engines: Engine[] = [];
@@ -394,6 +394,76 @@ describe("Engine turns", () => {
     expect(brain.requests.length).toBe(served + 1);
     const ids = new Set(e.recentDecisions().map((d) => d.agentId));
     expect(ids.size).toBe(2);
+  });
+
+  test("a turn asks the brain to stop at the closing fence, and keeps the backend's timings", async () => {
+    class Timed extends ScriptedBrain {
+      override async decide(req: DecisionRequest, opts?: DecideOptions) {
+        return { ...(await super.decide(req, opts)), tokens: 300, latencyMs: 20_000, timings: { promptTokens: 2000, cachedTokens: 1300, promptMs: 7000, outputTokens: 300, outputMs: 13_000 } };
+      }
+    }
+    const brain = new Timed([js("rest()")]);
+    const e = await mk(brain);
+    const id = e.world.livingAgents()[0]!.id;
+    const d = (await e.runTurn(id))!;
+    expect(brain.requests[0]!.stop).toEqual(["\n```"]);
+    expect(d.timings).toEqual({ promptTokens: 2000, cachedTokens: 1300, promptMs: 7000, outputTokens: 300, outputMs: 13_000 });
+    const p = e.pacingStats();
+    expect(p.prefillTps).toBe(100);
+    expect(p.decodeTps).toBeCloseTo(23.1, 1);
+    expect(p.cacheHit).toBe(0.65);
+  });
+
+  test("the brain is measured once it answers; what the measurement says sets what nobody set by hand", async () => {
+    class Probed extends ScriptedBrain {
+      probes = 0;
+      async probe(): Promise<BackendProfile> {
+        this.probes++;
+        return { kind: "bandwidth-bound" as const, prefillTps: 110, decodeTps: 17, slots: 12, ctxPerSlot: 6144, cacheable: true, probedAt: 1 };
+      }
+    }
+    const brain = new Probed();
+    const e = await mk(brain, { concurrency: 3, maxTokens: 600 });
+    expect(brain.probes).toBe(1); // init's health check probed
+    expect(e.getBrainStatus().profile?.kind).toBe("bandwidth-bound");
+    expect(e.cfg.slots).toBe(12);
+    // 6144 ctx - 600 reply - 256 margin = 5288 tokens x 3.5 chars, minus the system prompt.
+    expect(e.cfg.promptMaxChars).toBe(Math.floor(5288 * 3.5) - (await import("../../src/brain/prompt")).SYSTEM_PROMPT.length);
+    expect(e.pacingStats().concurrency).toBe(1); // governed: one at a time until the next level measures better
+    expect(e.pacingStats().governed).toBe(true);
+    for (const rt of e.nodes.values()) expect(rt.slot).toBeDefined();
+    expect(e.recentEvents().some((ev) => ev.kind === "brain-status" && /Brain measured: bandwidth-bound, 110 prompt tokens\/s, 17 output tokens\/s, 12 slots of 6144 tokens; running 1 turn/.test(ev.text))).toBe(true);
+    await e.checkBrain();
+    expect(brain.probes).toBe(1); // measured once
+    // Given by hand: the measurement does not override.
+    const given = await mk(new Probed(), { concurrency: 3, slots: 2, promptMaxChars: 4000 });
+    expect(given.cfg.slots).toBe(2);
+    expect(given.cfg.promptMaxChars).toBe(4000);
+    // A fast backend is not governed: the ceiling from the first turn.
+    class Fast extends Probed {
+      override async probe() {
+        return { ...(await super.probe()), kind: "fast" as const, prefillTps: 1800, decodeTps: 70 };
+      }
+    }
+    const fast = await mk(new Fast(), { concurrency: 3 });
+    expect(fast.pacingStats()).toMatchObject({ concurrency: 3, governed: false });
+  });
+
+  test("real timings reclassify the backend when it turns out faster or slower than the probe said", async () => {
+    class Reclassified extends ScriptedBrain {
+      async probe(): Promise<BackendProfile> {
+        return { kind: "bandwidth-bound" as const, prefillTps: 100, decodeTps: 17, cacheable: true, probedAt: 1 };
+      }
+      override async decide(req: DecisionRequest, opts?: DecideOptions) {
+        return { ...(await super.decide(req, opts)), tokens: 300, latencyMs: 5000, timings: { promptTokens: 2000, cachedTokens: 0, promptMs: 1000, outputTokens: 300, outputMs: 4000 } };
+      }
+    }
+    const e = await mk(new Reclassified([js("rest()")]), { concurrency: 3 });
+    expect(e.pacingStats().governed).toBe(true);
+    await e.runTurn(e.world.livingAgents()[0]!.id);
+    expect(e.getBrainStatus().profile?.kind).toBe("fast"); // 2000 prompt tok/s, 75 output tok/s
+    expect(e.pacingStats().concurrency).toBe(3);
+    expect(e.recentEvents().some((ev) => ev.kind === "brain-status" && /reclassified as fast/.test(ev.text))).toBe(true);
   });
 
   test("a turn on a dead or unknown node is a no-op", async () => {
