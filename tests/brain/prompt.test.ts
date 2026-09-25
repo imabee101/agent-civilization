@@ -48,6 +48,16 @@ describe("buildUserPrompt", () => {
     expect(p).toContain("[t2] b");
   });
 
+  test("stable facts come first so a cached prompt prefix survives between turns", () => {
+    const p = buildUserPrompt({ observation: { tick: 9 }, files: { "main.js": "function onTick(){}" }, log: ["[t1] a"], turn: 3, handlers: ["onTick"] });
+    const at = (s: string) => p.indexOf(s);
+    expect(at("FILES:")).toBeLessThan(at("ACTIVE HANDLERS"));
+    expect(at("ACTIVE HANDLERS")).toBeLessThan(at("TURN 3"));
+    expect(at("TURN 3")).toBeLessThan(at("SITUATION"));
+    expect(at("SITUATION")).toBeLessThan(at("RECENT LOG"));
+    expect(p.endsWith("Your code:")).toBe(true);
+  });
+
   test("reports what changed since the last turn as plain facts", () => {
     const from = { tick: 10, stomach: 80, energy: 90, health: 100, carried: 0 };
     const to = { tick: 58, stomach: 52, energy: 40, health: 100, carried: 6 };

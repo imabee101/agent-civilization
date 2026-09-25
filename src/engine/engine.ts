@@ -25,6 +25,8 @@ export interface EngineConfig extends PacingConfig {
   arrivalEveryTicks: number;
   maxTokens: number;
   temperature: number;
+  /** Backend slots to pin nodes to, one node per slot while it lives (0 = let the backend choose). */
+  slots: number;
   /** Ticks between automatic snapshots (0 disables). */
   snapshotEveryTicks: number;
   snapshotPath?: string;
@@ -59,6 +61,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   arrivalEveryTicks: 60,
   maxTokens: 400,
   temperature: 0.7,
+  slots: 0,
   snapshotEveryTicks: 120,
   snapshotPath: undefined,
   keepDecisions: 200,
@@ -87,6 +90,8 @@ interface NodeRuntime {
   lastTurn?: { tick: number; stomach: number; energy: number; health: number; carried: number };
   nextTurnTick: number;
   inFlight: boolean;
+  /** Backend slot this node's turns run in, for the life of the node. */
+  slot?: number;
   /** Last handler error recorded, so a loop that throws the same thing every tick is written down once. */
   lastHandlerError?: string;
 }
@@ -218,11 +223,19 @@ export class Engine {
 
   // ----------------------------------------------------------------- nodes
 
+  /** Lowest backend slot no living node holds; undefined when none is configured or all are taken. */
+  private freeSlot(): number | undefined {
+    const taken = new Set([...this.nodes.values()].map((n) => n.slot));
+    for (let i = 0; i < this.cfg.slots; i++) if (!taken.has(i)) return i;
+    return undefined;
+  }
+
   private async attachSandbox(agentId: string): Promise<NodeRuntime> {
     const existing = this.nodes.get(agentId);
     if (existing) existing.sandbox.dispose();
     const sandbox = await NodeSandbox.create(makeBridge(this.world, agentId), this.cfg.sandbox);
     const rt: NodeRuntime = { sandbox, loadedScript: undefined, nextTurnTick: this.world.tick, inFlight: existing?.inFlight ?? false };
+    rt.slot = existing?.slot ?? this.freeSlot();
     this.nodes.set(agentId, rt);
     this.loadScriptIfChanged(agentId, rt);
     return rt;
@@ -454,7 +467,7 @@ export class Engine {
     let record: DecisionRecord | undefined;
     try {
       const result = await this.brain.decide(
-        { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, context: { visibleNodeIds } },
+        { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, context: { visibleNodeIds } },
         {
           signal: abort.signal,
           onToken: (chunk) => {

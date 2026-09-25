@@ -47,6 +47,7 @@ usage: agentciv [options]
   --turn-ticks <n>      desired ticks between a node's model turns (default 16)
   --max-tick-ms <n>     slow ticks up to this so a slow brain keeps --turn-ticks (default 5000, 0 = fixed clock)
   --concurrency <n>     brain calls in flight (default 1)
+  --slots <n>           backend slots to pin nodes to, one per living node (default 0 = backend chooses)
   --snapshot-ticks <n>  ticks between snapshots (default 120, 0 disables)
   --brain <kind>        openai | llamacpp | ollama | random | lmstudio | vllm (env AGENTCIV_BRAIN)
   --base-url <url>      backend base URL (env AGENTCIV_BASE_URL)
@@ -111,6 +112,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   set("turnIntervalTicks", num(get("turn-ticks")));
   set("maxTickMs", num(get("max-tick-ms")));
   set("concurrency", num(get("concurrency")) ?? num(env.AGENTCIV_CONCURRENCY));
+  set("slots", num(get("slots")));
   set("snapshotEveryTicks", num(get("snapshot-ticks")));
   set("maxTokens", num(get("max-tokens")) ?? num(env.AGENTCIV_MAX_TOKENS));
   set("temperature", num(get("temperature")) ?? num(env.AGENTCIV_TEMPERATURE));

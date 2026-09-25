@@ -31,7 +31,7 @@ function fakeFetch(reply: string[] | object | ((url: string) => Response), captu
   return { fetch: f, captured };
 }
 
-const req = { system: "SYS", user: "USER" };
+const req = { system: "SYS", user: "USER", slot: 4 };
 
 describe("OpenAICompatibleBrain", () => {
   test("reports a reply that stopped at the token limit as truncated", async () => {
@@ -66,6 +66,8 @@ describe("OpenAICompatibleBrain", () => {
     expect(c.body.stream).toBe(true);
     expect(c.body.max_tokens).toBe(99);
     expect(c.body.temperature).toBe(0.2);
+    expect(c.body.cache_prompt).toBe(true);
+    expect(c.body.id_slot).toBe(4);
     expect(c.body.messages).toEqual([
       { role: "system", content: "SYS" },
       { role: "user", content: "USER" },

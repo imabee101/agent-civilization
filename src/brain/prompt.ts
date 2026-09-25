@@ -41,18 +41,12 @@ function tileLine(t: Record<string, unknown>): string {
   return [`${String(q)},${String(r)}`, String(terrain), String(food), String(dist), ...more].join(" ");
 }
 
+/**
+ * Stable facts first (files, code, handlers), changing facts last (turn, body, situation, log):
+ * a backend that caches the prompt prefix then re-reads only what changed since the node's last turn.
+ */
 export function buildUserPrompt(f: TurnFacts): string {
   const parts: string[] = [];
-  parts.push(`TURN ${f.turn}`);
-  if (f.since) {
-    const { from, to, events } = f.since;
-    const d = (k: keyof BodyFacts) => `${k} ${from[k]}->${to[k]}`;
-    const happened = Object.entries(events).sort().map(([k, n]) => `${k} x${n}`).join(", ") || "none";
-    parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("stomach")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
-  }
-  const { tiles, ...rest } = f.observation as { tiles?: Record<string, unknown>[] };
-  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(rest)}`);
-  if (tiles?.length) parts.push(`TILES IN VIEW (in code: observe().tiles, objects {q,r,terrain,food,dist,...}):\nq,r terrain food dist\n${tiles.map(tileLine).join("\n")}`);
   const names = Object.keys(f.files).sort();
   if (names.length === 0) parts.push("FILES: none yet. You have no main.js, so nothing happens between your turns.");
   else {
@@ -65,6 +59,16 @@ export function buildUserPrompt(f: TurnFacts): string {
     }
   }
   parts.push(`ACTIVE HANDLERS: ${f.handlers.length ? f.handlers.join(", ") : "none"}`);
+  parts.push(`TURN ${f.turn}`);
+  if (f.since) {
+    const { from, to, events } = f.since;
+    const d = (k: keyof BodyFacts) => `${k} ${from[k]}->${to[k]}`;
+    const happened = Object.entries(events).sort().map(([k, n]) => `${k} x${n}`).join(", ") || "none";
+    parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("stomach")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
+  }
+  const { tiles, ...rest } = f.observation as { tiles?: Record<string, unknown>[] };
+  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(rest)}`);
+  if (tiles?.length) parts.push(`TILES IN VIEW (in code: observe().tiles, objects {q,r,terrain,food,dist,...}):\nq,r terrain food dist\n${tiles.map(tileLine).join("\n")}`);
   if (f.lastResult !== undefined) parts.push(`LAST TURN RESULT: ${f.lastResult}`);
   if (f.lastError) parts.push(`LAST ERROR: ${f.lastError}`);
   if (f.log.length) parts.push(`RECENT LOG:\n${f.log.slice(-MAX_LOG_LINES).join("\n")}`);

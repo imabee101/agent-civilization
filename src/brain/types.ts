@@ -9,6 +9,8 @@ export interface DecisionRequest {
   user: string;
   maxTokens?: number;
   temperature?: number;
+  /** Backend slot to run this node's turns in, so the node's own context stays in that slot's KV cache between turns. */
+  slot?: number;
   /** Optional structured hints for non-model brains (e.g. random) that can't read the prompt. */
   context?: {
     visibleNodeIds?: string[];
