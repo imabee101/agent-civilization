@@ -953,6 +953,7 @@ export class Engine {
       events: this.events.slice(-200),
       decisions: this.decisions.slice(-50).map(onWire),
       systemPrompt: SYSTEM_PROMPT,
+      operatorTokenRequired: false,
       brain: this.brainStatus,
       pacing: this.pacingStats(),
       signals: this.signalsView(),

@@ -431,7 +431,13 @@ Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
 `--prompt-chars` and `--slots` (defaults come from the backend), `--temperature`,
 `--top-p`, `--min-p`, `--repeat-penalty` (sent only when set),
 `--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`),
-`--tls-cert`/`--tls-key` (both, or neither: serves HTTPS/WSS in-process).
+`--tls-cert`/`--tls-key` (both, or neither: serves HTTPS/WSS in-process),
+`--operator-token-file` (or `--operator-token`): when set, every control
+(pause, resume, speed, spawn, snapshot, reset, quarantine, freeze, notice,
+rewind) needs the token, as a bearer header over REST and a `token` field on
+the socket; reads stay open. The UI asks for it once per browser session
+(the "watch only" badge becomes "operator") and forgets it when the server
+refuses it. Unset, anyone who can reach the server holds the switch.
 
 The LAN deployment at `https://civ.imabee.com` is in [`deploy/`](deploy/README.md).
 

@@ -248,3 +248,47 @@ describe("WebSocket", () => {
     expect(c1.ws.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+describe("operator token", () => {
+  test("with a token configured, controls need it over REST and the socket; reads stay open; the right token works", async () => {
+    const engine = new Engine(new ScriptedBrain(), { world: { seed: 3, mapRadius: 5, foodDrainPerTick: 0, features: false }, initialAgents: 2, healthEveryMs: 0, snapshotEveryTicks: 0 });
+    await engine.init();
+    const app = createApp({ engine, port: 0, hostname: "127.0.0.1", operatorToken: "s3cret" });
+    cleanup.push(() => engine.shutdown(), () => app.close());
+    const base = `http://127.0.0.1:${app.server.port}`;
+    expect((await fetch(`${base}/api/state`)).status).toBe(200);
+    expect((await (await fetch(`${base}/api/hello`)).json()).operatorTokenRequired).toBe(true);
+    expect((await fetch(`${base}/api/resume`, { method: "POST" })).status).toBe(401);
+    expect((await fetch(`${base}/api/resume`, { method: "POST", headers: { authorization: "Bearer wrong" } })).status).toBe(401);
+    expect((await fetch(`${base}/api/reset`, { method: "POST", body: JSON.stringify({ confirm: "RESET" }) })).status).toBe(401);
+    expect(engine.paused).toBe(true);
+    expect((await fetch(`${base}/api/resume`, { method: "POST", headers: { authorization: "Bearer s3cret" } })).status).toBe(200);
+    expect(engine.paused).toBe(false);
+    expect((await fetch(`${base}/api/pause`, { method: "POST", headers: { "x-operator-token": "s3cret" } })).status).toBe(200);
+    expect(engine.paused).toBe(true);
+    const c = await connect(app.server);
+    const hello = (await c.next("hello")) as Extract<ServerMessage, { type: "hello" }>;
+    expect(hello.operatorTokenRequired).toBe(true);
+    c.send({ type: "resume" });
+    const denied = (await c.next("denied")) as Extract<ServerMessage, { type: "denied" }>;
+    expect(denied.action).toBe("resume");
+    expect(engine.paused).toBe(true);
+    c.send({ type: "resume", token: "s3cret" });
+    await c.next("tick");
+    expect(engine.paused).toBe(false);
+    c.send({ type: "pause", token: "s3cret" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(engine.paused).toBe(true);
+    // watch is not a control
+    const [a] = engine.world.livingAgents();
+    c.send({ type: "watch", agentId: a!.id });
+    expect(((await c.next("node")) as Extract<ServerMessage, { type: "node" }>).detail.agentId).toBe(a!.id);
+  });
+
+  test("without a token configured nothing changes", async () => {
+    const { base } = await boot();
+    expect((await (await fetch(`${base}/api/hello`)).json()).operatorTokenRequired).toBe(false);
+    expect((await fetch(`${base}/api/resume`, { method: "POST" })).status).toBe(200);
+    expect((await fetch(`${base}/api/pause`, { method: "POST" })).status).toBe(200);
+  });
+});

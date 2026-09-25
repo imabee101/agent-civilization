@@ -55,6 +55,7 @@
       <svg id="popSpark" class="spark" viewBox="0 0 64 20" width="64" height="20" aria-label="Population over time"><polyline id="popLine" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" points="" /></svg>
     </div>
 
+    <button id="operatorBadge" class="badge" type="button" hidden>watch only</button>
     <div id="brainBadge" class="badge" title="Brain backend">
       <span class="dot" id="brainDot"></span>
       <span id="brainName" class="mono">connecting…</span>
@@ -250,6 +251,18 @@
       <div class="d-actions">
         <button type="button" id="rewindCancel" class="tbtn">leave it</button>
         <button type="submit" id="rewindGo" class="tbtn danger" disabled>rewind the files</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="tokenDialog" class="glass">
+    <form method="dialog" id="tokenForm">
+      <h2>Operator token</h2>
+      <p id="tokenFacts">This world's controls need the operator token. It is on the server in <code>/etc/agent-civ/operator-token</code>.</p>
+      <label for="tokenValue">Token</label>
+      <input id="tokenValue" class="mono" type="password" autocomplete="off" spellcheck="false" />
+      <div class="d-actions">
+        <button type="button" id="tokenCancel" class="tbtn">watch only</button>
+        <button type="submit" id="tokenGo" class="tbtn">hold the switch</button>
       </div>
     </form>
   </dialog>

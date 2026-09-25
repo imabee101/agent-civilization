@@ -64,6 +64,9 @@ const S = {
   decisions: [] as DecisionRecord[],
   /** The system prompt every decision shares; hello carries it once. */
   systemPrompt: "",
+  /** Whether the server wants the operator token on controls, and the token this browser holds for it (session only). */
+  operatorTokenRequired: false,
+  operatorToken: "",
   nodeDetails: new Map<string, NodeDetail>(),
   thoughts: new Map<string, { text: string; done: boolean }>(),
   brain: null as BrainStatus | null,
@@ -95,8 +98,29 @@ const MAX_DECISIONS = 120;
 
 // ---------- transport ----------
 let transport: Transport;
+const TOKEN_KEY = "agentciv.operatorToken";
 function send(msg: ClientMessage): void {
-  transport.send(msg);
+  transport.send(S.operatorToken ? { ...msg, token: S.operatorToken } : msg);
+}
+/** Headers for a control route: the operator token when this browser holds one. */
+function operatorHeaders(): Record<string, string> {
+  return S.operatorToken ? { authorization: `Bearer ${S.operatorToken}` } : {};
+}
+function loadOperatorToken(): void {
+  try {
+    S.operatorToken = sessionStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    S.operatorToken = "";
+  }
+}
+function storeOperatorToken(t: string): void {
+  S.operatorToken = t;
+  try {
+    if (t) sessionStorage.setItem(TOKEN_KEY, t);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // no storage: the token lives for this page only
+  }
 }
 
 // ---------- world ----------
@@ -162,6 +186,13 @@ function onMessage(m: ServerMessage): void {
       }
       if (m.agentId === S.selectedId) renderThought();
       break;
+    case "denied":
+      // The server refused a control: no token, or the wrong one. Forget it and ask again.
+      storeOperatorToken("");
+      renderBadge();
+      toast(`${m.action}: the operator token is required`);
+      openTokenDialog();
+      break;
     case "signals": {
       const fresh = newAlertIds(S.signals?.alerts, m.signals.alerts, S.alertFloor);
       S.signals = m.signals;
@@ -204,6 +235,7 @@ function applyHello(h: HelloMessage): void {
   S.events = h.events.slice(-MAX_EVENTS);
   S.decisions = h.decisions.slice(-MAX_DECISIONS);
   S.systemPrompt = h.systemPrompt;
+  S.operatorTokenRequired = h.operatorTokenRequired;
   S.brain = h.brain;
   S.pacing = h.pacing;
   S.signals = h.signals;
@@ -266,6 +298,11 @@ function renderBadge(): void {
   $("brainName").textContent = !on ? (S.connected ? "brain down · world holds" : "offline") : thinking ? `${thinking} thinking` : "minds idle";
   $("brainBadge").title = b?.lastError ? `last error: ${b.lastError}` : b ? `${b.kind} · ${b.model}` : "brain backend";
   $("pacingMode").textContent = S.pacing?.mode ?? "idle";
+  const lock = $("operatorBadge");
+  lock.hidden = !S.operatorTokenRequired;
+  lock.textContent = S.operatorToken ? "operator" : "watch only";
+  lock.title = S.operatorToken ? "this browser holds the operator token; click to forget it" : "controls need the operator token; click to enter it";
+  lock.classList.toggle("on", !!S.operatorToken);
 }
 
 function renderPlayback(): void {
@@ -1226,6 +1263,34 @@ $("btnSpawn").addEventListener("click", () => {
   send({ type: "spawn" });
   toast("spawning a node…");
 });
+// Operator token: asked for once per browser session, kept in sessionStorage, forgotten when the server refuses it.
+const tokenDialog = $("tokenDialog") as HTMLDialogElement;
+const tokenValue = $("tokenValue") as HTMLInputElement;
+function openTokenDialog(): void {
+  if (tokenDialog.open) return;
+  tokenValue.value = "";
+  tokenDialog.showModal();
+  tokenValue.focus();
+}
+$("tokenCancel").addEventListener("click", () => tokenDialog.close());
+$("tokenForm").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const t = tokenValue.value.trim();
+  tokenDialog.close();
+  if (!t) return;
+  storeOperatorToken(t);
+  renderBadge();
+  toast("operator token kept for this session");
+});
+$("operatorBadge").addEventListener("click", () => {
+  if (S.operatorToken) {
+    storeOperatorToken("");
+    renderBadge();
+    toast("operator token forgotten");
+  } else openTokenDialog();
+});
+loadOperatorToken();
+
 // Reset: opens a dialog, and the reset button stays disabled until the word is typed.
 const resetDialog = $("resetDialog") as HTMLDialogElement;
 const resetPhrase = $("resetPhrase") as HTMLInputElement;
@@ -1248,7 +1313,12 @@ $("resetForm").addEventListener("submit", (ev) => {
   ev.preventDefault();
   if (resetPhrase.value !== "RESET") return;
   resetDialog.close();
-  void fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: "RESET" }) }).then(async (r) => {
+  void fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json", ...operatorHeaders() }, body: JSON.stringify({ confirm: "RESET" }) }).then(async (r) => {
+    if (r.status === 401) {
+      storeOperatorToken("");
+      renderBadge();
+      openTokenDialog();
+    }
     if (!r.ok) toast(`reset refused: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
   });
 });

@@ -17,6 +17,13 @@ export interface AppOptions {
   index?: unknown;
   /** Extra static routes, e.g. for tests. */
   log?: (msg: string) => void;
+  /**
+   * When set, every control (pause, resume, speed, spawn, snapshot, reset, quarantine,
+   * freeze, retire, rewind) needs it: a bearer header on POST routes, a `token` field
+   * on socket messages. Reads stay open. Unset: as before, anyone who can reach the
+   * server holds the switch.
+   */
+  operatorToken?: string;
 }
 
 interface WsData {
@@ -42,10 +49,40 @@ export interface App {
   close(): Promise<void>;
 }
 
+/** Constant-time comparison so a token cannot be guessed byte by byte from timing. */
+function sameToken(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i]! ^ y[i]!;
+  return d === 0;
+}
+
+const CONTROL_MESSAGES: ReadonlySet<string> = new Set(["pause", "resume", "speed", "spawn", "snapshot", "quarantine", "freeze", "retire", "rewind"]);
+
 export function createApp(opts: AppOptions): App {
   const { engine } = opts;
   const log = opts.log ?? (() => {});
   const sockets = new Set<ServerWebSocket<WsData>>();
+  const token = opts.operatorToken;
+  /** The operator, or nobody: a POST control route runs only when the bearer token matches (or none is configured). */
+  const operator = (req: Request): boolean => {
+    if (!token) return true;
+    const h = req.headers.get("authorization") ?? "";
+    const given = h.startsWith("Bearer ") ? h.slice(7).trim() : (req.headers.get("x-operator-token") ?? "");
+    return given.length > 0 && sameToken(given, token);
+  };
+  const denied = () => json({ error: "operator token required" }, 401);
+  /** Wrap a route table's POST handlers so each checks the operator first. */
+  const guard = <T extends Record<string, unknown>>(routes: T): T => {
+    for (const [path, r] of Object.entries(routes)) {
+      if (!r || typeof r !== "object" || !("POST" in r)) continue;
+      const inner = (r as { POST: (req: Request, srv?: Server<WsData>) => unknown }).POST;
+      (r as { POST: unknown }).POST = (req: Request, srv?: Server<WsData>) => (operator(req) ? inner(req, srv) : (log(`${path} refused: no operator token from ${srv?.requestIP(req)?.address ?? "unknown"}`), denied()));
+    }
+    return routes;
+  };
 
   let server: Server<WsData>;
   const broadcast = (msg: ServerMessage) => {
@@ -68,6 +105,11 @@ export function createApp(opts: AppOptions): App {
   const unsubscribe = engine.on(broadcast);
 
   const handleClient = async (ws: ServerWebSocket<WsData>, msg: ClientMessage) => {
+    if (token && CONTROL_MESSAGES.has(msg.type) && !(typeof msg.token === "string" && msg.token.length > 0 && sameToken(msg.token, token))) {
+      log(`${msg.type} refused: no operator token from ${ws.remoteAddress}`);
+      ws.send(JSON.stringify({ type: "denied", action: msg.type } satisfies ServerMessage));
+      return;
+    }
     switch (msg.type) {
       case "pause":
         engine.pause();
@@ -133,9 +175,9 @@ export function createApp(opts: AppOptions): App {
     }
   };
 
-  const routes: Record<string, unknown> = {
+  const routes: Record<string, unknown> = guard({
     "/api/state": () => json({ config: engine.world.configView(), state: engine.world.stateView(), pacing: engine.pacingStats(), brain: engine.getBrainStatus() }),
-    "/api/hello": () => json(engine.hello()),
+    "/api/hello": () => json({ ...engine.hello(), operatorTokenRequired: !!token }),
     "/api/tiles": () => json(engine.world.tiles),
     "/api/events": () => json(engine.recentEvents()),
     "/api/decisions": () => json(engine.recentDecisions()),
@@ -269,7 +311,7 @@ export function createApp(opts: AppOptions): App {
     },
     "/api/history/stats": () => (engine.history ? json(engine.history.stats()) : error("history is disabled", 404)),
     "/api/history/timeline": () => (engine.history ? json(engine.history.timeline()) : error("history is disabled", 404)),
-  };
+  });
   if (opts.index) routes["/"] = opts.index;
 
   server = Bun.serve<WsData>({
@@ -290,7 +332,7 @@ export function createApp(opts: AppOptions): App {
       open(ws) {
         sockets.add(ws);
         ws.subscribe(TOPIC);
-        ws.send(JSON.stringify(engine.hello()));
+        ws.send(JSON.stringify({ ...engine.hello(), operatorTokenRequired: !!token }));
       },
       close(ws) {
         ws.unsubscribe(TOPIC);

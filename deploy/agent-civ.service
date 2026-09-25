@@ -9,6 +9,7 @@ Wants=network-online.target agent-civ-llm.service
 ExecStart=/opt/agent-civ/agentciv --host 192.168.101.7 --port 443 \
   --data /var/lib/agent-civ \
   --tls-cert ${CREDENTIALS_DIRECTORY}/fullchain.pem --tls-key ${CREDENTIALS_DIRECTORY}/key.pem \
+  --operator-token-file ${CREDENTIALS_DIRECTORY}/operator-token \
   --max-agents 12 --concurrency 3 --max-tokens 600 \
   --brain openai --base-url http://127.0.0.1:8080/v1 --model qwen3-4b-2507-abliterated
 # --concurrency is a ceiling: the engine measures the backend and picks the
@@ -16,6 +17,7 @@ ExecStart=/opt/agent-civ/agentciv --host 192.168.101.7 --port 443 \
 Slice=agentciv.slice
 LoadCredential=fullchain.pem:/etc/agent-civ/tls/fullchain.pem
 LoadCredential=key.pem:/etc/agent-civ/tls/key.pem
+LoadCredential=operator-token:/etc/agent-civ/operator-token
 DynamicUser=yes
 StateDirectory=agent-civ
 AmbientCapabilities=CAP_NET_BIND_SERVICE
