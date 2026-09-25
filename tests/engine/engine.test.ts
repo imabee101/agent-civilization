@@ -398,7 +398,7 @@ describe("Engine turns", () => {
     expect(e.world.peekTally(a!.id).spoke).toBe(1);
     expect(e.recentDecisions().filter((d) => d.error).length).toBe(1); // one record for the two attempts
     // Retry now succeeds: the prompt still carries the events from before the failed call.
-    e.brainStatus = { ...e.getBrainStatus(), connected: true };
+    await e.checkBrain(); // the probe finds it healthy again
     brain.push(new Error("socket closed"), js("3"));
     const ok = (await e.runTurn(a!.id))!;
     expect(ok.error).toBeUndefined();
@@ -531,6 +531,24 @@ describe("Engine turns", () => {
     expect(pushed.decision.prompt.user.length).toBeGreaterThan(100);
     expect(e.recentDecisions()[0]!.prompt.system.length).toBeGreaterThan(1000);
     expect(e.hello().decisions[0]!.prompt.system).toBe("");
+  });
+
+  test("the last hour of turns is summed up: latency percentiles, prefill and decode seconds, cut and error shares", async () => {
+    class Timed extends ScriptedBrain {
+      override async decide(req: DecisionRequest, opts?: DecideOptions) {
+        const r = await super.decide(req, opts);
+        return { ...r, tokens: 200, latencyMs: 30_000, truncated: /cut/.test(r.text), timings: { promptTokens: 2000, cachedTokens: 1000, promptMs: 8000, outputTokens: 200, outputMs: 20_000 } };
+      }
+    }
+    const e = await mk(new Timed([js("rest()"), js("throw new Error('x')"), "```js\nrest(\n// cut"]));
+    const id = e.world.livingAgents()[0]!.id;
+    for (let i = 0; i < 3; i++) await e.runTurn(id);
+    const w = e.pacingStats().window;
+    expect(w).toMatchObject({ turns: 3, latencyP50Ms: 30_000, prefillSec: 8, decodeSec: 20, outputTokens: 200 });
+    expect(w.cutRate).toBeCloseTo(0.33, 2);
+    expect(w.errorRate).toBeCloseTo(0.67, 2); // the throw and the cut reply that ran nothing
+    expect(w.turnsPerNodePerHour).toBeGreaterThan(0);
+    expect(e.eventCounts["executed-code"]).toBe(1);
   });
 
   test("a turn on a dead or unknown node is a no-op", async () => {

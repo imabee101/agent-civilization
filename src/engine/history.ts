@@ -107,14 +107,18 @@ export class HistoryStore {
     // Rows written before this column existed keep their own copy in system_prompt and read back as before.
     const cols = (this.db.query("PRAGMA table_info(decisions)").all() as { name: string }[]).map((c) => c.name);
     if (!cols.includes("system_hash")) this.db.exec("ALTER TABLE decisions ADD COLUMN system_hash TEXT");
+    // Where a turn's time went, when the backend said: prompt tokens, how many were cached, and the two durations.
+    for (const c of ["prompt_tokens INTEGER", "cached_tokens INTEGER", "prompt_ms REAL", "output_ms REAL"]) {
+      if (!cols.includes(c.split(" ")[0]!)) this.db.exec(`ALTER TABLE decisions ADD COLUMN ${c}`);
+    }
     this.insertPrompt = this.db.prepare("INSERT OR IGNORE INTO prompts (hash, text) VALUES ($hash, $text)");
     this.insertEvent = this.db.prepare(
       `INSERT OR REPLACE INTO events (id, tick, day, kind, importance, agent_id, agent_name, target_id, text, quote, data, at)
        VALUES ($id, $tick, $day, $kind, $importance, $agentId, $agentName, $targetId, $text, $quote, $data, $at)`,
     );
     this.insertDecision = this.db.prepare(
-      `INSERT OR REPLACE INTO decisions (id, tick, agent_id, agent_name, backend, model, system_prompt, system_hash, user_prompt, output, code, result, error, latency_ms, tokens, tokens_per_sec, started_at, finished_at)
-       VALUES ($id, $tick, $agentId, $agentName, $backend, $model, '', $systemHash, $user, $output, $code, $result, $error, $latencyMs, $tokens, $tokensPerSec, $startedAt, $finishedAt)`,
+      `INSERT OR REPLACE INTO decisions (id, tick, agent_id, agent_name, backend, model, system_prompt, system_hash, user_prompt, output, code, result, error, latency_ms, tokens, tokens_per_sec, started_at, finished_at, prompt_tokens, cached_tokens, prompt_ms, output_ms)
+       VALUES ($id, $tick, $agentId, $agentName, $backend, $model, '', $systemHash, $user, $output, $code, $result, $error, $latencyMs, $tokens, $tokensPerSec, $startedAt, $finishedAt, $promptTokens, $cachedTokens, $promptMs, $outputMs)`,
     );
   }
 
@@ -166,6 +170,10 @@ export class HistoryStore {
       tokensPerSec: d.tokensPerSec ?? null,
       startedAt: d.startedAt,
       finishedAt: d.finishedAt,
+      promptTokens: d.timings?.promptTokens ?? null,
+      cachedTokens: d.timings?.cachedTokens ?? null,
+      promptMs: d.timings?.promptMs ?? null,
+      outputMs: d.timings?.outputMs ?? null,
     });
   }
 
@@ -248,6 +256,9 @@ export class HistoryStore {
       latencyMs: r.latency_ms as number,
       tokens: (r.tokens as number | null) ?? undefined,
       tokensPerSec: (r.tokens_per_sec as number | null) ?? undefined,
+      ...(typeof r.output_ms === "number" && typeof r.prompt_ms === "number"
+        ? { timings: { promptTokens: (r.prompt_tokens as number | null) ?? 0, cachedTokens: (r.cached_tokens as number | null) ?? 0, promptMs: r.prompt_ms, outputTokens: (r.tokens as number | null) ?? 0, outputMs: r.output_ms } }
+        : {}),
       startedAt: r.started_at as number,
       finishedAt: r.finished_at as number,
     }));

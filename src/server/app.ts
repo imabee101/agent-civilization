@@ -6,6 +6,7 @@
 import type { Server, ServerWebSocket } from "bun";
 import type { Engine } from "../engine/engine";
 import { REWIND_PHRASE, SPEEDS, type ClientMessage, type ServerMessage, type Speed } from "../shared/protocol";
+import { renderMetrics } from "./metrics";
 
 export interface AppOptions {
   engine: Engine;
@@ -250,6 +251,10 @@ export function createApp(opts: AppOptions): App {
       GET: () => json(engine.snapshot()),
     },
     "/api/health": () => json({ ok: true, tick: engine.world.tick, paused: engine.paused }),
+    "/api/metrics": () =>
+      new Response(renderMetrics({ pacing: engine.pacingStats(), brain: engine.getBrainStatus(), living: engine.world.livingAgents().length, tick: engine.world.tick, eventCounts: engine.eventCounts }), {
+        headers: { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" },
+      }),
     "/api/history/events": (req: Request) => {
       if (!engine.history) return error("history is disabled", 404);
       const u = new URL(req.url);

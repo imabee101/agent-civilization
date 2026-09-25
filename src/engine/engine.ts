@@ -153,6 +153,8 @@ export class Engine {
   /** When the brain was last seen failing, for the "back after" note. */
   private outageSince = 0;
   private lastRuinStamp = "";
+  /** Events by kind since the engine started, for the metrics endpoint. */
+  readonly eventCounts: Record<string, number> = {};
   private lastHealthAt = 0;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
@@ -787,6 +789,7 @@ export class Engine {
       this.emitThinking(agentId, record?.output ?? "", true, true);
     }
     this.decisions.push(record);
+    this.pacing.recordOutcome({ at: record.finishedAt, latencyMs: record.latencyMs, tokens: record.tokens ?? 0, cut: /cut off at the .*token limit/.test(record.error ?? ""), error: !!record.error, timings: record.timings });
     if (this.decisions.length > this.cfg.keepDecisions) this.decisions.splice(0, this.decisions.length - this.cfg.keepDecisions);
     try {
       this.history?.recordDecision(record);
@@ -889,6 +892,7 @@ export class Engine {
     const evs = this.world.drainEvents();
     if (evs.length === 0) return;
     this.events.push(...evs);
+    for (const e of evs) this.eventCounts[e.kind] = (this.eventCounts[e.kind] ?? 0) + 1;
     if (this.events.length > this.cfg.keepEvents) this.events.splice(0, this.events.length - this.cfg.keepEvents);
     this.signals.ingest(evs);
     try {
