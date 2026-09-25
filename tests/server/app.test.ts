@@ -117,6 +117,14 @@ describe("REST API", () => {
     expect(evs.length).toBe(1);
     const decs = await (await fetch(`${base}/api/history/decisions?agent=${a!.id}`)).json();
     expect(decs[0].agentId).toBe(a!.id);
+    const tl = await (await fetch(`${base}/api/history/timeline`)).json();
+    expect(tl.source).toBe("history");
+    expect(Array.isArray(tl.firsts)).toBe(true);
+    expect(tl.days.length).toBeGreaterThan(0);
+    expect(tl.days[0].byKind["executed-code"]).toBe(1);
+    const ranged = await (await fetch(`${base}/api/history/events?from=0&to=1&limit=500`)).json();
+    expect(ranged.every((e: { tick: number }) => e.tick <= 1)).toBe(true);
+    expect(ranged.length).toBeGreaterThan(0);
   });
 
   test("operator routes: quarantine, cache freeze, rewind with the typed word", async () => {

@@ -31,7 +31,8 @@ import { hexToPixel } from "./lib/camera";
 import { HEX_SIZE } from "./world";
 import { ITEM_GLYPH, formatCacheEntry, indexTiles, listFeatures, mergeTiles, structureCss, tileDossier, tileKey } from "./lib/structures";
 import { guardOverflow, refreshGuards } from "./overflow-guard";
-import type { SignalCriticality, SignalsView } from "../src/shared/protocol";
+import type { SignalCriticality, SignalsView, TimelineView } from "../src/shared/protocol";
+import { layoutTimeline, timelineFromEvents } from "./lib/timeline";
 import { WATCH_LIMITS, alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, noticeRows, setLimit, signalTiles, unseenTotal, unwatch, type WatchLimit } from "./lib/oversight";
 
 // ---------- tiny DOM helpers ----------
@@ -69,7 +70,9 @@ const S = {
   selectedId: null as string | null,
   selectedTile: null as string | null,
   watchedId: null as string | null,
-  nerdTab: "brain" as "brain" | "nodes" | "pacing" | "oversight",
+  nerdTab: "brain" as "brain" | "nodes" | "pacing" | "oversight" | "timeline",
+  timeline: null as TimelineView | null,
+  timelineAround: null as { tick: number; events: WorldEvent[] } | null,
   /** Oversight: the latest signals, the alert floor the viewer chose, and the watch budget for live thoughts. */
   signals: null as SignalsView | null,
   alertFloor: "elevated" as SignalCriticality,
@@ -784,6 +787,7 @@ function renderNerd(): void {
     renderNodeList();
     renderNodeDetail();
   } else if (S.nerdTab === "oversight") renderOversight();
+  else if (S.nerdTab === "timeline") void loadTimeline();
   else renderPacing();
 }
 function renderBrain(): void {
@@ -1097,6 +1101,98 @@ function renderOversight(): void {
     }),
   );
 }
+// ---------- timeline ----------
+const SVG = "http://www.w3.org/2000/svg";
+function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, text?: string): SVGElementTagNameMap[K] {
+  const n = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+/** The record from the server when it keeps one, else what this client has seen. Then draw. */
+async function loadTimeline(): Promise<void> {
+  let view: TimelineView | null = null;
+  try {
+    const r = await fetch("/api/history/timeline");
+    if (r.ok) view = (await r.json()) as TimelineView;
+  } catch {
+    // no server history: fall through to the live ring
+  }
+  S.timeline = view ?? timelineFromEvents(S.events);
+  renderTimeline();
+}
+async function loadAround(tick: number): Promise<void> {
+  const span = 20;
+  let events: WorldEvent[] | null = null;
+  if (S.timeline?.source === "history") {
+    try {
+      const r = await fetch(`/api/history/events?from=${tick - span}&to=${tick + span}&limit=80`);
+      if (r.ok) events = (await r.json()) as WorldEvent[];
+    } catch {
+      // fall through
+    }
+  }
+  S.timelineAround = { tick, events: events ?? S.events.filter((e) => Math.abs(e.tick - tick) <= span) };
+  renderTimeline();
+}
+function renderTimeline(): void {
+  const v = S.timeline;
+  const head = $("tlHead");
+  const axis = $("tlAxis") as unknown as SVGSVGElement;
+  const firsts = $("tlFirsts");
+  const around = $("tlAround");
+  if (!v) {
+    head.replaceChildren(el("div", "empty-note", "loading the record…"));
+    return;
+  }
+  const tpd = S.config?.ticksPerDay ?? 240;
+  // Draw in real pixels so labels keep their size: the longest label is about 150px at 11px type.
+  const W = Math.max(240, Math.round(axis.clientWidth || 1000));
+  const H = 140;
+  axis.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const lay = layoutTimeline(v, tpd, Math.min(0.9, 156 / W), 5);
+  head.replaceChildren(
+    el("span", "lbl", v.source === "history" ? `from the record on disk · t${v.firstTick} to t${v.lastTick}` : `from what this client has seen · t${v.firstTick} to t${v.lastTick}`),
+    el("span", "lbl", `${v.days.reduce((s, d) => s + d.total, 0)} events over ${v.days.length} day${v.days.length === 1 ? "" : "s"}`),
+  );
+  const base = H - 24;
+  const barH = 40;
+  axis.replaceChildren();
+  axis.appendChild(svgEl("line", { x1: 0, y1: base, x2: W, y2: base, class: "base" }));
+  for (const b of lay.bars) {
+    const r = svgEl("rect", { x: b.x * W, y: base - b.h * barH, width: Math.max(1, b.w * W - 1), height: Math.max(1, b.h * barH), class: "bar" });
+    r.appendChild(svgEl("title", {}, `day ${b.day}: ${b.total} events`));
+    axis.appendChild(r);
+    axis.appendChild(svgEl("text", { x: b.x * W + 3, y: H - 8, class: "day" }, `d${b.day}`));
+  }
+  for (const m of lay.markers) {
+    const x = m.x * W;
+    const y = base - barH - 8 - m.row * 15;
+    axis.appendChild(svgEl("line", { x1: x, y1: y + 3, x2: x, y2: base, class: "tick" }));
+    const t = svgEl("text", { x: x + 4, y, class: "mk" }, m.label);
+    t.addEventListener("click", () => void loadAround(m.tick));
+    axis.appendChild(t);
+  }
+  firsts.replaceChildren(
+    el("div", "lbl", `firsts · ${v.firsts.length}`),
+    ...(v.firsts.length === 0 ? [el("div", "empty-note", "nothing has happened yet")] : []),
+    ...v.firsts.map((f) => {
+      const row = el("div", "tl-first");
+      const left = el("div", "");
+      left.append(el("div", "tag", f.label), eventRow(f.event));
+      const b = el("button", "tbtn", `around t${f.event.tick}`) as HTMLButtonElement;
+      b.type = "button";
+      b.addEventListener("click", () => void loadAround(f.event.tick));
+      row.append(left, b);
+      return row;
+    }),
+  );
+  const a = S.timelineAround;
+  around.replaceChildren(
+    el("div", "lbl", a ? `around t${a.tick} · ${a.events.length} events` : "around a moment"),
+    ...(a ? (a.events.length ? a.events.map((e) => eventRow(e)) : [el("div", "empty-note", "nothing recorded near that tick")]) : [el("div", "empty-note", "pick a first to see what was happening around it, in the record's own words")]),
+  );
+}
 function fmtUptime(ms: number): string {
   const s = Math.floor(ms / 1000);
   const d = Math.floor(s / 86400);
@@ -1165,6 +1261,9 @@ $("rewindForm").addEventListener("submit", (ev) => {
   if (rewindPhrase.value !== "REWIND" || !rewindTarget) return;
   rewindDialog.close();
   send({ type: "rewind", agentId: rewindTarget, confirm: "REWIND" });
+});
+window.addEventListener("resize", () => {
+  if (S.nerdTab === "timeline" && document.body.classList.contains("nerd-open") && S.timeline) renderTimeline();
 });
 $("btnNerd").addEventListener("click", () => openNerd(!document.body.classList.contains("nerd-open")));
 $("nerdClose").addEventListener("click", () => openNerd(false));
@@ -1247,7 +1346,7 @@ declare global {
       selectTile: (q: number, r: number) => void;
       goToTile: (q: number, r: number) => void;
       openTab: (t: "world" | "groups" | "chronicle" | "hood") => void;
-      openHoodTab: (t: "brain" | "nodes" | "pacing" | "oversight") => void;
+      openHoodTab: (t: "brain" | "nodes" | "pacing" | "oversight" | "timeline") => void;
       coverage: () => number;
       closeAll: () => void;
       setMobileTab: (t: "world" | "groups" | "chronicle" | "hood") => void;

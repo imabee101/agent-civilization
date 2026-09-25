@@ -254,7 +254,7 @@ export function createApp(opts: AppOptions): App {
       if (!engine.history) return error("history is disabled", 404);
       const u = new URL(req.url);
       const num = (k: string) => (u.searchParams.has(k) ? Number(u.searchParams.get(k)) : undefined);
-      return json(engine.history.events({ before: num("before"), limit: num("limit"), kind: u.searchParams.get("kind") ?? undefined, agentId: u.searchParams.get("agent") ?? undefined, minImportance: num("importance") }));
+      return json(engine.history.events({ before: num("before"), limit: num("limit"), kind: u.searchParams.get("kind") ?? undefined, agentId: u.searchParams.get("agent") ?? undefined, minImportance: num("importance"), fromTick: num("from"), toTick: num("to") }));
     },
     "/api/history/decisions": (req: Request) => {
       if (!engine.history) return error("history is disabled", 404);
@@ -263,6 +263,7 @@ export function createApp(opts: AppOptions): App {
       return json(engine.history.decisions({ before: num("before"), limit: num("limit"), agentId: u.searchParams.get("agent") ?? undefined }));
     },
     "/api/history/stats": () => (engine.history ? json(engine.history.stats()) : error("history is disabled", 404)),
+    "/api/history/timeline": () => (engine.history ? json(engine.history.timeline()) : error("history is disabled", 404)),
   };
   if (opts.index) routes["/"] = opts.index;
 

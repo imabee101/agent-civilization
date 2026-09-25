@@ -44,6 +44,36 @@ describe("HistoryStore", () => {
     expect(h.events().find((e) => e.id === 2)!.text).toBe("changed");
   });
 
+  test("tick ranges come oldest first; the timeline marks firsts and counts per day", () => {
+    const h = new HistoryStore();
+    stores.push(h);
+    h.recordEvents([
+      ev(1, { kind: "spawned", day: 1, tick: 0 }),
+      ev(2, { kind: "cached", day: 1, tick: 5, quote: "hello" }),
+      ev(3, { kind: "cached", day: 1, tick: 6 }),
+      ev(4, { kind: "spoke", day: 2, tick: 250 }),
+      ev(5, { kind: "died", day: 2, tick: 260, importance: 3 }),
+    ]);
+    expect(h.events({ fromTick: 5, toTick: 250 }).map((e) => e.id)).toEqual([2, 3, 4]);
+    expect(h.events({ fromTick: 251 }).map((e) => e.id)).toEqual([5]);
+    const t = h.timeline();
+    expect(t.source).toBe("history");
+    expect(t.firsts.map((f) => [f.key, f.event.id])).toEqual([
+      ["cached", 2],
+      ["spoke", 4],
+      ["died", 5],
+    ]);
+    expect(t.firsts[0]!.label).toBe("first Cache entry");
+    expect(t.firsts[0]!.event.quote).toBe("hello");
+    expect(t.days).toEqual([
+      { day: 1, total: 3, byKind: { spawned: 1, cached: 2 } },
+      { day: 2, total: 2, byKind: { spoke: 1, died: 1 } },
+    ]);
+    expect(t.firstTick).toBe(0);
+    expect(t.lastTick).toBe(260);
+    expect(new HistoryStore().timeline()).toEqual({ firsts: [], days: [], firstTick: 0, lastTick: 0, source: "history" });
+  });
+
   test("records and queries decisions", () => {
     const h = new HistoryStore();
     stores.push(h);

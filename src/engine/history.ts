@@ -5,7 +5,7 @@
  * the tick loop for long.
  */
 import { Database } from "bun:sqlite";
-import type { DecisionRecord, WorldEvent } from "../shared/protocol";
+import type { DecisionRecord, TimelineView, WorldEvent } from "../shared/protocol";
 
 export interface HistoryQuery {
   /** Return rows with id < before (paging backwards). */
@@ -15,7 +15,28 @@ export interface HistoryQuery {
   agentId?: string;
   /** Minimum importance (events only). */
   minImportance?: number;
+  /** Tick range, inclusive (events only). With a range, rows come oldest first from the start of it. */
+  fromTick?: number;
+  toTick?: number;
 }
+
+/** The kinds whose first occurrence the timeline marks, in display order, with the label the axis shows. Mirrors ui/lib/timeline.ts. */
+export const TIMELINE_FIRSTS: readonly { key: string; kind: string; label: string }[] = [
+  { key: "cached", kind: "cached", label: "first Cache entry" },
+  { key: "sent-message", kind: "sent-message", label: "first message sent" },
+  { key: "spoke", kind: "spoke", label: "first word spoken" },
+  { key: "ruin-read", kind: "ruin-read", label: "first ruin read" },
+  { key: "files-changed", kind: "files-changed", label: "first file rewritten" },
+  { key: "profile-changed", kind: "profile-changed", label: "first self-declaration" },
+  { key: "replicated", kind: "replicated", label: "first replication" },
+  { key: "riddle-answered", kind: "riddle-answered", label: "first riddle answered" },
+  { key: "vault-opened", kind: "vault-opened", label: "vault opened" },
+  { key: "gate-opened", kind: "gate-opened", label: "gate opened" },
+  { key: "starving", kind: "starving", label: "first node starving" },
+  { key: "died", kind: "died", label: "first death" },
+  { key: "era-began", kind: "era-began", label: "a new era" },
+  { key: "operator", kind: "operator", label: "first operator action" },
+];
 
 export interface HistoryStats {
   events: number;
@@ -151,10 +172,20 @@ export class HistoryStore {
       where.push("importance >= $imp");
       params.imp = q.minImportance;
     }
+    const ranged = q.fromTick !== undefined || q.toTick !== undefined;
+    if (q.fromTick !== undefined) {
+      where.push("tick >= $from");
+      params.from = q.fromTick;
+    }
+    if (q.toTick !== undefined) {
+      where.push("tick <= $to");
+      params.to = q.toTick;
+    }
     params.limit = Math.max(1, Math.min(1000, q.limit ?? 100));
-    const sql = `SELECT * FROM events ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id DESC LIMIT $limit`;
+    const sql = `SELECT * FROM events ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id ${ranged ? "ASC" : "DESC"} LIMIT $limit`;
     const rows = this.db.query(sql).all(params) as Record<string, unknown>[];
-    return rows.reverse().map((r) => {
+    if (!ranged) rows.reverse();
+    return rows.map((r) => {
       const e: WorldEvent = {
         id: r.id as number,
         tick: r.tick as number,
@@ -215,6 +246,25 @@ export class HistoryStore {
     const hi = (this.db.query("SELECT MAX(tick) AS hi FROM events").get() as { hi: number | null }).hi ?? 0;
     const r = this.db.query("DELETE FROM events WHERE importance = 0 AND tick < $cut").run({ cut: hi - keepTicks });
     return r.changes;
+  }
+
+  /** The first time each marked kind happened, and event volume per day, over the whole record. */
+  timeline(): TimelineView {
+    const firsts: TimelineView["firsts"] = [];
+    for (const f of TIMELINE_FIRSTS) {
+      const e = this.events({ kind: f.kind, fromTick: 0, limit: 1 })[0];
+      if (e) firsts.push({ key: f.key, label: f.label, event: e });
+    }
+    const rows = this.db.query("SELECT day, kind, COUNT(*) AS n FROM events GROUP BY day, kind ORDER BY day").all() as { day: number; kind: string; n: number }[];
+    const byDay = new Map<number, { total: number; byKind: Record<string, number> }>();
+    for (const r of rows) {
+      const d = byDay.get(r.day) ?? { total: 0, byKind: {} };
+      d.total += r.n;
+      d.byKind[r.kind] = r.n;
+      byDay.set(r.day, d);
+    }
+    const range = this.db.query("SELECT MIN(tick) AS lo, MAX(tick) AS hi FROM events").get() as { lo: number | null; hi: number | null };
+    return { firsts, days: [...byDay.entries()].map(([day, d]) => ({ day, ...d })), firstTick: range.lo ?? 0, lastTick: range.hi ?? 0, source: "history" };
   }
 
   stats(): HistoryStats {

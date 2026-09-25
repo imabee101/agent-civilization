@@ -179,6 +179,7 @@ const STATES: StateSpec[] = [
   { name: "hood-nodes", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('nodes'), true) : ${clickJs("nodes", "#nerd")}`, panel: "hood", fills: true },
   { name: "hood-pacing", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('pacing'), true) : ${clickJs("pacing", "#nerd")}`, panel: "hood", fills: true },
   { name: "hood-oversight", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('oversight'), true) : ${clickJs("oversight", "#nerd")}`, panel: "hood", fills: true },
+  { name: "hood-timeline", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('timeline'), true) : ${clickJs("timeline", "#nerd")}`, panel: "hood", fills: true },
   { name: "back-to-world", enter: `(window.__llmwar && window.__llmwar.closeAll) ? (window.__llmwar.closeAll(), true) : (${clickJs("world", "#tabbar")} || (document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), true))` },
 ];
 
