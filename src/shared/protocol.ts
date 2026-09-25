@@ -336,6 +336,28 @@ export interface PacingStats {
   decodeTps: number;
   /** Share of prompt tokens the backend found in its cache, moving average; 0 when unknown. */
   cacheHit: number;
+  /** The level that measured the best throughput so far. */
+  bestConcurrency: number;
+  /** Over the last hour of turns: where a turn's time went and how it ended. */
+  window: TurnWindow;
+}
+
+/** Turn outcomes over a trailing window (an hour), for the efficiency row and the metrics endpoint. */
+export interface TurnWindow {
+  turns: number;
+  /** Turns per living node per hour, at the current population. */
+  turnsPerNodePerHour: number;
+  latencyP50Ms: number;
+  latencyP90Ms: number;
+  /** Mean seconds a turn spent in prompt processing and in generation, from backend timings; 0 when none. */
+  prefillSec: number;
+  decodeSec: number;
+  /** Mean output tokens per turn. */
+  outputTokens: number;
+  /** Share of turns cut at the token limit. */
+  cutRate: number;
+  /** Share of turns whose code threw, or that failed at the brain. */
+  errorRate: number;
 }
 
 export interface WorldConfigView {

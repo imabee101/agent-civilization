@@ -293,6 +293,17 @@ time) feed the Pacing tab and reclassify a backend that changed underneath.
 Generation stops at the closing code fence, so a reply is one block and
 nothing after it.
 
+**Where the time goes.** The Pacing tab's efficiency row shows, over the
+last hour: seconds per turn split into prompt processing and generation,
+turns per living node per hour, the share of replies cut at the token
+limit and of turns that threw, output tokens per turn, and the
+concurrency level that measured best. `GET /api/metrics` serves the same
+numbers plus event counters in Prometheus text format, beside
+llama-server's own `/metrics`. `bun run report <history.sqlite | https://host>`
+prints the same reading over a whole record: outcomes, latency
+percentiles, backend timings, code shape, API calls, error classes, turns
+per node, events by kind; `--hours N` limits it to the last N hours.
+
 **What a turn costs, and what a cut reply does.** The prompt tells the node
 its reply budget in tokens and asks for under forty lines with no comments.
 The changing half of the prompt shrinks to `--prompt-chars` (default 12000):

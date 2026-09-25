@@ -196,6 +196,8 @@ export function createMockTransport(): Transport {
     prefillTps: 96 + Math.round(rnd() * 20),
     decodeTps: 15 + Math.round(rnd() * 30) / 10,
     cacheHit: 0.31,
+    bestConcurrency: 1,
+    window: { turns: 40 + (tick % 20), turnsPerNodePerHour: 9.5, latencyP50Ms: 31_000, latencyP90Ms: 48_000, prefillSec: 9.2, decodeSec: 18.4, outputTokens: 310, cutRate: 0.05, errorRate: 0.18 },
   });
   const push = (kind: EventKind, importance: 0 | 1 | 2 | 3, text: string, a?: AgentView, extra: Partial<WorldEvent> = {}) => {
     const e: WorldEvent = { id: evId++, tick, day: Math.floor(tick / config.ticksPerDay) + 1, kind, importance, text, agentId: a?.id, agentName: a?.name, ...extra };

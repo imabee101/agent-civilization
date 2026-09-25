@@ -3,7 +3,7 @@
  * often nodes get model turns. This only changes *when* a node's model is
  * consulted, never what the node may do.
  */
-import type { BackendKind, BackendTimings, PacingMode, PacingStats } from "../shared/protocol";
+import type { BackendKind, BackendTimings, PacingMode, PacingStats, TurnWindow } from "../shared/protocol";
 
 export interface PacingConfig {
   /** Base wall-clock ms per tick at speed 1. */
@@ -43,6 +43,16 @@ export function dueIn(interval: number, urgency: Urgency): number {
   return Math.max(1, Math.ceil(interval * SALIENCE[urgency]));
 }
 
+export interface TurnOutcome {
+  at: number;
+  latencyMs: number;
+  tokens: number;
+  cut: boolean;
+  error: boolean;
+  timings?: BackendTimings;
+}
+const WINDOW_MS = 60 * 60 * 1000;
+
 export class Pacing {
   readonly cfg: PacingConfig;
   avgLatencyMs = 0;
@@ -73,6 +83,8 @@ export class Pacing {
   prefillTps = 0;
   decodeTps = 0;
   cacheHit = 0;
+  /** Every turn of the last hour: how long, how many tokens, where the time went, how it ended. */
+  private readonly turns: TurnOutcome[] = [];
 
   constructor(cfg: PacingConfig) {
     this.cfg = cfg;
@@ -112,6 +124,38 @@ export class Pacing {
     let best = 1;
     for (let l = 1; l <= this.ceiling; l++) if ((this.levelThroughput(l) ?? -1) > (this.levelThroughput(best) ?? -1)) best = l;
     return best;
+  }
+
+  /** One turn's outcome, kept for an hour. Errors at the brain are turns too: they cost time and produced nothing. */
+  recordOutcome(o: TurnOutcome): void {
+    this.turns.push(o);
+    const cutoff = o.at - WINDOW_MS;
+    while (this.turns.length && this.turns[0]!.at < cutoff) this.turns.shift();
+  }
+
+  window(livingNodes: number, now = Date.now()): TurnWindow {
+    const cutoff = now - WINDOW_MS;
+    const turns = this.turns.filter((t) => t.at >= cutoff);
+    const n = turns.length;
+    const q = (xs: number[], p: number) => {
+      if (!xs.length) return 0;
+      const s = [...xs].sort((a, b) => a - b);
+      return s[Math.min(s.length - 1, Math.floor(p * s.length))]!;
+    };
+    const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+    const spanMs = n ? Math.max(1, Math.min(WINDOW_MS, now - Math.min(...turns.map((t) => t.at)))) : 1;
+    const timed = turns.filter((t) => t.timings);
+    return {
+      turns: n,
+      turnsPerNodePerHour: n && livingNodes ? Math.round(((n / livingNodes) * 3_600_000) / spanMs * 10) / 10 : 0,
+      latencyP50Ms: Math.round(q(turns.map((t) => t.latencyMs), 0.5)),
+      latencyP90Ms: Math.round(q(turns.map((t) => t.latencyMs), 0.9)),
+      prefillSec: Math.round(mean(timed.map((t) => t.timings!.promptMs)) / 100) / 10,
+      decodeSec: Math.round(mean(timed.map((t) => t.timings!.outputMs)) / 100) / 10,
+      outputTokens: Math.round(mean(turns.map((t) => t.tokens))),
+      cutRate: n ? Math.round((turns.filter((t) => t.cut).length / n) * 100) / 100 : 0,
+      errorRate: n ? Math.round((turns.filter((t) => t.error).length / n) * 100) / 100 : 0,
+    };
   }
 
   recordTimings(t: BackendTimings): void {
@@ -241,6 +285,8 @@ export class Pacing {
       prefillTps: Math.round(this.prefillTps * 10) / 10,
       decodeTps: Math.round(this.decodeTps * 10) / 10,
       cacheHit: Math.round(this.cacheHit * 100) / 100,
+      bestConcurrency: this.bestConcurrency,
+      window: this.window(opts.livingNodes, now),
     };
   }
 }

@@ -73,6 +73,13 @@ describe("REST API", () => {
     expect((await (await fetch(`${base}/api/health`)).json()).tick).toBe(engine.world.tick);
     expect((await (await fetch(`${base}/api/tiles`)).json()).length).toBe(engine.world.tiles.length);
     expect((await (await fetch(`${base}/api/hello`)).json()).type).toBe("hello");
+    const metrics = await fetch(`${base}/api/metrics`);
+    expect(metrics.headers.get("content-type")).toContain("text/plain");
+    const text = await metrics.text();
+    expect(text).toContain("# TYPE agentciv_tick gauge\nagentciv_tick 0");
+    expect(text).toContain("agentciv_living_nodes 2");
+    expect(text).toMatch(/agentciv_events_total\{kind="spawned"\} 2/);
+    expect(text).toContain("agentciv_concurrency_ceiling 1");
     expect((await fetch(`${base}/nope`)).status).toBe(404);
   });
 

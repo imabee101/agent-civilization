@@ -111,6 +111,16 @@ describe("HistoryStore", () => {
     for (const suffix of ["", "-wal", "-shm"]) await unlink(path + suffix).catch(() => {});
   });
 
+  test("backend timings are kept as columns and read back as timings", () => {
+    const h = new HistoryStore();
+    stores.push(h);
+    h.recordDecision(dec(1, { timings: { promptTokens: 2000, cachedTokens: 1300, promptMs: 7000.5, outputTokens: 300, outputMs: 15_000 }, tokens: 300 }));
+    h.recordDecision(dec(2));
+    const [a, b] = h.decisions();
+    expect(a!.timings).toEqual({ promptTokens: 2000, cachedTokens: 1300, promptMs: 7000.5, outputTokens: 300, outputMs: 15_000 });
+    expect(b!.timings).toBeUndefined();
+  });
+
   test("stats and clear", () => {
     const h = new HistoryStore();
     stores.push(h);

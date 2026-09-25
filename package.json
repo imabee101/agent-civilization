@@ -12,7 +12,8 @@
     "test:ui": "bun test tests/ui",
     "test:sandbox": "bun test tests/sandbox",
     "check": "bun run --parallel typecheck test",
-    "e2e": "bun scripts/e2e-screens.ts"
+    "e2e": "bun scripts/e2e-screens.ts",
+    "report": "bun scripts/report.ts"
   },
   "dependencies": {
     "@jitl/quickjs-singlefile-cjs-release-sync": "^0.31.0",
