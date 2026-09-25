@@ -204,7 +204,7 @@ describe("RandomBrain", () => {
     for (let i = 0; i < N; i++) {
       const r = await brain.decide({ ...req, context: { visibleNodeIds: ["n1"] } });
       const code = r.text.split("\n")[1]!;
-      const key = code.replace(/\(.*$/, "").replace(/"[^"]*"/g, "");
+      const key = code.replace(/"[^"]*"/g, '"S"').replace(/\d+/g, "N");
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     expect(counts.size).toBe(RANDOM_SNIPPETS.length);

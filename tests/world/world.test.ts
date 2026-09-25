@@ -3,7 +3,7 @@ import { World, WorldError } from "../../src/world/world";
 import { hexDistance, hexNeighbor } from "../../src/world/hex";
 
 function mk(extra = {}) {
-  return new World({ seed: 5, mapRadius: 6, ...extra });
+  return new World({ seed: 5, mapRadius: 6, features: false, ...extra });
 }
 
 describe("World terrain", () => {
@@ -22,7 +22,7 @@ describe("World terrain", () => {
 
   test("center is always land", () => {
     for (let seed = 1; seed < 30; seed++) {
-      const w = new World({ seed, mapRadius: 8 });
+      const w = new World({ seed, mapRadius: 8, features: false });
       expect(w.tileAt({ q: 0, r: 0 })!.terrain).not.toBe("water");
     }
   });
@@ -107,7 +107,7 @@ describe("World agents and survival", () => {
     w.intentGather(a.id);
     w.step();
     expect(a.inventory.food).toBe(w.config.maxInventoryFood);
-    expect(a.log.some((l) => l.includes("inventory full"))).toBe(true);
+    expect(a.log.some((l) => l.includes("no room for more food"))).toBe(true);
   });
 
   test("drop puts food on the tile so another node can gather it", () => {
@@ -401,7 +401,7 @@ describe("World snapshot", () => {
   });
 
   test("restore rejects unknown versions", () => {
-    expect(() => World.restore({ version: 2 } as any)).toThrow();
+    expect(() => World.restore({ version: 3 } as any)).toThrow();
   });
 
   test("reset clears agents and regenerates terrain", () => {
@@ -412,7 +412,7 @@ describe("World snapshot", () => {
     expect(w.agents.size).toBe(0);
     expect(w.tick).toBe(0);
     expect(w.config.seed).toBe(99);
-    expect(w.tiles).toEqual(new World({ seed: 99, mapRadius: 6 }).tiles);
+    expect(w.tiles).toEqual(new World({ seed: 99, mapRadius: 6, features: false }).tiles);
   });
 });
 

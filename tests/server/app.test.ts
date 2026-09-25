@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 async function boot(brain = new ScriptedBrain()) {
-  const engine = new Engine(brain, { world: { seed: 3, mapRadius: 5, foodDrainPerTick: 0 }, initialAgents: 2, healthEveryMs: 0, snapshotEveryTicks: 0 });
+  const engine = new Engine(brain, { world: { seed: 3, mapRadius: 5, foodDrainPerTick: 0, features: false }, initialAgents: 2, healthEveryMs: 0, snapshotEveryTicks: 0 });
   await engine.init();
   const app = createApp({ engine, port: 0, hostname: "127.0.0.1" });
   const server = app.server;
@@ -95,6 +95,23 @@ describe("REST API", () => {
     expect((await fetch(`${base}/api/snapshot`, { method: "POST" })).status).toBe(409);
     const snap = await (await fetch(`${base}/api/snapshot`)).json();
     expect(snap.world.config.seed).toBe(77);
+  });
+
+  test("history endpoints", async () => {
+    const { base, engine } = await boot();
+    expect((await fetch(`${base}/api/history/stats`)).status).toBe(404);
+    const { HistoryStore } = await import("../../src/engine/history");
+    engine.history = new HistoryStore();
+    cleanup.push(() => engine.history?.close());
+    await engine.tick();
+    const [a] = engine.world.livingAgents();
+    await engine.runTurn(a!.id);
+    const stats = await (await fetch(`${base}/api/history/stats`)).json();
+    expect(stats.decisions).toBe(1);
+    const evs = await (await fetch(`${base}/api/history/events?kind=executed-code&limit=5`)).json();
+    expect(evs.length).toBe(1);
+    const decs = await (await fetch(`${base}/api/history/decisions?agent=${a!.id}`)).json();
+    expect(decs[0].agentId).toBe(a!.id);
   });
 
   test("spawn beyond the cap is a 409", async () => {

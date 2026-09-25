@@ -24,6 +24,19 @@ function fakeBridge(overrides: Partial<HostBridge> = {}): HostBridge & { calls: 
     move: rec("move", true),
     moveToward: rec("moveToward", true),
     gather: rec("gather", undefined),
+    build: rec("build", undefined),
+    demolish: rec("demolish", undefined),
+    plant: rec("plant", undefined),
+    take: rec("take", "key"),
+    dropItem: rec("dropItem", "key"),
+    signWrite: rec("signWrite", undefined),
+    boardRead: rec("boardRead", [{ tick: 1, by: "n1", byName: "A", text: "hi" }]),
+    boardPost: rec("boardPost", undefined),
+    cacheList: rec("cacheList", [{ name: "README", by: "ruin", byName: "P", tick: 0, bytes: 3 }]),
+    cacheRead: rec("cacheRead", "content"),
+    cacheWrite: rec("cacheWrite", undefined),
+    cacheRemove: rec("cacheRemove", true),
+    fsAppend: rec("fsAppend", undefined),
     eat: rec("eat", undefined),
     drop: rec("drop", undefined),
     rest: rec("rest", undefined),
@@ -104,7 +117,7 @@ describe("sandbox: nothing from the host is reachable", () => {
       "encodeURI", "encodeURIComponent", "escape", "eval", "globalThis", "isFinite", "isNaN", "parseFloat", "parseInt",
       "undefined", "unescape",
     ];
-    const api = ["observe", "move", "moveToward", "gather", "eat", "drop", "rest", "say", "send", "fs", "ruins", "me", "log", "console"];
+    const api = ["observe", "move", "moveToward", "gather", "eat", "drop", "rest", "build", "demolish", "plant", "take", "dropItem", "say", "send", "sign", "board", "cache", "fs", "ruins", "me", "log", "console", "hex"];
     expect((r as any).value).toBe([...builtins, ...api].sort().join(" "));
   });
 
@@ -265,8 +278,11 @@ describe("sandbox: bridge semantics", () => {
   test("every host function is exposed through the prelude API", async () => {
     const { sb, bridge } = await mk();
     const r = sb.eval(`
-      observe(); move("ne"); moveToward(1, 2); gather(); eat(5); drop(3); rest();
-      say("hi"); send("n1", {a: 1}); fs.read("main.js"); fs.write("x", "y"); fs.list(); fs.remove("x");
+      observe(); move("ne"); moveToward(1, 2); gather(); gather("wood"); eat(5); drop(3); rest();
+      build("sign", "hello"); demolish(); plant(); take(); take("key"); dropItem("key");
+      say("hi"); send("n1", {a: 1}); sign.write("x"); board.read(); board.post("p");
+      cache.list(); cache.read("README"); cache.mkdir("me"); cache.write("f", {a:1}); cache.rmdir("f");
+      fs.read("main.js"); fs.write("x", "y"); fs.append("x", "z"); fs.list(); fs.remove("x");
       ruins.files("n9"); ruins.read("n9", "main.js"); me.set("group", "river"); log("done", {b: 2});
     `);
     expect(r.ok).toBe(true);
@@ -276,6 +292,16 @@ describe("sandbox: bridge semantics", () => {
     expect(bridge.calls.find((c) => c[0] === "send")![1]).toEqual(["n1", '{"a":1}']);
     expect(bridge.calls.find((c) => c[0] === "eat")![1]).toEqual([5]);
     expect(bridge.calls.find((c) => c[0] === "move")![1]).toEqual(["ne"]);
+    expect(bridge.calls.filter((c) => c[0] === "gather").map((c) => c[1])).toEqual([["food"], ["wood"]]);
+    expect(bridge.calls.filter((c) => c[0] === "cacheWrite").map((c) => c[1])).toEqual([["me", ""], ["f", '{"a":1}']]);
+  });
+
+  test("hex helpers are pure and correct inside the VM", async () => {
+    const { sb } = await mk();
+    expect(sb.eval("hex.distance({q:0,r:0},{q:3,r:-1})")).toMatchObject({ ok: true, value: "3" });
+    expect(sb.eval("hex.neighbors({q:1,r:1}).length")).toMatchObject({ ok: true, value: "6" });
+    expect(sb.eval("hex.toward({q:0,r:0},{q:4,r:0})")).toMatchObject({ ok: true, value: "0" });
+    expect(sb.eval("Object.isFrozen(hex)")).toMatchObject({ ok: true, value: "true" });
   });
 
   test("objects returned by the host arrive parsed", async () => {

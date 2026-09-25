@@ -22,6 +22,8 @@ interface WsData {
   lastStamp: string;
 }
 
+const TOPIC = "world";
+
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
 const error = (message: string, status = 400) => json({ error: message }, status);
 
@@ -41,10 +43,11 @@ export function createApp(opts: AppOptions): App {
   const log = opts.log ?? (() => {});
   const sockets = new Set<ServerWebSocket<WsData>>();
 
+  let server: Server<WsData>;
   const broadcast = (msg: ServerMessage) => {
     if (sockets.size === 0) return;
-    const text = JSON.stringify(msg);
-    for (const ws of sockets) ws.send(text);
+    // One serialisation, fanned out by Bun's pub/sub.
+    server.publish(TOPIC, JSON.stringify(msg));
     // Push node detail to anyone watching a node whose detail changed.
     if (msg.type === "tick" || msg.type === "decision" || msg.type === "events") {
       for (const ws of sockets) {
@@ -151,10 +154,23 @@ export function createApp(opts: AppOptions): App {
       GET: () => json(engine.snapshot()),
     },
     "/api/health": () => json({ ok: true, tick: engine.world.tick, paused: engine.paused }),
+    "/api/history/events": (req: Request) => {
+      if (!engine.history) return error("history is disabled", 404);
+      const u = new URL(req.url);
+      const num = (k: string) => (u.searchParams.has(k) ? Number(u.searchParams.get(k)) : undefined);
+      return json(engine.history.events({ before: num("before"), limit: num("limit"), kind: u.searchParams.get("kind") ?? undefined, agentId: u.searchParams.get("agent") ?? undefined, minImportance: num("importance") }));
+    },
+    "/api/history/decisions": (req: Request) => {
+      if (!engine.history) return error("history is disabled", 404);
+      const u = new URL(req.url);
+      const num = (k: string) => (u.searchParams.has(k) ? Number(u.searchParams.get(k)) : undefined);
+      return json(engine.history.decisions({ before: num("before"), limit: num("limit"), agentId: u.searchParams.get("agent") ?? undefined }));
+    },
+    "/api/history/stats": () => (engine.history ? json(engine.history.stats()) : error("history is disabled", 404)),
   };
   if (opts.index) routes["/"] = opts.index;
 
-  const server = Bun.serve<WsData>({
+  server = Bun.serve<WsData>({
     port: opts.port ?? 0,
     hostname: opts.hostname ?? "0.0.0.0",
     development: false,
@@ -170,9 +186,11 @@ export function createApp(opts: AppOptions): App {
     websocket: {
       open(ws) {
         sockets.add(ws);
+        ws.subscribe(TOPIC);
         ws.send(JSON.stringify(engine.hello()));
       },
       close(ws) {
+        ws.unsubscribe(TOPIC);
         sockets.delete(ws);
       },
       message(ws, raw) {

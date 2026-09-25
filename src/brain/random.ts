@@ -15,6 +15,7 @@ type Snippet = (rng: Rng, ctx: DecisionRequest["context"]) => string | null;
 export const RANDOM_SNIPPETS: readonly Snippet[] = [
   (rng) => `move(${rng.int(6)})`,
   () => `gather()`,
+  (rng) => `gather(${JSON.stringify(rng.pick(["wood", "stone"]))})`,
   (rng) => `eat(${5 + rng.int(20)})`,
   () => `rest()`,
   (rng) => `say(${JSON.stringify(rng.pick(WORDS) + " " + rng.pick(WORDS))})`,

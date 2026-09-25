@@ -13,6 +13,9 @@ export interface AppConfig {
   hostname: string;
   dataDir: string;
   fresh: boolean;
+  /** Keep every event and decision in data/history.sqlite. */
+  history: boolean;
+  backupsToKeep: number;
   seed?: number;
   engine: Partial<EngineConfig>;
   brain: Partial<BrainConfig> & { kind?: string };
@@ -27,6 +30,8 @@ usage: llmwar [options]
   --host <addr>         bind address (default 0.0.0.0)
   --data <dir>          snapshot directory (default ./data, env LLMWAR_DATA)
   --fresh               ignore any saved snapshot and start a new world
+  --no-history          do not keep the SQLite history of events and decisions
+  --backups <n>         hourly snapshot backups to keep (default 48)
   --seed <n>            world seed for a fresh world
   --agents <n>          initial population (default 6)
   --max-agents <n>      population cap (default 24)
@@ -110,6 +115,8 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
     hostname: get("host") ?? env.HOST ?? "0.0.0.0",
     dataDir: get("data") ?? env.LLMWAR_DATA ?? "./data",
     fresh: has("fresh"),
+    history: !has("no-history") && env.LLMWAR_HISTORY !== "0",
+    backupsToKeep: num(get("backups")) ?? 48,
     seed,
     engine,
     brain,

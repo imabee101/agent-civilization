@@ -12,6 +12,7 @@ import type { HandlerName } from "../sandbox/api";
 import type { BrainStatus, DecisionRecord, HelloMessage, NodeDetail, PacingStats, ServerMessage, Speed, WorldEvent } from "../shared/protocol";
 import { World, type WorldConfig, type WorldSnapshot, type Delivery } from "../world/world";
 import { makeBridge } from "./bridge";
+import type { HistoryStore } from "./history";
 import { Pacing, type PacingConfig } from "./pacing";
 
 export interface EngineConfig extends PacingConfig {
@@ -100,6 +101,8 @@ export class Engine {
   private lastHealthAt = 0;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
+  /** Optional durable history (SQLite). */
+  history: HistoryStore | undefined;
 
   constructor(brain: Brain, cfg: Partial<EngineConfig> = {}, world?: World) {
     this.cfg = { ...DEFAULT_ENGINE_CONFIG, ...cfg, world: { ...cfg.world }, sandbox: { ...cfg.sandbox } };
@@ -114,7 +117,8 @@ export class Engine {
   /** Create sandboxes for living nodes and spawn the initial population if the world is empty. */
   async init(): Promise<void> {
     for (const a of this.world.livingAgents()) await this.attachSandbox(a.id);
-    if (this.world.agents.size === 0) {
+    // A fresh world may already contain ancient ruins; only living nodes count as a population.
+    if (this.world.livingAgents().length === 0 && this.world.tick === 0) {
       for (let i = 0; i < this.cfg.initialAgents; i++) await this.spawn();
     }
     this.flushEvents();
@@ -255,6 +259,7 @@ export class Engine {
     this.world.reset(seed);
     this.events = [];
     this.decisions = [];
+    this.history?.clear();
     for (let i = 0; i < this.cfg.initialAgents; i++) {
       const a = this.world.spawnAgent({ files: this.cfg.starterFiles });
       await this.attachSandbox(a.id);
@@ -293,6 +298,7 @@ export class Engine {
       }
       this.pacing.recordTickCpu(performance.now() - t0);
       this.flushEvents();
+      this.flushTiles();
       this.emitTick();
       if (this.cfg.snapshotEveryTicks > 0 && this.world.tick % this.cfg.snapshotEveryTicks === 0) await this.saveSnapshot();
       this.pumpTurns();
@@ -458,8 +464,14 @@ export class Engine {
     }
     this.decisions.push(record);
     if (this.decisions.length > this.cfg.keepDecisions) this.decisions.splice(0, this.decisions.length - this.cfg.keepDecisions);
+    try {
+      this.history?.recordDecision(record);
+    } catch {
+      // best-effort
+    }
     this.emit({ type: "decision", decision: record });
     this.flushEvents();
+    this.flushTiles();
     this.emitStats();
     this.emitTick();
     return record;
@@ -497,7 +509,17 @@ export class Engine {
     if (evs.length === 0) return;
     this.events.push(...evs);
     if (this.events.length > this.cfg.keepEvents) this.events.splice(0, this.events.length - this.cfg.keepEvents);
+    try {
+      this.history?.recordEvents(evs);
+    } catch {
+      // history is best-effort; the world must keep ticking
+    }
     this.emit({ type: "events", events: evs });
+  }
+
+  private flushTiles(): void {
+    const tiles = this.world.drainDirtyTiles();
+    if (tiles.length) this.emit({ type: "tiles", tiles });
   }
 
   private emitTick(): void {
@@ -535,7 +557,7 @@ export class Engine {
     return {
       type: "hello",
       config: this.world.configView(),
-      tiles: this.world.tiles.map((t) => ({ ...t, food: Math.round(t.food) })),
+      tiles: this.world.tileViews(),
       state: this.world.stateView(new Set(this.thinking.keys())),
       events: this.events.slice(-200),
       decisions: this.decisions.slice(-50),

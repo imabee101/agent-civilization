@@ -1,7 +1,9 @@
 import index from "../ui/index.html";
 import { resolveBrain } from "./brain/registry";
 import { HELP, parseArgs } from "./config";
+import { scheduleBackups } from "./engine/backups";
 import { Engine } from "./engine/engine";
+import { HistoryStore } from "./engine/history";
 import { createApp } from "./server/app";
 
 const cfg = parseArgs(process.argv.slice(2));
@@ -30,6 +32,12 @@ if (saved) {
   log(`new world (seed ${engine.world.config.seed}, ${engine.world.livingAgents().length} nodes)`);
 }
 
+if (cfg.history) {
+  engine.history = new HistoryStore(`${cfg.dataDir}/history.sqlite`);
+  log(`history: ${cfg.dataDir}/history.sqlite (${engine.history.stats().events} events so far)`);
+}
+const stopBackups = scheduleBackups({ snapshotPath, dir: `${cfg.dataDir}/backups`, keep: cfg.backupsToKeep }, "7 * * * *", log);
+
 const app = createApp({ engine, port: cfg.port, hostname: cfg.hostname, index, log });
 engine.start();
 log(`listening on http://${cfg.hostname === "0.0.0.0" ? "localhost" : cfg.hostname}:${app.server.port}`);
@@ -44,7 +52,9 @@ const shutdown = async (signal: string) => {
   } catch (e) {
     log(`snapshot failed: ${(e as Error).message}`);
   }
+  stopBackups();
   await engine.shutdown();
+  engine.history?.close();
   await app.close();
   process.exit(0);
 };

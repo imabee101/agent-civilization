@@ -12,6 +12,48 @@ export type Terrain = "grass" | "forest" | "water" | "rock" | "sand";
 
 export type Phase = "dawn" | "day" | "dusk" | "night";
 
+/**
+ * Things that can stand on a tile. All physical. A "board" holds posts, a
+ * "cache" is a shared directory namespace (names are the message, like a
+ * certain famous shared build cache), a "sign" is one line of text, a "wall"
+ * blocks movement, a "tower" extends message range for nodes next to it, a
+ * "vault" is a locked room that opens for a node carrying a key, a "spring"
+ * regrows food fast. The engine attaches no meaning to any text on them.
+ */
+export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "spring" | "plaque";
+
+export interface BoardPost {
+  tick: number;
+  by: string;
+  byName: string;
+  text: string;
+}
+
+export interface CacheEntry {
+  name: string;
+  by: string;
+  byName: string;
+  tick: number;
+  bytes: number;
+}
+
+export interface StructureView {
+  kind: StructureKind;
+  /** Sign / plaque text. */
+  text?: string;
+  /** Board posts, oldest first. */
+  posts?: BoardPost[];
+  /** Cache directory listing. */
+  entries?: CacheEntry[];
+  /** Who built it (node id), if a node did. */
+  builtBy?: string;
+  /** For vaults: whether the door is currently shut. */
+  locked?: boolean;
+}
+
+/** Carriable things. Each has one physical effect and nothing else. */
+export type ItemKind = "key" | "relay" | "lantern" | "seeds" | "map";
+
 export interface TileView {
   q: number;
   r: number;
@@ -20,6 +62,13 @@ export interface TileView {
   food: number;
   /** Natural regrowth ceiling for this tile. */
   foodCap: number;
+  /** Wood available (forests). */
+  wood: number;
+  /** Stone available (rock, some sand). */
+  stone: number;
+  structure?: StructureView;
+  /** Items lying here. Hidden items are omitted until found. */
+  items?: ItemKind[];
 }
 
 /**
@@ -46,7 +95,7 @@ export interface AgentView {
   energy: number;
   /** 0..100 — reaches 0 => death. */
   health: number;
-  inventory: { food: number };
+  inventory: { food: number; wood: number; stone: number; items: ItemKind[] };
   profile: Profile;
   /** Last thing the node said out loud (for speech bubbles). */
   lastSaid?: { tick: number; text: string };
@@ -86,6 +135,15 @@ export type EventKind =
   | "ate"
   | "dropped"
   | "rested"
+  | "built"
+  | "demolished"
+  | "posted"
+  | "cached"
+  | "took-item"
+  | "dropped-item"
+  | "planted"
+  | "vault-opened"
+  | "found"
   | "executed-code"
   | "code-error"
   | "files-changed"
@@ -234,6 +292,12 @@ export interface TickMessage {
   tileFood: number[];
 }
 
+/** Tiles whose structure, items or materials changed since the last message. */
+export interface TilesMessage {
+  type: "tiles";
+  tiles: TileView[];
+}
+
 export interface EventsMessage {
   type: "events";
   events: WorldEvent[];
@@ -273,6 +337,7 @@ export interface ResetMessage {
 export type ServerMessage =
   | HelloMessage
   | TickMessage
+  | TilesMessage
   | EventsMessage
   | DecisionMessage
   | ThinkingMessage

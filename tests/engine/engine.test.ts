@@ -5,7 +5,7 @@ import { ScriptedBrain, js } from "./helpers";
 
 const engines: Engine[] = [];
 async function mk(brain = new ScriptedBrain(), cfg: Partial<ConstructorParameters<typeof Engine>[1]> = {}) {
-  const e = new Engine(brain, { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0 }, initialAgents: 2, healthEveryMs: 0, snapshotEveryTicks: 0, ...cfg });
+  const e = new Engine(brain, { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0, features: false }, initialAgents: 2, healthEveryMs: 0, snapshotEveryTicks: 0, ...cfg });
   await e.init();
   engines.push(e);
   return e;
@@ -105,7 +105,7 @@ describe("Engine ticks and handlers", () => {
   });
 
   test("a dying node loses its sandbox; its ruin keeps its files", async () => {
-    const e = await mk(new ScriptedBrain(), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 100, starveHealthPerTick: 100 } });
+    const e = await mk(new ScriptedBrain(), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 100, starveHealthPerTick: 100, features: false } });
     const [a] = e.world.livingAgents();
     e.world.fsWrite(a!.id, "keep.txt", "legacy");
     for (let i = 0; i < 4; i++) await e.tick();

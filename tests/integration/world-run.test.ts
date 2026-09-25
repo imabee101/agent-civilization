@@ -39,8 +39,9 @@ describe("a world running on the random baseline", () => {
     expect(kinds.has("moved") || kinds.has("rested") || kinds.has("gathered")).toBe(true);
     expect(kinds.has("spoke")).toBe(true);
     // Random play is not a survival strategy: with this drain, some nodes starve.
-    expect(e.world.deadAgents().length).toBeGreaterThan(0);
-    for (const dead of e.world.deadAgents()) {
+    const newlyDead = e.world.deadAgents().filter((a) => a.diedTick! > 0);
+    expect(newlyDead.length).toBeGreaterThan(0);
+    for (const dead of newlyDead) {
       expect(dead.files["main.js"]).toBeDefined();
       expect(e.nodes.has(dead.id)).toBe(false);
     }
@@ -53,6 +54,7 @@ describe("a world running on the random baseline", () => {
     engines.push(e2);
     expect(e2.world.tick).toBe(e.world.tick);
     expect(e2.world.deadAgents().length).toBe(e.world.deadAgents().length);
+    expect(e2.world.tiles.filter((t) => t.structure).length).toBe(e.world.tiles.filter((t) => t.structure).length);
   }, 30_000);
 });
 
