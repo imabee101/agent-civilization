@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Pacing } from "../../src/engine/pacing";
-
-import { dueIn } from "../../src/engine/pacing";
+import { Pacing, TRIAL_TURNS, dueIn } from "../../src/engine/pacing";
 
 describe("dueIn", () => {
   test("hot halves the interval, cold triples it, never under one tick", () => {
@@ -93,5 +91,71 @@ describe("Pacing", () => {
     p.endDecision(1000);
     expect(p.inFlight).toBe(0);
     expect(p.tickMsAt(1, 6, 41_000)).toBe(500);
+  });
+});
+
+describe("concurrency controller", () => {
+  // Latency per turn at a level, chosen so that per-stream rate x level says: level 1 best, 2 worse, 3 worst.
+  const latencyAt = (level: number) => ({ 1: 29_000, 2: 60_000, 3: 104_000 })[level]!;
+  const run = (p: Pacing, turns: number) => {
+    for (let i = 0; i < turns; i++) {
+      const level = p.concurrency;
+      p.recordDecision(latencyAt(level), 10, 1000 * i, { tokens: 300, level });
+    }
+  };
+
+  test("bandwidth-bound: starts at one, tries the level above once, comes back when it measured worse", () => {
+    const p = new Pacing({ tickMs: 500, turnIntervalTicks: 16, concurrency: 3, maxTickMs: 5000 });
+    p.setBackendKind("bandwidth-bound");
+    expect(p.concurrency).toBe(1);
+    expect(p.governed).toBe(true);
+    run(p, TRIAL_TURNS);
+    expect(p.concurrency).toBe(2); // untested above: try it
+    run(p, TRIAL_TURNS);
+    expect(p.concurrency).toBe(1); // 2 x 5 tok/s < 1 x 10.3 tok/s
+    expect(p.bestConcurrency).toBe(1);
+    run(p, TRIAL_TURNS);
+    expect(p.concurrency).toBe(1); // level 2 is known to be worse: stays
+    expect(p.stats({ livingNodes: 12, speed: 1, paused: false, now: 0 })).toMatchObject({ concurrency: 1, concurrencyCeiling: 3, governed: true });
+  });
+
+  test("bandwidth-bound: climbs while each level measures better, and pacing uses the level in use", () => {
+    const p = new Pacing({ tickMs: 500, turnIntervalTicks: 16, concurrency: 3, maxTickMs: 0 });
+    expect(p.governed).toBe(false); // unmeasured: the ceiling, as before
+    p.setBackendKind("bandwidth-bound");
+    // A backend where parallel streams cost nothing: the same latency at every level.
+    for (let i = 0; i < TRIAL_TURNS * 3; i++) {
+      const level = p.concurrency;
+      p.recordDecision(30_000, 10, 1000 * i, { tokens: 300, level });
+    }
+    expect(p.concurrency).toBe(3);
+    expect(p.levelThroughput(3)).toBeCloseTo(30, 5);
+    // Turn interval for 12 nodes at 30 s per turn: three at once means a third of the round.
+    expect(p.effectiveTurnInterval(12, 1)).toBe(Math.ceil((30_000 * 12) / 3 / 500));
+  });
+
+  test("a fast backend, or one that keeps up in real time, takes the ceiling and is not governed", () => {
+    const fast = new Pacing({ tickMs: 500, turnIntervalTicks: 16, concurrency: 4, maxTickMs: 5000 });
+    fast.setBackendKind("fast");
+    expect(fast.concurrency).toBe(4);
+    expect(fast.governed).toBe(false);
+    const keeps = new Pacing({ tickMs: 500, turnIntervalTicks: 16, concurrency: 4, maxTickMs: 5000 });
+    keeps.setBackendKind("bandwidth-bound");
+    keeps.recordDecision(5_000, 40, 0, { tokens: 200, level: 1 }); // 5 s < 16 ticks x 500 ms
+    expect(keeps.keepsUp()).toBe(true);
+    expect(keeps.governed).toBe(false);
+    expect(keeps.concurrency).toBe(4);
+    keeps.recordDecision(60_000, 4, 1000, { tokens: 200, level: 4 }); // overruns: governed again, at the level it climbed to (1)
+    expect(keeps.governed).toBe(true);
+    expect(keeps.concurrency).toBe(1);
+  });
+
+  test("timings feed prefill, decode and cache-hit averages", () => {
+    const p = new Pacing({ tickMs: 500, turnIntervalTicks: 16, concurrency: 1, maxTickMs: 0 });
+    p.recordTimings({ promptTokens: 2000, cachedTokens: 1300, promptMs: 7000, outputTokens: 300, outputMs: 15_000 });
+    const s = p.stats({ livingNodes: 1, speed: 1, paused: false, now: 0 });
+    expect(s.prefillTps).toBe(100);
+    expect(s.decodeTps).toBe(20);
+    expect(s.cacheHit).toBe(0.65);
   });
 });

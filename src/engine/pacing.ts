@@ -3,14 +3,14 @@
  * often nodes get model turns. This only changes *when* a node's model is
  * consulted, never what the node may do.
  */
-import type { PacingMode, PacingStats } from "../shared/protocol";
+import type { BackendKind, BackendTimings, PacingMode, PacingStats } from "../shared/protocol";
 
 export interface PacingConfig {
   /** Base wall-clock ms per tick at speed 1. */
   tickMs: number;
   /** Desired ticks between two turns of the same node when the brain is fast enough. */
   turnIntervalTicks: number;
-  /** Max brain calls in flight. Local single-GPU setups want 1. */
+  /** The most brain calls ever in flight. The level actually used is measured (see `concurrency` on Pacing). */
   concurrency: number;
   /**
    * Longest a tick may be stretched so a slow brain still reaches every node
@@ -22,6 +22,12 @@ export interface PacingConfig {
 }
 
 const ALPHA = 0.2;
+/** Turns measured at a concurrency level before the controller judges it. */
+export const TRIAL_TURNS = 6;
+/** The level above must beat the current one by this factor to be kept. */
+const BETTER_BY = 1.1;
+/** After this many turns at a level, the level above is tried again in case the backend got faster. */
+const RETRY_UPPER_EVERY = 30;
 
 /**
  * How soon a node's next turn is due, relative to the base interval. Hot: something
@@ -50,12 +56,77 @@ export class Pacing {
   private readonly inFlightSince: number[] = [];
   private readonly decisionTimes: number[] = [];
   private readonly startedAt = Date.now();
+  /**
+   * Concurrency controller. The level in use is measured, never guessed: per level, the
+   * moving average of one stream's output rate over its whole turn (prefill included);
+   * a level's throughput is that rate times the level. Hill-climb from 1 while the
+   * backend is bandwidth-bound; a fast backend, or one that keeps up in real time, gets
+   * the ceiling.
+   */
+  private level = 1;
+  /** Unset until a probe or real timings classified the backend; until then nothing is governed. */
+  private backendKind: BackendKind | undefined;
+  private readonly levelRate: number[] = [];
+  private turnsAtLevel = 0;
+  private sinceUpperTrial = 0;
+  /** Backend timings, moving averages. */
+  prefillTps = 0;
+  decodeTps = 0;
+  cacheHit = 0;
 
   constructor(cfg: PacingConfig) {
     this.cfg = cfg;
   }
 
-  recordDecision(latencyMs: number, tokensPerSec: number, now = Date.now()): void {
+  /** The number of turns to run at once right now. */
+  get concurrency(): number {
+    return this.governed ? Math.min(this.level, this.ceiling) : this.ceiling;
+  }
+
+  get ceiling(): number {
+    return Math.max(1, this.cfg.concurrency);
+  }
+
+  /** False until the backend was measured, and when it is fast or keeps up with the world clock: then nothing is governed and the ceiling applies. */
+  get governed(): boolean {
+    return this.backendKind === "bandwidth-bound" && !this.keepsUp();
+  }
+
+  /** A turn that finishes inside one turn interval of wall-clock time needs no governing. */
+  keepsUp(): boolean {
+    return this.avgLatencyMs > 0 && this.avgLatencyMs <= this.cfg.turnIntervalTicks * this.cfg.tickMs;
+  }
+
+  setBackendKind(kind: BackendKind): void {
+    this.backendKind = kind;
+  }
+
+  /** Throughput a level measured, output tokens per second across its streams; undefined until it has been tried. */
+  levelThroughput(level: number): number | undefined {
+    const r = this.levelRate[level];
+    return r === undefined ? undefined : r * level;
+  }
+
+  /** The level with the best measured throughput so far. */
+  get bestConcurrency(): number {
+    let best = 1;
+    for (let l = 1; l <= this.ceiling; l++) if ((this.levelThroughput(l) ?? -1) > (this.levelThroughput(best) ?? -1)) best = l;
+    return best;
+  }
+
+  recordTimings(t: BackendTimings): void {
+    const ema = (avg: number, v: number) => (avg === 0 ? v : avg * (1 - ALPHA) + v * ALPHA);
+    const fresh = t.promptTokens - t.cachedTokens;
+    if (t.promptMs > 0 && fresh > 0) this.prefillTps = ema(this.prefillTps, (fresh * 1000) / t.promptMs);
+    if (t.outputMs > 0 && t.outputTokens > 0) this.decodeTps = ema(this.decodeTps, (t.outputTokens * 1000) / t.outputMs);
+    if (t.promptTokens > 0) this.cacheHit = ema(this.cacheHit, t.cachedTokens / t.promptTokens);
+  }
+
+  /**
+   * One turn finished. `turn` says how many output tokens it produced and at which
+   * concurrency level it was dispatched; that is what the controller learns from.
+   */
+  recordDecision(latencyMs: number, tokensPerSec: number, now = Date.now(), turn?: { tokens: number; level: number }): void {
     this.decisions++;
     this.lastLatencyMs = latencyMs;
     this.avgLatencyMs = this.avgLatencyMs === 0 ? latencyMs : this.avgLatencyMs * (1 - ALPHA) + latencyMs * ALPHA;
@@ -63,6 +134,27 @@ export class Pacing {
     this.decisionTimes.push(now);
     const cutoff = now - 60_000;
     while (this.decisionTimes.length && this.decisionTimes[0]! < cutoff) this.decisionTimes.shift();
+    if (turn && latencyMs > 0 && turn.tokens > 0) this.learn(turn.level, (turn.tokens * 1000) / latencyMs);
+  }
+
+  private learn(level: number, streamRate: number): void {
+    const prev = this.levelRate[level];
+    this.levelRate[level] = prev === undefined ? streamRate : prev * (1 - ALPHA) + streamRate * ALPHA;
+    if (level !== this.level) return;
+    this.turnsAtLevel++;
+    this.sinceUpperTrial++;
+    if (this.turnsAtLevel < TRIAL_TURNS) return;
+    const here = this.levelThroughput(this.level) ?? 0;
+    const above = this.level < this.ceiling ? this.levelThroughput(this.level + 1) : undefined;
+    const below = this.level > 1 ? this.levelThroughput(this.level - 1) : undefined;
+    // The level below measured better: go back down. Otherwise try the level above when it is untested,
+    // measured better, or has not been tried for a while (the backend may have changed underneath).
+    if (below !== undefined && below > here) this.level--;
+    else if (this.level < this.ceiling && (above === undefined || above > here * BETTER_BY || this.sinceUpperTrial >= RETRY_UPPER_EVERY)) {
+      this.level++;
+      this.sinceUpperTrial = 0;
+    }
+    this.turnsAtLevel = 0;
   }
 
   beginDecision(startedAt = Date.now()): void {
@@ -101,7 +193,7 @@ export class Pacing {
     const base = this.cfg.tickMs / speed;
     const latency = this.latencyEstimate(now);
     if (this.cfg.maxTickMs <= base || latency <= 0 || livingNodes === 0) return base;
-    const needed = (latency * livingNodes) / Math.max(1, this.cfg.concurrency) / this.cfg.turnIntervalTicks;
+    const needed = (latency * livingNodes) / this.concurrency / this.cfg.turnIntervalTicks;
     return Math.min(Math.max(base, needed), this.cfg.maxTickMs);
   }
 
@@ -114,7 +206,7 @@ export class Pacing {
     const desired = this.cfg.turnIntervalTicks;
     const latency = this.latencyEstimate(now);
     if (latency <= 0 || livingNodes === 0) return desired;
-    const msPerRound = (latency * livingNodes) / Math.max(1, this.cfg.concurrency);
+    const msPerRound = (latency * livingNodes) / this.concurrency;
     const ticksPerRound = Math.ceil(msPerRound / this.tickMsAt(speed, livingNodes, now));
     return Math.max(desired, ticksPerRound);
   }
@@ -143,6 +235,12 @@ export class Pacing {
       avgTickCpuMs: Math.round(this.avgTickCpuMs * 100) / 100,
       sandboxCalls: this.sandboxCalls,
       uptimeMs: now - this.startedAt,
+      concurrency: this.concurrency,
+      concurrencyCeiling: this.ceiling,
+      governed: this.governed,
+      prefillTps: Math.round(this.prefillTps * 10) / 10,
+      decodeTps: Math.round(this.decodeTps * 10) / 10,
+      cacheHit: Math.round(this.cacheHit * 100) / 100,
     };
   }
 }

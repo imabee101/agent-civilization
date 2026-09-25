@@ -269,10 +269,29 @@ that schedule and the pacing badge reads **realtime**. If it cannot, the world
 clock slows (badge **paced**, up to `--max-tick-ms`, default 5000) so every
 node still gets a turn every `--turn-ticks`: a slow brain costs wall-clock
 time, not turns per lifetime. Past that cap the interval stretches and the
-badge reads **queued**. Concurrency (`--concurrency`) is 1 by default because most people
-run this against one local GPU. None of this changes what a node may do; it
+badge reads **queued**. None of this changes what a node may do; it
 only changes when its model is consulted. Handlers in `main.js` keep running
 every tick regardless.
+
+**The engine finds out what it is talking to.** Once the brain answers, the
+engine reads what the server says about itself (llama-server's `/props`:
+slots, context per slot, model) and times one uncached request for raw
+prompt-processing and generation rates. From that it classifies the backend
+as **bandwidth-bound** (a CPU, or a GPU too small for its model: decode under
+25 tokens/s or prefill under 300) or **fast**, and sets what nobody set by
+hand: `--slots` from the server's slot count, `--prompt-chars` from the
+slot's context minus the reply budget, and how many turns run at once.
+`--concurrency` is only a ceiling. A bandwidth-bound backend starts with one
+turn at a time and the engine tries the next level up every six turns,
+keeping it only when measured throughput (output tokens per second across
+all streams) improved; on a CPU three streams share one memory bus and one
+stream's prompt processing stalls the others, so it usually settles at one.
+A fast backend, or one whose turns finish inside one turn interval, gets the
+ceiling and is not governed. Real turns keep the classification honest: the
+backend's own timings (prompt tokens, cached tokens, prompt and generation
+time) feed the Pacing tab and reclassify a backend that changed underneath.
+Generation stops at the closing code fence, so a reply is one block and
+nothing after it.
 
 **What a turn costs, and what a cut reply does.** The prompt tells the node
 its reply budget in tokens and asks for under forty lines with no comments.
@@ -397,7 +416,9 @@ agentciv --help
 
 Everything has a flag and an `AGENTCIV_*` environment variable; flags win.
 Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
-`--concurrency`, `--snapshot-ticks`, `--max-tokens`, `--prompt-chars`, `--temperature`,
+`--concurrency` (a ceiling; the level used is measured), `--snapshot-ticks`, `--max-tokens`,
+`--prompt-chars` and `--slots` (defaults come from the backend), `--temperature`,
+`--top-p`, `--min-p`, `--repeat-penalty` (sent only when set),
 `--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`),
 `--tls-cert`/`--tls-key` (both, or neither: serves HTTPS/WSS in-process).
 

@@ -46,16 +46,19 @@ usage: agentciv [options]
   --tick-ms <n>         ms per tick at 1x (default 500)
   --turn-ticks <n>      desired ticks between a node's model turns (default 16)
   --max-tick-ms <n>     slow ticks up to this so a slow brain keeps --turn-ticks (default 5000, 0 = fixed clock)
-  --concurrency <n>     brain calls in flight (default 1)
-  --slots <n>           backend slots to pin nodes to, one per living node (default 0 = backend chooses)
+  --concurrency <n>     most brain calls in flight (default 1); the level used is measured, up to this
+  --slots <n>           backend slots to pin nodes to, one per living node (default: what the backend reports)
   --snapshot-ticks <n>  ticks between snapshots (default 120, 0 disables)
   --brain <kind>        openai | llamacpp | ollama | random | lmstudio | vllm (env AGENTCIV_BRAIN)
   --base-url <url>      backend base URL (env AGENTCIV_BASE_URL)
   --model <name>        model name (env AGENTCIV_MODEL)
   --api-key <key>       bearer token if the backend needs one (env AGENTCIV_API_KEY)
   --max-tokens <n>      completion budget per turn (default 400)
-  --prompt-chars <n>    character budget for the changing part of a turn prompt (default 12000, 0 = no limit)
+  --prompt-chars <n>    character budget for the changing part of a turn prompt (default: from the backend's context, else 12000; 0 = no limit)
   --temperature <x>     sampling temperature (default 0.7)
+  --top-p <x>           nucleus sampling, sent only when set (env AGENTCIV_TOP_P)
+  --min-p <x>           min-p sampling, sent only when set (env AGENTCIV_MIN_P)
+  --repeat-penalty <x>  repetition penalty, sent only when set (env AGENTCIV_REPEAT_PENALTY)
   --prompt-format <f>   chatml | llama3 | plain — llama.cpp native only
   --no-stream           disable streaming
   -h, --help            this text
@@ -124,6 +127,9 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   if (get("base-url")) brain.baseUrl = get("base-url");
   if (get("model")) brain.model = get("model");
   if (get("api-key")) brain.apiKey = get("api-key");
+  if (num(get("top-p")) !== undefined) brain.topP = num(get("top-p"));
+  if (num(get("min-p")) !== undefined) brain.minP = num(get("min-p"));
+  if (num(get("repeat-penalty")) !== undefined) brain.repeatPenalty = num(get("repeat-penalty"));
   const pf = get("prompt-format");
   if (pf === "chatml" || pf === "llama3" || pf === "plain") brain.promptFormat = pf;
   if (has("no-stream")) brain.stream = false;

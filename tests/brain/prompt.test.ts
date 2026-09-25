@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations, SYSTEM_PROMPT } from "../../src/brain/prompt";
+import { FENCE_STOP, buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations, SYSTEM_PROMPT } from "../../src/brain/prompt";
 import { API_DOC } from "../../src/sandbox/api";
 
 describe("extractCode", () => {
@@ -106,10 +106,10 @@ describe("buildUserPrompt", () => {
     const tiles = Array.from({ length: 37 }, (_, i) => ({ q: i, r: 0, terrain: "grass", food: 1, dist: i % 4 }));
     const facts = {
       observation: { tiles, inbox: Array.from({ length: 8 }, (_, i) => ({ from: `n${i}`, payload: "m".repeat(100) })) },
-      files: { "main.js": "a".repeat(3000), "turn.js": "b".repeat(3000) },
+      files: { "main.js": "a".repeat(3000), "turn.js": "function onTick(){}" + "b".repeat(3000) },
       log: Array.from({ length: 14 }, (_, i) => `log ${i} ${"z".repeat(80)}`),
       turn: 2,
-      handlers: [],
+      handlers: ["onTick"],
     };
     const full = buildUserPrompt(facts);
     const mid = buildUserPrompt({ ...facts, maxChars: full.length - 500 });
@@ -117,10 +117,12 @@ describe("buildUserPrompt", () => {
     expect(mid).not.toContain("log 0 ");
     expect(mid).toContain("log 13 ");
     expect(mid).toContain("a".repeat(3000));
+    expect(mid).toContain("b".repeat(2900));
     const small = buildUserPrompt({ ...facts, maxChars: 3000 });
     expect(small.length).toBeLessThan(mid.length);
     expect(small).not.toContain("RECENT LOG");
     expect(small).not.toContain("a".repeat(1000));
+    expect(small).not.toContain("b".repeat(1000));
     expect(small).toContain("// ...truncated");
     expect(small.split("\n").filter((l) => /^\d+,0 grass/.test(l)).length).toBeLessThan(37);
     expect(small.endsWith("Your code:")).toBe(true);
@@ -164,5 +166,27 @@ describe("buildUserPrompt", () => {
   test("docs/node-api.md carries the model's API reference word for word, once", async () => {
     const doc = await Bun.file(new URL("../../docs/node-api.md", import.meta.url)).text();
     expect(doc.split(API_DOC).length - 1).toBe(1);
+  });
+});
+
+describe("turn.js placement", () => {
+  const base = { observation: { tick: 1, me: {}, nodes: [], ruins: [], inbox: [], heard: [] }, log: [], turn: 2 };
+  test("turn.js follows main.js and the handler list, and is shown only while it holds handlers main.js does not", () => {
+    const withTurn = buildUserPrompt({ ...base, files: { "main.js": "// nothing", "turn.js": "function onTick(){ rest() }" }, handlers: ["onTick"] });
+    expect(withTurn.indexOf("main.js:")).toBeLessThan(withTurn.indexOf("ACTIVE HANDLERS"));
+    expect(withTurn.indexOf("ACTIVE HANDLERS")).toBeLessThan(withTurn.indexOf("turn.js (the code your last turn ran"));
+    expect(withTurn.indexOf("turn.js (the code your last turn ran")).toBeLessThan(withTurn.indexOf("SITUATION"));
+    const inMain = buildUserPrompt({ ...base, files: { "main.js": "function onTick(){ rest() }", "turn.js": "function onTick(){ rest() }" }, handlers: ["onTick"] });
+    expect(inMain).not.toContain("turn.js (the code your last turn ran");
+    expect(inMain).toContain("- turn.js (");
+    const noHandlers = buildUserPrompt({ ...base, files: { "turn.js": "gather()" }, handlers: [] });
+    expect(noHandlers).not.toContain("turn.js (the code your last turn ran");
+  });
+
+  test("the answer rules say where handlers belong, and the stop string is a closing fence", () => {
+    expect(SYSTEM_PROMPT).toContain("Handlers you want to keep belong in main.js (fs.write).");
+    expect(FENCE_STOP).toBe("\n```");
+    // A reply cut at the fence is a lone opening block; the extractor takes it whole.
+    expect(extractCode("```js\nrest()")).toBe("rest()");
   });
 });

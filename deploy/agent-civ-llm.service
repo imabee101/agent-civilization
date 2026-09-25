@@ -1,14 +1,13 @@
 [Unit]
-Description=Agent Civilization brain: llama-server, Qwen3-4B-Instruct-2507 abliterated, loopback only
+Description=Agent Civilization brain: llama-server, loopback only
 After=network.target
 
 [Service]
-# Instruct-2507 has no thinking mode. Three slots: CPU decoding is bandwidth
-# bound, so three turns in parallel give ~1.9x the aggregate tokens of one.
-ExecStart=/opt/agent-civ/llama.cpp/bin/llama-server \
-  -m /opt/agent-civ/models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_0.gguf \
-  --host 127.0.0.1 --port 8080 -c 73728 -np 12 -t 8 -tb 16 \
-  --jinja --alias qwen3-4b-2507-abliterated
+# LLAMA_FLAGS is written by deploy/install.sh from what it finds on the box
+# (a GPU with room for the model, or the CPU's performance cores). The model
+# and its context/slot layout are in there too; see deploy/README.md.
+EnvironmentFile=/etc/agent-civ/llm.env
+ExecStart=/opt/agent-civ/llama.cpp/bin/llama-server --host 127.0.0.1 --port 8080 --jinja --metrics $LLAMA_FLAGS
 Slice=agentciv.slice
 DynamicUser=yes
 Restart=on-failure

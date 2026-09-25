@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { OpenAICompatibleBrain } from "../../src/brain/openai";
+import { OpenAICompatibleBrain, timingsFrom } from "../../src/brain/openai";
 import { LlamaCppBrain, formatPrompt } from "../../src/brain/llamacpp";
 import { OllamaBrain } from "../../src/brain/ollama";
 import { RandomBrain, RANDOM_SNIPPETS } from "../../src/brain/random";
-import { BrainError } from "../../src/brain/types";
+import { BrainError, PROBE_PROMPT, classifyBackend, profileFrom } from "../../src/brain/types";
 
 interface Captured {
   url: string;
@@ -74,6 +74,53 @@ describe("OpenAICompatibleBrain", () => {
     ]);
   });
 
+  test("reads llama-server timings and cached tokens, and reports decode-only speed", async () => {
+    const final = { choices: [], usage: { completion_tokens: 2, prompt_tokens: 1314, prompt_tokens_details: { cached_tokens: 1300 } }, timings: { cache_n: 1300, prompt_n: 14, prompt_ms: 114.6, predicted_n: 2, predicted_ms: 100 } };
+    const stream = fakeFetch(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', `data: ${JSON.stringify(final)}\n\n`, "data: [DONE]\n\n"]);
+    const b = new OpenAICompatibleBrain({ kind: "openai", baseUrl: "http://x/v1", fetch: stream.fetch, stream: true });
+    const r = await b.decide({ system: "s", user: "u" });
+    expect(r.timings).toEqual({ promptTokens: 1314, cachedTokens: 1300, promptMs: 114.6, outputTokens: 2, outputMs: 100 });
+    expect(r.tokensPerSec).toBe(20);
+    expect(timingsFrom({ choices: [] })).toBeUndefined();
+    const whole = fakeFetch({ choices: [{ message: { content: "rest()" }, finish_reason: "stop" }], usage: { completion_tokens: 3 } });
+    const b2 = new OpenAICompatibleBrain({ kind: "openai", baseUrl: "http://x/v1", fetch: whole.fetch, stream: false });
+    expect((await b2.decide({ system: "s", user: "u" })).timings).toBeUndefined();
+  });
+
+  test("sends stop strings and sampling fields only when set, and no cache for a probe", async () => {
+    const plain = fakeFetch({ choices: [{ message: { content: "x" } }] });
+    await new OpenAICompatibleBrain({ kind: "openai", fetch: plain.fetch, stream: false }).decide({ system: "s", user: "u" });
+    expect(plain.captured[0]!.body.stop).toBeUndefined();
+    expect("top_p" in plain.captured[0]!.body).toBe(false);
+    expect(plain.captured[0]!.body.cache_prompt).toBe(true);
+    const set = fakeFetch({ choices: [{ message: { content: "x" } }] });
+    await new OpenAICompatibleBrain({ kind: "openai", fetch: set.fetch, stream: false, topP: 0.9, minP: 0.05, repeatPenalty: 1.1 }).decide({ system: "s", user: "u", stop: ["\n```"], noCache: true, topP: 0.8 });
+    const body = set.captured[0]!.body;
+    expect(body.stop).toEqual(["\n```"]);
+    expect(body).toMatchObject({ top_p: 0.8, min_p: 0.05, repeat_penalty: 1.1, cache_prompt: false });
+  });
+
+  test("probe reads /props beside /v1 and times one uncached request", async () => {
+    const { fetch, captured } = fakeFetch((url) => {
+      if (url.endsWith("/props")) return Response.json({ total_slots: 12, model_path: "/m/tiny-Q4_0.gguf", model_ftype: "Q4_0", default_generation_settings: { n_ctx: 6144 } });
+      return Response.json({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { completion_tokens: 2, prompt_tokens: 200 }, timings: { cache_n: 0, prompt_n: 200, prompt_ms: 2000, predicted_n: 16, predicted_ms: 1000 } });
+    });
+    const b = new OpenAICompatibleBrain({ kind: "openai", baseUrl: "http://x/v1", fetch, stream: false });
+    const p = (await b.probe())!;
+    expect(captured[0]!.url).toBe("http://x/props");
+    expect(captured[1]!.body.cache_prompt).toBe(false);
+    expect(captured[1]!.body.messages[1].content).toBe(PROBE_PROMPT);
+    expect(p).toMatchObject({ kind: "bandwidth-bound", prefillTps: 100, decodeTps: 16, slots: 12, ctxPerSlot: 6144, cacheable: true, modelFile: "tiny-Q4_0.gguf", quant: "Q4_0" });
+    // No /props (another server): the timed request alone still yields a profile.
+    const bare = fakeFetch((url) => (url.endsWith("/props") ? new Response("no", { status: 404 }) : Response.json({ choices: [{ message: { content: "ok" } }], usage: { completion_tokens: 16 } })));
+    const q = (await new OpenAICompatibleBrain({ kind: "openai", baseUrl: "http://y/v1", fetch: bare.fetch, stream: false }).probe())!;
+    expect(q.slots).toBeUndefined();
+    expect(q.cacheable).toBe(false);
+    // A dead server: undefined, never a throw.
+    const dead = fakeFetch(() => new Response("", { status: 503 }));
+    expect(await new OpenAICompatibleBrain({ kind: "openai", fetch: dead.fetch, stream: false }).probe()).toBeUndefined();
+  });
+
   test("non-streaming mode parses message content and estimates tokens when usage is missing", async () => {
     const { fetch, captured } = fakeFetch({ choices: [{ message: { role: "assistant", content: "rest()" } }] });
     const brain = new OpenAICompatibleBrain({ kind: "openai", fetch, stream: false });
@@ -113,6 +160,17 @@ describe("OpenAICompatibleBrain", () => {
   });
 });
 
+describe("classifyBackend", () => {
+  test("fast needs both rates; a CPU-class decode rate is bandwidth-bound whatever the prefill", () => {
+    expect(classifyBackend(1500, 70)).toBe("fast");
+    expect(classifyBackend(120, 17)).toBe("bandwidth-bound");
+    expect(classifyBackend(1500, 20)).toBe("bandwidth-bound");
+    expect(classifyBackend(200, 60)).toBe("bandwidth-bound");
+    const p = profileFrom({ text: "", latencyMs: 1000, tokens: 16, tokensPerSec: 16, estimated: true }, {}, 5);
+    expect(p).toEqual({ kind: "bandwidth-bound", prefillTps: 0, decodeTps: 16, cacheable: false, probedAt: 5 });
+  });
+});
+
 describe("LlamaCppBrain", () => {
   test("formats prompts for each template", () => {
     expect(formatPrompt("chatml", "S", "U")).toBe("<|im_start|>system\nS<|im_end|>\n<|im_start|>user\nU<|im_end|>\n<|im_start|>assistant\n");
@@ -124,21 +182,25 @@ describe("LlamaCppBrain", () => {
     const { fetch, captured } = fakeFetch([
       'data: {"content":"move(","stop":false}\n\n',
       'data: {"content":"2)","stop":false}\n\n',
-      'data: {"content":"","stop":true,"timings":{"predicted_n":5,"predicted_per_second":42.5}}\n\n',
+      'data: {"content":"","stop":true,"stop_type":"limit","timings":{"cache_n":100,"prompt_n":40,"prompt_ms":400,"predicted_n":5,"predicted_ms":200,"predicted_per_second":42.5}}\n\n',
       'data: {"content":"IGNORED AFTER STOP","stop":false}\n\n',
     ]);
     const brain = new LlamaCppBrain({ kind: "llamacpp", baseUrl: "http://h:8080", fetch, maxTokens: 50 });
-    const r = await brain.decide(req);
+    const r = await brain.decide({ ...req, stop: ["\n```"] });
     expect(r.text).toBe("move(2)");
     expect(r.tokens).toBe(5);
     expect(r.tokensPerSec).toBe(42.5);
     expect(r.estimated).toBe(false);
+    expect(r.truncated).toBe(true);
+    expect(r.timings).toEqual({ promptTokens: 140, cachedTokens: 100, promptMs: 400, outputTokens: 5, outputMs: 200 });
     const c = captured[0]!;
     expect(c.url).toBe("http://h:8080/completion");
     expect(c.body.prompt).toBe(formatPrompt("chatml", "SYS", "USER"));
     expect(c.body.n_predict).toBe(50);
     expect(c.body.stream).toBe(true);
     expect(c.body.stop).toContain("<|im_end|>");
+    expect(c.body.stop).toContain("\n```");
+    expect(c.body.id_slot).toBe(4);
   });
 
   test("non-streaming parses a single object", async () => {
@@ -168,17 +230,19 @@ describe("OllamaBrain", () => {
   test("streams NDJSON and computes tokens/sec from eval_duration", async () => {
     const { fetch, captured } = fakeFetch([
       '{"message":{"role":"assistant","content":"say("},"done":false}\n',
-      '{"message":{"content":"\\"hi\\")"},"done":false}\n{"message":{"content":""},"done":true,"eval_count":10,"eval_duration":500000000}\n',
+      '{"message":{"content":"\\"hi\\")"},"done":false}\n{"message":{"content":""},"done":true,"done_reason":"stop","eval_count":10,"eval_duration":500000000,"prompt_eval_count":30,"prompt_eval_duration":300000000}\n',
     ]);
     const brain = new OllamaBrain({ kind: "ollama", baseUrl: "http://h:11434", model: "qwen2.5:3b", fetch, maxTokens: 64, temperature: 0.9 });
-    const r = await brain.decide(req);
+    const r = await brain.decide({ ...req, stop: ["\n```"] });
     expect(r.text).toBe('say("hi")');
     expect(r.tokens).toBe(10);
     expect(r.tokensPerSec).toBe(20);
+    expect(r.truncated).toBe(false);
+    expect(r.timings).toEqual({ promptTokens: 30, cachedTokens: 0, promptMs: 300, outputTokens: 10, outputMs: 500 });
     const c = captured[0]!;
     expect(c.url).toBe("http://h:11434/api/chat");
     expect(c.body.model).toBe("qwen2.5:3b");
-    expect(c.body.options).toEqual({ temperature: 0.9, num_predict: 64 });
+    expect(c.body.options).toEqual({ temperature: 0.9, num_predict: 64, stop: ["\n```"] });
     expect(c.body.messages[1]).toEqual({ role: "user", content: "USER" });
   });
 
