@@ -460,18 +460,6 @@ export function createMockTransport(): Transport {
           msgCb({ type: "events", events: [push("spawned", 2, `${a.name} spawned`, a)] });
           break;
         }
-        case "reset":
-          tick = 0;
-          for (const a of agents) {
-            a.alive = true;
-            a.health = 100;
-            a.food = 70;
-          }
-          ruins.length = 1;
-          events.length = 0;
-          push("world-reset", 2, "the world was reset");
-          msgCb({ type: "reset", hello: hello() });
-          break;
         case "snapshot":
           msgCb({ type: "events", events: [push("snapshot", 1, "snapshot saved")] });
           break;

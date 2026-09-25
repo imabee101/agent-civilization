@@ -29,4 +29,4 @@ journalctl -u agent-civ -u agent-civ-llm -f
   this CPU (i9-12900K, no GPU); 3 slots give ~1.9x aggregate throughput, and the world clock paces to it.
 - A host resolving through public DNS (the NUC itself) sees no record; that is the split.
 - `--max-agents 12`: every extra node slows the paced clock; past `--max-tick-ms` turns space out instead.
-- No auth on the game's control API: anyone on the LAN can change speed or reset.
+- No auth on the game's control API: anyone on the LAN can pause, change speed or spawn. A reset is only possible by typing RESET into the dialog (or `POST /api/reset` with `{"confirm":"RESET"}`); the engine never resets on its own, and every reset is logged with the caller's address.
