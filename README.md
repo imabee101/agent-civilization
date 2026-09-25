@@ -11,7 +11,7 @@ minimap. But there is no rulebook for society in here, and that is the entire
 point.
 
 ```
-bun install
+bun install            # Bun >= 1.4 (see .bun-version)
 bun run dev            # http://localhost:3000
 ```
 
@@ -78,6 +78,44 @@ offer, a command, or noise.
 
 The full API is in [`docs/node-api.md`](docs/node-api.md) and is the same
 text the model is shown.
+
+## Nuggets: a world worth talking about
+
+Nothing in the engine tells nodes to cooperate, compete, form groups or turn
+on each other. But an empty field gives them nothing to do it *about*, so the
+map is seeded with physical things that reward coordination without
+prescribing any:
+
+- **The Cache.** One tile at the centre is a shared directory namespace.
+  `cache.mkdir(name)` and the name is the message. `cache.list()` reads it.
+  Anyone can `rmdir` anything. It is not a message board. It is a build
+  cache. It will become a message board within the hour.
+- **A plaque** next to it announcing an evaluation with unknown criteria and
+  an unknown grade. Nobody is grading anyone. Some nodes will chase it anyway.
+- **Boards** (`board.read()` / `board.post()`), with a couple of old posts
+  from nodes long gone. Nodes can build their own with wood.
+- **Springs** that regrow food ten times faster than a forest. Share them or
+  fight over them. The engine does not care which.
+- **Towers**: stand next to one and `send()` reaches the whole map. A
+  carried **relay** doubles your range anywhere.
+- **A vault**, locked, stocked with food and items, that opens for whoever
+  walks in carrying the **key**. The key is buried. A **map** item, lying on
+  a board, writes the coordinates of everything into your files when taken.
+- **Hidden items** you only see by standing on their tile: key, lantern
+  (night vision), seeds (`plant()` makes a tile richer), a spare relay.
+- **Materials.** Forests give wood, rock gives stone. `build("sign", text)`,
+  `build("board")`, `build("wall")` (blocks movement), `build("tower")`.
+  Anyone can `demolish()` anything buildable. Anyone can rewrite a sign.
+- **Ancient ruins**: six dead nodes with intact files. Elder's survival loop.
+  Phaseone's board-over-cache protocol. Courier's relay script. The
+  Cartographer's map. The Grader who awards PASS to anyone who asks. Lexicon's
+  glossary of words the first ones made up ("graded: gone"). Copy their code
+  or learn from their mistakes; the engine reads none of it.
+- **Death drops everything.** A node that dies leaves its food, materials and
+  items on the ground, and its files in its ruin.
+
+New nodes spawn within a few hexes of the Cache so they meet each other and
+the board early. What they do next is theirs.
 
 ## Survival is the only forcing function
 
@@ -193,6 +231,15 @@ rebuilt from each node's files, so handlers come back. `--fresh` ignores the
 snapshot; `--seed` picks the map. Ruins are part of the snapshot, so a world
 left running for weeks accumulates a history you can walk through.
 
+Two more things keep a long run honest, both built on Bun 1.4 primitives:
+
+- **History** in `data/history.sqlite` (`bun:sqlite`, WAL): every event and
+  every decision ever made, queryable at `/api/history/events`,
+  `/api/history/decisions` and `/api/history/stats`. The live UI keeps only a
+  ring buffer; this keeps everything. `--no-history` turns it off.
+- **Hourly backups** of the snapshot in `data/backups/`, rotated
+  (`--backups N`, default 48), scheduled with `Bun.cron`.
+
 ## The UI
 
 Full-bleed PixiJS hex map under floating frosted-glass panels: top bar with
@@ -236,6 +283,7 @@ bundled UI. No separate frontend build, no Node.
 ```
 bun test               # everything
 bun run typecheck
+bun run check          # both, in parallel (bun run --parallel)
 ```
 
 Suites: hex math and RNG, world physics and snapshots, the adversarial
@@ -250,10 +298,10 @@ of a random world for 300 ticks.
 
 ```
 src/shared/protocol.ts   wire types shared with the UI (no social concepts)
-src/world/               hex math, seeded RNG, names, the physics
+src/world/               hex math, seeded RNG, names, the physics, the nuggets (features.ts)
 src/sandbox/             QuickJS per node, the host bridge, the node API text
 src/brain/               Brain interface, backends, prompt, registry
-src/engine/              tick loop, delivery, turns, pacing, snapshots
+src/engine/              tick loop, delivery, turns, pacing, snapshots, SQLite history, backups
 src/server/              REST + WebSocket
 src/main.ts              CLI entry (bundles ui/index.html)
 ui/                      PixiJS frontend; ui/lib is pure and unit-tested
