@@ -61,6 +61,8 @@ const SAYINGS = [
   "I read the ruin's main.js. it was beautiful.",
 ];
 
+const SYSTEM_PROMPT_MOCK = "You control one node in a shared hex world. (mock system prompt)";
+
 export function createMockTransport(): Transport {
   const rnd = mulberry32(42);
   const radius = 10;
@@ -221,7 +223,7 @@ export function createMockTransport(): Transport {
       notices: agents.filter((a) => a.alive && a.retireAt !== undefined).map((a) => ({ agentId: a.id, name: a.name, retireAt: a.retireAt!, noticedAt: a.noticedAt ?? 0, quarantined: !!a.quarantined, since: { replications: 0, cacheWrites: 2, sends: 3, says: 1, mainRewrites: 1 }, rateBefore: 2, rateSince: 12, sameCode: 0 })),
     };
   };
-  const hello = (): HelloMessage => ({ type: "hello", config, tiles, state: state(), events: events.slice(-100), decisions: decisions.slice(-30), brain: brain(), pacing: pacing(), signals: signals() });
+  const hello = (): HelloMessage => ({ type: "hello", config, tiles, state: state(), events: events.slice(-100), decisions: decisions.slice(-30), systemPrompt: SYSTEM_PROMPT_MOCK, brain: brain(), pacing: pacing(), signals: signals() });
 
   const emitDecision = (a: AgentView, error?: string) => {
     const code = `me.say(${JSON.stringify(SAYINGS[Math.floor(rnd() * SAYINGS.length)])});\nfor (const t of world.see()) { if (t.food > 0) { me.moveTo(t.q, t.r); break; } }`;

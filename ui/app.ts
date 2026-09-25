@@ -62,6 +62,8 @@ const S = {
   state: null as WorldState | null,
   events: [] as WorldEvent[],
   decisions: [] as DecisionRecord[],
+  /** The system prompt every decision shares; hello carries it once. */
+  systemPrompt: "",
   nodeDetails: new Map<string, NodeDetail>(),
   thoughts: new Map<string, { text: string; done: boolean }>(),
   brain: null as BrainStatus | null,
@@ -119,12 +121,14 @@ function onMessage(m: ServerMessage): void {
       applyHello(m.hello);
       toast("world reset");
       break;
-    case "tick":
-      S.state = m.state;
-      world.update(m.state);
+    case "tick": {
+      // Ruins ride along only when their set changed; otherwise the last known set stands.
+      const state = { ...m.state, ruins: m.state.ruins ?? S.state?.ruins ?? [] };
+      S.state = state;
+      world.update(state);
       world.setTileFood(m.tileFood);
-      minimap.agents = m.state.agents;
-      minimap.ruins = m.state.ruins;
+      minimap.agents = state.agents;
+      minimap.ruins = state.ruins;
       minimap.draw();
       dropDead(S.watch, new Set(m.state.agents.filter((a) => a.alive).map((a) => a.id)));
       renderClock();
@@ -134,6 +138,7 @@ function onMessage(m: ServerMessage): void {
       renderMindCam();
       if (S.nerdTab === "nodes" && document.body.classList.contains("nerd-open")) renderNodeList();
       break;
+    }
     case "tiles":
       applyTiles(m.tiles);
       break;
@@ -198,6 +203,7 @@ function applyHello(h: HelloMessage): void {
   S.state = h.state;
   S.events = h.events.slice(-MAX_EVENTS);
   S.decisions = h.decisions.slice(-MAX_DECISIONS);
+  S.systemPrompt = h.systemPrompt;
   S.brain = h.brain;
   S.pacing = h.pacing;
   S.signals = h.signals;
@@ -829,7 +835,7 @@ function renderBrain(): void {
   const ok = !d.error;
   detail.replaceChildren(
     meta,
-    preBlock("system prompt", d.prompt.system, "plain"),
+    preBlock("system prompt", d.prompt.system || S.systemPrompt, "plain"),
     preBlock("user prompt", d.prompt.user, "plain"),
     preBlock("raw output", d.output, ok ? "ok" : "err"),
     ...(d.code ? [preBlock("executed code", d.code, ok ? "ok" : "err")] : []),

@@ -446,7 +446,9 @@ export interface HelloMessage {
   tiles: TileView[];
   state: WorldState;
   events: WorldEvent[];
+  /** Recent decisions with `prompt.system` left empty: it is the same for all of them and travels once as `systemPrompt`. */
   decisions: DecisionRecord[];
+  systemPrompt: string;
   brain: BrainStatus;
   pacing: PacingStats;
   signals: SignalsView;
@@ -454,7 +456,8 @@ export interface HelloMessage {
 
 export interface TickMessage {
   type: "tick";
-  state: WorldState;
+  /** `ruins` is present only when the set of ruins changed since the last tick message; keep the last one otherwise. */
+  state: Omit<WorldState, "ruins"> & { ruins?: RuinView[] };
   /** Food values for every tile, in the same order as `HelloMessage.tiles`. */
   tileFood: number[];
 }
@@ -472,6 +475,7 @@ export interface EventsMessage {
 
 export interface DecisionMessage {
   type: "decision";
+  /** `prompt.system` is left empty on the wire; `HelloMessage.systemPrompt` holds it. */
   decision: DecisionRecord;
 }
 

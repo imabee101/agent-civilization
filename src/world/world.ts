@@ -1689,6 +1689,18 @@ export class World {
     return { id: a.id, name: a.name, color: a.color, q: a.q, r: a.r, diedTick: a.diedTick ?? 0, fileCount: Object.keys(a.files).length, profile: { ...a.profile }, parentId: a.parentId };
   }
 
+  /** A stamp that changes when the set of ruins does, so a tick message can leave them out when nothing changed. */
+  ruinStamp(): string {
+    let n = 0;
+    let last = "";
+    for (const a of this.agents.values()) {
+      if (a.alive) continue;
+      n++;
+      last = a.id;
+    }
+    return `${n}:${last}`;
+  }
+
   stateView(thinkingIds: ReadonlySet<string> = new Set()): WorldState {
     return {
       tick: this.tick,

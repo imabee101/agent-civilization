@@ -52,6 +52,8 @@ export class HistoryStore {
   readonly path: string;
   private readonly insertEvent;
   private readonly insertDecision;
+  private readonly insertPrompt;
+  private readonly knownPrompts = new Set<string>();
 
   constructor(path = ":memory:") {
     this.path = path;
@@ -96,14 +98,23 @@ export class HistoryStore {
       );
       CREATE INDEX IF NOT EXISTS decisions_agent ON decisions(agent_id);
       CREATE INDEX IF NOT EXISTS decisions_tick ON decisions(tick);
+      CREATE TABLE IF NOT EXISTS prompts (
+        hash TEXT PRIMARY KEY,
+        text TEXT NOT NULL
+      );
     `);
+    // The system prompt is the same for thousands of decisions: stored once per distinct text, referenced by hash.
+    // Rows written before this column existed keep their own copy in system_prompt and read back as before.
+    const cols = (this.db.query("PRAGMA table_info(decisions)").all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("system_hash")) this.db.exec("ALTER TABLE decisions ADD COLUMN system_hash TEXT");
+    this.insertPrompt = this.db.prepare("INSERT OR IGNORE INTO prompts (hash, text) VALUES ($hash, $text)");
     this.insertEvent = this.db.prepare(
       `INSERT OR REPLACE INTO events (id, tick, day, kind, importance, agent_id, agent_name, target_id, text, quote, data, at)
        VALUES ($id, $tick, $day, $kind, $importance, $agentId, $agentName, $targetId, $text, $quote, $data, $at)`,
     );
     this.insertDecision = this.db.prepare(
-      `INSERT OR REPLACE INTO decisions (id, tick, agent_id, agent_name, backend, model, system_prompt, user_prompt, output, code, result, error, latency_ms, tokens, tokens_per_sec, started_at, finished_at)
-       VALUES ($id, $tick, $agentId, $agentName, $backend, $model, $system, $user, $output, $code, $result, $error, $latencyMs, $tokens, $tokensPerSec, $startedAt, $finishedAt)`,
+      `INSERT OR REPLACE INTO decisions (id, tick, agent_id, agent_name, backend, model, system_prompt, system_hash, user_prompt, output, code, result, error, latency_ms, tokens, tokens_per_sec, started_at, finished_at)
+       VALUES ($id, $tick, $agentId, $agentName, $backend, $model, '', $systemHash, $user, $output, $code, $result, $error, $latencyMs, $tokens, $tokensPerSec, $startedAt, $finishedAt)`,
     );
   }
 
@@ -132,6 +143,11 @@ export class HistoryStore {
   }
 
   recordDecision(d: DecisionRecord): void {
+    const systemHash = Bun.hash(d.prompt.system).toString(16);
+    if (!this.knownPrompts.has(systemHash)) {
+      this.insertPrompt.run({ hash: systemHash, text: d.prompt.system });
+      this.knownPrompts.add(systemHash);
+    }
     this.insertDecision.run({
       id: d.id,
       tick: d.tick,
@@ -139,7 +155,7 @@ export class HistoryStore {
       agentName: d.agentName,
       backend: d.backend,
       model: d.model,
-      system: d.prompt.system,
+      systemHash,
       user: d.prompt.user,
       output: d.output,
       code: d.code ?? null,
@@ -215,7 +231,7 @@ export class HistoryStore {
       params.agent = q.agentId;
     }
     params.limit = Math.max(1, Math.min(500, q.limit ?? 50));
-    const sql = `SELECT * FROM decisions ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id DESC LIMIT $limit`;
+    const sql = `SELECT decisions.*, COALESCE(NULLIF(decisions.system_prompt, ''), prompts.text, '') AS system_text FROM decisions LEFT JOIN prompts ON prompts.hash = decisions.system_hash ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY decisions.id DESC LIMIT $limit`;
     const rows = this.db.query(sql).all(params) as Record<string, unknown>[];
     return rows.reverse().map((r) => ({
       id: r.id as number,
@@ -224,7 +240,7 @@ export class HistoryStore {
       agentName: r.agent_name as string,
       backend: r.backend as string,
       model: r.model as string,
-      prompt: { system: r.system_prompt as string, user: r.user_prompt as string },
+      prompt: { system: r.system_text as string, user: r.user_prompt as string },
       output: r.output as string,
       code: (r.code as string | null) ?? undefined,
       result: (r.result as string | null) ?? undefined,
@@ -278,7 +294,8 @@ export class HistoryStore {
 
   /** Forget everything (world reset). */
   clear(): void {
-    this.db.exec("DELETE FROM events; DELETE FROM decisions;");
+    this.db.exec("DELETE FROM events; DELETE FROM decisions; DELETE FROM prompts;");
+    this.knownPrompts.clear();
   }
 
   close(): void {

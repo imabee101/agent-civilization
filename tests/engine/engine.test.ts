@@ -319,7 +319,7 @@ describe("Engine turns", () => {
   });
 
   test("brain failures mark the brain disconnected and back off", async () => {
-    const e = await mk(new ScriptedBrain([new Error("connection refused")]), { brainRetryMs: 10_000 });
+    const e = await mk(new ScriptedBrain([new Error("connection refused")]), { brainRetryMs: 10_000, brainRetries: 0 });
     const [a] = e.world.livingAgents();
     const r = (await e.runTurn(a!.id))!;
     expect(r.error).toBe("connection refused");
@@ -358,23 +358,77 @@ describe("Engine turns", () => {
     expect(e.getBrainStatus().connected).toBe(true);
   });
 
-  test("while the brain is down the world holds; it resumes once a call succeeds", async () => {
+  test("while the brain is down the world holds and no turn is dispatched; a health probe brings it back", async () => {
     const brain = new ScriptedBrain([new Error("connection refused"), js("1")]);
-    const e = await mk(brain, { brainRetryMs: 0, turnIntervalTicks: 1 });
+    const e = await mk(brain, { brainRetryMs: 0, brainRetries: 0, turnIntervalTicks: 1 });
     const [a] = e.world.livingAgents();
     await e.runTurn(a!.id);
     expect(e.brainOutage()).toBe(true);
+    brain.healthy = false;
     const tick = e.world.tick;
     const food = a!.food;
+    const asked = brain.requests.length;
     e.paused = false;
     await e.tick();
+    await new Promise((r) => setTimeout(r, 20));
     expect(e.world.tick).toBe(tick);
     expect(a!.food).toBe(food);
-    // the retry that tick() started succeeds
+    expect(brain.requests.length).toBe(asked); // no node spent a turn on a brain that is down
+    expect(e.brainOutage()).toBe(true);
+    brain.healthy = true;
+    await e.tick(); // the probe this tick starts finds it back
     await new Promise((r) => setTimeout(r, 20));
     expect(e.brainOutage()).toBe(false);
+    expect(e.recentEvents().some((ev) => ev.kind === "brain-status" && /^Brain back after \d+ s$/.test(ev.text))).toBe(true);
     await e.tick();
     expect(e.world.tick).toBe(tick + 1);
+  });
+
+  test("a failed call is tried again on the same facts; the node's events wait for a turn that answers", async () => {
+    const brain = new ScriptedBrain([js("say('hi')"), new Error("socket closed"), new Error("socket closed"), js("2")]);
+    const e = await mk(brain, { brainRetryMs: 0, brainRetries: 1, world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0, features: false, hearRadius: 0 } });
+    const [a] = e.world.livingAgents();
+    await e.runTurn(a!.id);
+    await e.tick(); // say() resolves: a "spoke" event lands in the node's tally
+    expect(e.world.peekTally(a!.id).spoke).toBe(1);
+    // Two failures in a row: the retry fails too, the turn is given up, and the tally is untouched.
+    const failed = (await e.runTurn(a!.id))!;
+    expect(failed.error).toBe("socket closed");
+    expect(a!.log.some((l) => /brain error: socket closed; trying again/.test(l))).toBe(true);
+    expect(e.world.peekTally(a!.id).spoke).toBe(1);
+    expect(e.recentDecisions().filter((d) => d.error).length).toBe(1); // one record for the two attempts
+    // Retry now succeeds: the prompt still carries the events from before the failed call.
+    e.brainStatus = { ...e.getBrainStatus(), connected: true };
+    brain.push(new Error("socket closed"), js("3"));
+    const ok = (await e.runTurn(a!.id))!;
+    expect(ok.error).toBeUndefined();
+    expect(brain.requests.at(-1)!.user).toContain("spoke x1");
+    expect(e.world.peekTally(a!.id).spoke).toBeUndefined();
+  });
+
+  test("a tick message carries ruins only when their set changed; hello and decisions carry the system prompt once", async () => {
+    const quiet = await mk(new ScriptedBrain());
+    const quietMsgs: ServerMessage[] = [];
+    quiet.on((m) => quietMsgs.push(m));
+    quiet.paused = false;
+    await quiet.tick();
+    const lastQuiet = quietMsgs.filter((m): m is Extract<ServerMessage, { type: "tick" }> => m.type === "tick").at(-1)!;
+    expect(lastQuiet.state.ruins).toBeUndefined(); // nothing changed since init's first message
+    expect(lastQuiet.state.agents.length).toBe(2);
+    const e = await mk(new ScriptedBrain([js("rest()")]), { initialAgents: 1, world: { seed: 11, mapRadius: 6, foodDrainPerTick: 100, starveHealthPerTick: 100, features: false } });
+    const msgs: ServerMessage[] = [];
+    e.on((m) => msgs.push(m));
+    const ticks = () => msgs.filter((m): m is Extract<ServerMessage, { type: "tick" }> => m.type === "tick");
+    e.paused = false;
+    for (let i = 0; i < 3; i++) await e.tick();
+    expect(e.world.deadAgents().length).toBe(1);
+    const withRuins = ticks().filter((t) => t.state.ruins);
+    expect(withRuins.length).toBe(1); // the tick on which the node died, and no tick after it
+    expect(withRuins[0]!.state.ruins!.map((r) => r.id)).toEqual(e.world.deadAgents().map((a) => a.id));
+    expect(ticks().at(-1)!.state.ruins).toBeUndefined();
+    const h = e.hello();
+    expect(h.systemPrompt.length).toBeGreaterThan(1000);
+    expect(JSON.stringify(h).split(JSON.stringify(h.systemPrompt).slice(1, 80)).length - 1).toBe(1); // the prompt is in there once
   });
 
   test("pumpTurns honours concurrency and the turn interval", async () => {
@@ -464,6 +518,19 @@ describe("Engine turns", () => {
     expect(e.getBrainStatus().profile?.kind).toBe("fast"); // 2000 prompt tok/s, 75 output tok/s
     expect(e.pacingStats().concurrency).toBe(3);
     expect(e.recentEvents().some((ev) => ev.kind === "brain-status" && /reclassified as fast/.test(ev.text))).toBe(true);
+  });
+
+  test("the decision pushed to clients carries no system prompt; the record kept does", async () => {
+    const e = await mk(new ScriptedBrain([js("rest()")]));
+    const msgs: ServerMessage[] = [];
+    e.on((m) => msgs.push(m));
+    const id = e.world.livingAgents()[0]!.id;
+    await e.runTurn(id);
+    const pushed = msgs.find((m): m is Extract<ServerMessage, { type: "decision" }> => m.type === "decision")!;
+    expect(pushed.decision.prompt.system).toBe("");
+    expect(pushed.decision.prompt.user.length).toBeGreaterThan(100);
+    expect(e.recentDecisions()[0]!.prompt.system.length).toBeGreaterThan(1000);
+    expect(e.hello().decisions[0]!.prompt.system).toBe("");
   });
 
   test("a turn on a dead or unknown node is a no-op", async () => {

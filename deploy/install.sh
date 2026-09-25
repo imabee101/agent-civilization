@@ -11,8 +11,12 @@ MODEL=${MODEL:-/home/imma/projects/llm/models/Huihui-Qwen3-4B-Instruct-2507-abli
 [[ -x dist/agentciv ]] || { echo "install: dist/agentciv missing; run bun run build" >&2; exit 1; }
 [[ -f /etc/agent-civ/approle.env ]] || { echo "install: /etc/agent-civ/approle.env missing; see deploy/README.md" >&2; exit 1; }
 
+# Both services map their binaries; replacing a mapped file under a running
+# process ends it with SIGBUS. Stop first, copy beside, move into place.
+systemctl stop agent-civ.service agent-civ-llm.service 2>/dev/null || true
 install -d -m 0755 /opt/agent-civ/models /opt/agent-civ/llama.cpp
-install -m 0755 dist/agentciv deploy/renew-tls.sh /opt/agent-civ/
+install -m 0755 dist/agentciv /opt/agent-civ/agentciv.new && mv -f /opt/agent-civ/agentciv.new /opt/agent-civ/agentciv
+install -m 0755 deploy/renew-tls.sh /opt/agent-civ/
 cp -a --remove-destination "$LLAMA/bin" "$LLAMA/lib" /opt/agent-civ/llama.cpp/
 install -m 0644 "$MODEL" /opt/agent-civ/models/
 install -m 0644 deploy/agentciv.slice deploy/agent-civ{,-llm,-renew}.service deploy/agent-civ-renew.timer /etc/systemd/system/
@@ -45,8 +49,7 @@ echo "install: brain on $compute: $LLAMA_FLAGS"
 systemctl daemon-reload
 
 /opt/agent-civ/renew-tls.sh
-systemctl enable --now agent-civ-llm.service agent-civ-renew.timer
-# Slice or ExecStart changes need a restart to take effect.
-systemctl restart agent-civ-llm.service
-systemctl enable agent-civ.service
-systemctl restart agent-civ.service
+systemctl enable --now agent-civ-renew.timer
+systemctl enable agent-civ-llm.service agent-civ.service
+systemctl start agent-civ-llm.service
+systemctl start agent-civ.service
