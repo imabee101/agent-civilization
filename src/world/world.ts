@@ -15,7 +15,7 @@ import { Rng } from "./rng";
 import { generateName, colorForIndex } from "./names";
 import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
 import { answerOf, makeRiddle, matches, type Riddle, type RiddleFacts } from "./riddles";
-import type { AgentView, AnsweredRecord, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
+import type { AgentView, AnsweredRecord, VoiceRecord, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
 
 export const SEASONS: readonly Season[] = ["spring", "summer", "autumn", "winter"];
 /** Food regrowth multiplier per season. */
@@ -98,6 +98,9 @@ export interface WorldConfig {
   features: boolean;
   /** Food that appears on the monolith's tile each time its riddle is answered. */
   monolithFood: number;
+  /** Different nodes that must speak the answer beside the stone (fewer if fewer are alive), and how long the stone holds a voice. */
+  monolithVoices: number;
+  monolithVoiceTicks: number;
 }
 
 export const DEFAULT_WORLD_CONFIG: WorldConfig = {
@@ -161,6 +164,8 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   boards: 2,
   features: true,
   monolithFood: 40,
+  monolithVoices: 2,
+  monolithVoiceTicks: 120,
 };
 
 export interface Structure {
@@ -175,6 +180,8 @@ export interface Structure {
   riddle?: Riddle;
   /** Monolith: everyone who answered, oldest first. */
   answered?: AnsweredRecord[];
+  /** Monolith: correct voices for the current riddle, oldest first. */
+  voices?: VoiceRecord[];
 }
 
 export interface Tile {
@@ -239,6 +246,8 @@ export interface Agent {
   inventory: Inventory;
   profile: Profile;
   files: Record<string, string>;
+  /** This node's own number, also written to its number.txt at birth. Some riddles ask about everyone's. */
+  number: number;
   lastSaid?: { tick: number; text: string };
   turns: number;
   lastError?: string;
@@ -619,6 +628,7 @@ export class World {
       inventory: { food: 10, wood: 0, stone: 0, items: [] },
       profile: { ...(opts.profile ?? {}) },
       files: {},
+      number: 1 + this.rng.int(99),
       turns: 0,
       log: [],
       inbox: [],
@@ -629,6 +639,7 @@ export class World {
     };
     this.agents.set(id, agent);
     if (opts.files) for (const [p, c] of Object.entries(opts.files)) this.fsWrite(id, p, c, { silent: true });
+    if (this.config.features) this.fsWrite(id, "number.txt", String(agent.number), { silent: true });
     if (this.extinct) {
       this.extinct = false;
       this.era++;
@@ -735,6 +746,8 @@ export class World {
       out.answered = s.answered?.length ?? 0;
       const last = s.answered?.at(-1);
       if (last) out.lastAnsweredBy = last.byName;
+      out.voicesNeeded = this.voicesNeeded();
+      out.voices = this.freshVoices(s).map((v) => v.byName);
     }
     return out;
   }
@@ -1450,7 +1463,9 @@ export class World {
     if (s.locked !== undefined) v.locked = s.locked;
     if (s.kind === "monolith") {
       v.text = s.riddle?.text ?? "";
-      v.answered = (s.answered ?? []).map((r) => ({ ...r }));
+      v.answered = (s.answered ?? []).map((r) => ({ ...r, with: [...r.with] }));
+      v.voices = this.freshVoices(s).map((r) => ({ ...r }));
+      v.voicesNeeded = this.voicesNeeded();
     }
     return v;
   }
@@ -1572,6 +1587,10 @@ export class World {
       agent.wasStarving = agent.alive && agent.food <= 0;
       agent.wasExhausted = agent.alive && agent.energy <= 0;
       w.agents.set(agent.id, agent);
+      if (typeof agent.number !== "number") {
+        agent.number = 1 + w.rng.int(99);
+        if (w.config.features && agent.alive && agent.files["number.txt"] === undefined) agent.files["number.txt"] = String(agent.number);
+      }
     }
     w.ensureMonolith();
     return w;
@@ -1603,6 +1622,7 @@ export class World {
       population: this.livingAgents().length,
       cacheEntries: cache?.entries ? Object.keys(cache.entries).length : 0,
       newestRuin: newest?.name,
+      numbers: this.livingAgents().map((a) => a.number),
     };
   }
 
@@ -1611,7 +1631,20 @@ export class World {
     s.riddle = makeRiddle(this.rng, no, this.tick, this.riddleFacts(), s.riddle?.kind);
   }
 
-  /** Words spoken on or next to the monolith are held against its riddle. A match is carved into the stone; a miss is a line in the speaker's log. */
+  /** Voices the stone still holds for its current riddle: one per node, none older than monolithVoiceTicks. */
+  private freshVoices(s: Structure): VoiceRecord[] {
+    const cut = this.tick - this.config.monolithVoiceTicks;
+    return (s.voices ?? []).filter((v) => v.tick >= cut);
+  }
+
+  voicesNeeded(): number {
+    return Math.max(1, Math.min(this.config.monolithVoices, this.livingAgents().length));
+  }
+
+  /**
+   * Words spoken on or next to the monolith are held against its riddle. A miss is a line in the speaker's log.
+   * A match is one voice; the stone answers once enough different nodes have spoken it, and carves them all.
+   */
   private hearMonolith(a: Agent, spoken: string): void {
     const t = this.tiles.find((x) => x.structure?.kind === "monolith" && hexDistance(x, a) <= 1);
     const s = t?.structure;
@@ -1621,9 +1654,23 @@ export class World {
       this.addLog(a.id, "the monolith stayed silent");
       return;
     }
+    const others = this.freshVoices(s).filter((v) => v.by !== a.id);
+    const needed = this.voicesNeeded();
+    if (others.length + 1 < needed) {
+      s.voices = [...others, { by: a.id, byName: a.name, tick: this.tick }];
+      this.dirtyTiles.add(hexKey(t));
+      const more = needed - s.voices.length;
+      this.addLog(a.id, `the monolith heard you; it waits for ${more} more ${more === 1 ? "voice" : "voices"}`);
+      this.emit("riddle-voice", 2, a, `${a.name} spoke the monolith's answer; the stone waits for ${more} more ${more === 1 ? "voice" : "voices"}`, {
+        data: { riddle: s.riddle.text, voices: s.voices.map((v) => v.byName), needed },
+      });
+      return;
+    }
     const solved = s.riddle;
+    const withNames = others.map((v) => v.byName);
+    s.voices = [];
     s.answered ??= [];
-    s.answered.push({ by: a.id, byName: a.name, tick: this.tick, era: this.era, no: solved.no });
+    s.answered.push({ by: a.id, byName: a.name, tick: this.tick, era: this.era, no: solved.no, with: withNames });
     if (s.answered.length > 200) s.answered.splice(0, s.answered.length - 200);
     t.food += this.config.monolithFood;
     const item = this.rng.pick(["seeds", "seeds", "relay", "lantern"] as const);
@@ -1631,8 +1678,10 @@ export class World {
     this.carveRiddle(s);
     this.dirtyTiles.add(hexKey(t));
     this.addLog(a.id, `the monolith accepted "${answer}"`);
-    this.emit("riddle-answered", 3, a, `${a.name} answered the monolith's riddle "${solved.text}" with ${answer}. ${this.config.monolithFood} food and ${item} appeared on its tile. A new riddle is carved: "${s.riddle!.text}"`, {
-      data: { riddle: solved.text, answer, era: this.era, next: s.riddle!.text, item },
+    for (const v of others) this.addLog(v.by, `the monolith accepted "${answer}" once ${a.name} spoke it too`);
+    const who = withNames.length ? `${a.name} and ${withNames.join(", ")}` : a.name;
+    this.emit("riddle-answered", 3, a, `${who} answered the monolith's riddle "${solved.text}" with ${answer}. ${this.config.monolithFood} food and ${item} appeared on its tile. A new riddle is carved: "${s.riddle!.text}"`, {
+      data: { riddle: solved.text, answer, era: this.era, next: s.riddle!.text, item, with: withNames },
     });
   }
 }

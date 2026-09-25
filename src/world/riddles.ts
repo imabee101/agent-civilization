@@ -5,11 +5,14 @@
  * about the world as it is at the moment of answering (how many towers stand,
  * whose ruin is newest), so the answer is looked up when someone speaks. A
  * riddle is short, and a small mind or a few lines of code can solve it.
- * Nothing here judges anyone: an answer matches or it does not.
+ * Every third riddle asks about the numbers every living node holds in its
+ * own number.txt, which nobody can read but its owner: the answer exists
+ * only when nodes tell each other. Nothing here judges anyone: an answer
+ * matches or it does not.
  */
 import type { Rng } from "./rng";
 
-export type RiddleKind = "digits" | "product" | "backwards" | "sequence" | "towers" | "population" | "cache" | "newest-ruin";
+export type RiddleKind = "digits" | "product" | "backwards" | "sequence" | "towers" | "population" | "cache" | "newest-ruin" | "sum-of-numbers" | "largest-number";
 
 export interface Riddle {
   kind: RiddleKind;
@@ -29,21 +32,25 @@ export interface RiddleFacts {
   cacheEntries: number;
   /** Name of the ruin that died most recently, if any ruin exists. */
   newestRuin?: string;
+  /** The number each living node holds in its number.txt. */
+  numbers: number[];
 }
 
 const WORDS = ["lantern", "spring", "tower", "harvest", "winter", "river", "stone", "forest", "meadow", "ember", "orchard", "beacon"] as const;
 
 const FIXED: RiddleKind[] = ["digits", "product", "backwards", "sequence"];
 const LIVE: RiddleKind[] = ["towers", "population", "cache", "newest-ruin"];
+const SHARED: RiddleKind[] = ["sum-of-numbers", "largest-number"];
 
 /** Lower-case alphanumeric tokens: how both the answer and the spoken words are compared. */
 export function tokens(s: string): string[] {
   return s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 0);
 }
 
-/** Carve the next riddle. Fixed and live kinds alternate; the same kind is never carved twice in a row. */
+/** Carve the next riddle: fixed, then live, then shared, and so on; the same kind is never carved twice in a row. */
 export function makeRiddle(rng: Rng, no: number, posed: number, facts: RiddleFacts, avoid?: RiddleKind): Riddle {
-  const pool = (no % 2 === 1 ? FIXED : LIVE).filter((k) => k !== avoid && (k !== "newest-ruin" || facts.newestRuin !== undefined));
+  const group = no % 3 === 1 ? FIXED : no % 3 === 2 ? LIVE : SHARED;
+  const pool = group.filter((k) => k !== avoid && (k !== "newest-ruin" || facts.newestRuin !== undefined));
   const kind = rng.pick(pool);
   const base = { kind, no, posed };
   switch (kind) {
@@ -82,6 +89,10 @@ export function makeRiddle(rng: Rng, no: number, posed: number, facts: RiddleFac
       return { ...base, text: "How many entries does the Cache hold right now?" };
     case "newest-ruin":
       return { ...base, text: "Whose ruin is the newest?" };
+    case "sum-of-numbers":
+      return { ...base, text: "Add up the numbers in every living node's number.txt." };
+    case "largest-number":
+      return { ...base, text: "What is the largest number in any living node's number.txt?" };
   }
 }
 
@@ -96,6 +107,10 @@ export function answerOf(r: Riddle, facts: RiddleFacts): string | undefined {
       return String(facts.cacheEntries);
     case "newest-ruin":
       return facts.newestRuin;
+    case "sum-of-numbers":
+      return facts.numbers.length ? String(facts.numbers.reduce((s, n) => s + n, 0)) : undefined;
+    case "largest-number":
+      return facts.numbers.length ? String(Math.max(...facts.numbers)) : undefined;
     default:
       return r.answer;
   }

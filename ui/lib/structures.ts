@@ -180,7 +180,11 @@ export function tileDossier(t: TileView): TileDossier {
   if (s?.kind === "vault") rows.push(["door", s.locked ? "locked" : "open"]);
   if (s?.kind === "board") rows.push(["posts", String(s.posts?.length ?? 0)]);
   if (s?.kind === "cache") rows.push(["entries", String(s.entries?.length ?? 0)]);
-  if (s?.kind === "monolith") rows.push(["answered", String(s.answered?.length ?? 0)]);
+  if (s?.kind === "monolith") {
+    rows.push(["answered", String(s.answered?.length ?? 0)]);
+    const voices = s.voices ?? [];
+    rows.push(["voices", voices.length ? `${voices.map((v) => v.byName).join(", ")} · ${voices.length} of ${s.voicesNeeded ?? "?"}` : `none yet · needs ${s.voicesNeeded ?? "?"}`]);
+  }
   if (items.length) rows.push(["items", items.join(", ")]);
   return {
     title: s ? STRUCTURE_LABEL[s.kind] : `${t.terrain} tile`,

@@ -644,7 +644,7 @@ function renderTileDossier(t: TileView): void {
       ...d.answered.map((a) => {
         const li = el("li");
         const head = el("div", "ph");
-        head.append(el("span", "from", a.byName), el("span", "tk", `era ${a.era} · t${a.tick} · riddle ${a.no}`));
+        head.append(el("span", "from", a.with.length ? `${a.byName} with ${a.with.join(", ")}` : a.byName), el("span", "tk", `era ${a.era} · t${a.tick} · riddle ${a.no}`));
         li.append(head);
         return li;
       }),

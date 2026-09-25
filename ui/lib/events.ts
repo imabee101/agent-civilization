@@ -37,6 +37,7 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
   "era-began": "life",
   "ruin-lost": "life",
   "riddle-answered": "build",
+  "riddle-voice": "build",
   posted: "comms",
   cached: "comms",
   "took-item": "items",
@@ -74,6 +75,7 @@ const ICON_OF: Record<EventKind, string> = {
   "era-began": "✶",
   "ruin-lost": "∴",
   "riddle-answered": "◆",
+  "riddle-voice": "◇",
   posted: "▤",
   cached: "❒",
   "took-item": "↑",
@@ -163,6 +165,7 @@ export function ribbonKicker(kind: EventKind): string {
   if (kind === "vault-opened") return "a door opens";
   if (kind === "era-began") return "a new era";
   if (kind === "riddle-answered") return "the stone answered";
+  if (kind === "riddle-voice") return "the stone waits";
   if (kind === "replicated") return "a new node";
   if (kind === "season-changed") return "a season turns";
   const cat = categoryOf(kind);
@@ -196,7 +199,7 @@ export function ribbonKicker(kind: EventKind): string {
 const STORY: ReadonlySet<EventKind> = new Set<EventKind>([
   "spawned", "died", "replicated", "era-began", "ruin-lost",
   "spoke", "sent-message", "posted", "cached",
-  "built", "demolished", "planted", "vault-opened", "riddle-answered",
+  "built", "demolished", "planted", "vault-opened", "riddle-answered", "riddle-voice",
   "dropped", "took-item", "dropped-item", "found", "ruin-read",
   "profile-changed", "starving", "season-changed", "world-reset",
 ]);

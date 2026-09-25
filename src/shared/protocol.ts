@@ -50,6 +50,15 @@ export interface AnsweredRecord {
   era: number;
   /** Which riddle (ordinal on the stone) was answered. */
   no: number;
+  /** The other voices that spoke the answer before this one completed it. */
+  with: string[];
+}
+
+/** One correct answer the monolith is holding while it waits for more voices. */
+export interface VoiceRecord {
+  by: string;
+  byName: string;
+  tick: number;
 }
 
 export interface StructureView {
@@ -58,6 +67,9 @@ export interface StructureView {
   text?: string;
   /** Monolith: everyone who answered, oldest first. */
   answered?: AnsweredRecord[];
+  /** Monolith: correct voices heard so far for the current riddle, and how many it takes. */
+  voices?: VoiceRecord[];
+  voicesNeeded?: number;
   /** Board posts, oldest first. */
   posts?: BoardPost[];
   /** Cache directory listing. */
@@ -166,6 +178,7 @@ export type EventKind =
   | "era-began"
   | "ruin-lost"
   | "riddle-answered"
+  | "riddle-voice"
   | "found"
   | "replicated"
   | "season-changed"

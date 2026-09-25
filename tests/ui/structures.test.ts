@@ -83,7 +83,7 @@ describe("listFeatures", () => {
     ];
     const f = listFeatures(tiles);
     expect(f.map((x) => x.kind)).toEqual(["cache", "board", "tower"]);
-    const stone = listFeatures([tile({ q: 3, r: 3, structure: { kind: "monolith", text: "12 times 7.", answered: [{ by: "n1", byName: "Ash", tick: 5, era: 1, no: 1 }] } })])[0]!;
+    const stone = listFeatures([tile({ q: 3, r: 3, structure: { kind: "monolith", text: "12 times 7.", answered: [{ by: "n1", byName: "Ash", tick: 5, era: 1, no: 1, with: [] }] } })])[0]!;
     expect(stone).toMatchObject({ kind: "monolith", count: 1, summary: "1 answered" });
     expect(f[0]).toMatchObject({ key: "0,0", q: 0, r: 0, glyph: STRUCTURE_GLYPH.cache, label: "cache", count: 1, summary: "1 entry" });
     expect(f[1]!.count).toBe(1);
@@ -152,10 +152,12 @@ describe("tileDossier", () => {
   });
   test("monolith dossier: the riddle is the text, answers come newest first", () => {
     const answered = [
-      { by: "n1", byName: "Ash", tick: 5, era: 1, no: 1 },
-      { by: "n4", byName: "Fern", tick: 90, era: 2, no: 2 },
+      { by: "n1", byName: "Ash", tick: 5, era: 1, no: 1, with: [] },
+      { by: "n4", byName: "Fern", tick: 90, era: 2, no: 2, with: ["Moss"] },
     ];
-    const d = tileDossier(tile({ structure: { kind: "monolith", text: "Read this backwards: REVIR.", answered } }));
+    const d = tileDossier(tile({ structure: { kind: "monolith", text: "Read this backwards: REVIR.", answered, voices: [{ by: "n9", byName: "Rue", tick: 100 }], voicesNeeded: 2 } }));
+    expect(d.rows).toContainEqual(["voices", "Rue · 1 of 2"]);
+    expect(tileDossier(tile({ structure: { kind: "monolith", text: "", voicesNeeded: 2 } })).rows).toContainEqual(["voices", "none yet · needs 2"]);
     expect(d.title).toBe("monolith");
     expect(d.text).toBe("Read this backwards: REVIR.");
     expect(d.textLabel).toBe("riddle");
