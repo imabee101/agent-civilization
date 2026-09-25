@@ -168,6 +168,8 @@ export interface TileDossier {
   entries: CacheEntry[];
   items: ItemKind[];
   locked: boolean | null;
+  /** Cache only: whether the operator froze it. */
+  frozen: boolean | null;
 }
 
 /** Pure formatting for the tile dossier. Agent-written strings are returned as-is. */
@@ -184,7 +186,7 @@ export function tileDossier(t: TileView): TileDossier {
   if (s?.builtBy) rows.push(["built by", s.builtBy]);
   if (s?.kind === "vault" || s?.kind === "gate") rows.push(["door", s.locked ? "locked" : "open"]);
   if (s?.kind === "board") rows.push(["posts", String(s.posts?.length ?? 0)]);
-  if (s?.kind === "cache") rows.push(["entries", String(s.entries?.length ?? 0)]);
+  if (s?.kind === "cache") rows.push(["entries", String(s.entries?.length ?? 0)], ["writes", s.frozen ? "frozen by the operator" : "open to anyone"]);
   if (s?.kind === "monolith") {
     rows.push(["answered", String(s.answered?.length ?? 0)]);
     const voices = s.voices ?? [];
@@ -205,6 +207,7 @@ export function tileDossier(t: TileView): TileDossier {
     entries: s?.kind === "cache" ? [...(s.entries ?? [])].sort((a, b) => a.name.localeCompare(b.name)) : [],
     items,
     locked: s?.kind === "vault" || s?.kind === "gate" ? !!s.locked : null,
+    frozen: s?.kind === "cache" ? !!s.frozen : null,
   };
 }
 

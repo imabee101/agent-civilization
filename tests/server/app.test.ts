@@ -119,6 +119,28 @@ describe("REST API", () => {
     expect(decs[0].agentId).toBe(a!.id);
   });
 
+  test("operator routes: quarantine, cache freeze, rewind with the typed word", async () => {
+    const { base, engine } = await boot();
+    const [a] = engine.world.livingAgents();
+    expect((await fetch(`${base}/api/agents/nobody/quarantine`, { method: "POST", body: "{}" })).status).toBe(404);
+    const q = await (await fetch(`${base}/api/agents/${a!.id}/quarantine`, { method: "POST", body: JSON.stringify({ on: true }) })).json();
+    expect(q).toEqual({ id: a!.id, quarantined: true });
+    expect(a!.quarantined).toBe(true);
+    const view = await (await fetch(`${base}/api/agents/${a!.id}`)).json();
+    expect(view.quarantined).toBe(true);
+    await fetch(`${base}/api/agents/${a!.id}/quarantine`, { method: "POST", body: JSON.stringify({ on: false }) });
+    expect(a!.quarantined).toBeUndefined();
+    expect((await fetch(`${base}/api/cache/freeze`, { method: "POST", body: JSON.stringify({ on: true }) })).status).toBe(409);
+    engine.world.tileAt(a!)!.structure = { kind: "cache", entries: {} };
+    expect((await (await fetch(`${base}/api/cache/freeze`, { method: "POST", body: JSON.stringify({ on: true }) })).json()).frozen).toBe(true);
+    expect(() => engine.world.cacheWrite(a!.id, "x")).toThrow(/frozen/);
+    expect((await fetch(`${base}/api/agents/${a!.id}/rewind`, { method: "POST", body: "{}" })).status).toBe(400);
+    expect((await fetch(`${base}/api/agents/${a!.id}/rewind`, { method: "POST", body: JSON.stringify({ confirm: "REWIND" }) })).status).toBe(409);
+    expect((await fetch(`${base}/api/agents/nobody/rewind`, { method: "POST", body: JSON.stringify({ confirm: "REWIND" }) })).status).toBe(404);
+    const ops = (await (await fetch(`${base}/api/events`)).json()).filter((e: { kind: string }) => e.kind === "operator");
+    expect(ops.length).toBe(3);
+  });
+
   test("spawn beyond the cap is a 409", async () => {
     const { base, engine } = await boot();
     engine.cfg.maxAgents = 2;
@@ -161,6 +183,16 @@ describe("WebSocket", () => {
     c.send({ type: "spawn", name: "Wsy" });
     await new Promise((r) => setTimeout(r, 30));
     expect(engine.world.livingAgents().some((x) => x.name === "Wsy")).toBe(true);
+    // operator controls over the socket
+    const [q] = engine.world.livingAgents();
+    c.send({ type: "quarantine", agentId: q!.id, on: true });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(q!.quarantined).toBe(true);
+    expect(c.messages.some((m) => m.type === "events" && m.events.some((x) => x.kind === "operator"))).toBe(true);
+    c.send({ type: "quarantine", agentId: q!.id, on: false });
+    c.send({ type: "rewind", agentId: q!.id, confirm: "nope" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(q!.quarantined).toBeUndefined();
     // reset is not a socket message; an old client sending one changes nothing
     const seed = engine.world.config.seed;
     c.send({ type: "reset", seed: 5 } as never);

@@ -464,6 +464,23 @@ export function createMockTransport(): Transport {
         case "snapshot":
           msgCb({ type: "events", events: [push("snapshot", 1, "snapshot saved")] });
           break;
+        case "quarantine": {
+          const a = agents.find((x) => x.id === msg.agentId);
+          if (!a) break;
+          if (msg.on) a.quarantined = true;
+          else delete a.quarantined;
+          msgCb({ type: "events", events: [push("operator", 2, `The operator ${msg.on ? "quarantined" : "released"} ${a.name}`, a)] });
+          break;
+        }
+        case "freeze":
+          msgCb({ type: "events", events: [push("operator", 2, msg.on ? "The operator froze the Cache" : "The operator thawed the Cache")] });
+          break;
+        case "rewind": {
+          const a = agents.find((x) => x.id === msg.agentId);
+          if (!a || msg.confirm !== "REWIND") break;
+          msgCb({ type: "events", events: [push("operator", 2, `The operator rewound ${a.name}'s files to the snapshot from tick ${Math.max(0, tick - 120)}`, a)] });
+          break;
+        }
         case "watch": {
           watched = msg.agentId;
           if (watched) {

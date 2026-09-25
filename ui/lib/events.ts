@@ -35,6 +35,7 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
   planted: "build",
   "vault-opened": "build",
   "gate-opened": "build",
+  operator: "system",
   "era-began": "life",
   "ruin-lost": "life",
   "riddle-answered": "build",
@@ -74,6 +75,7 @@ const ICON_OF: Record<EventKind, string> = {
   planted: "❁",
   "vault-opened": "⚿",
   "gate-opened": "⌸",
+  operator: "⊘",
   "era-began": "✶",
   "ruin-lost": "∴",
   "riddle-answered": "◆",
@@ -166,6 +168,7 @@ export function hasQuote(e: Pick<WorldEvent, "kind" | "quote">): boolean {
 export function ribbonKicker(kind: EventKind): string {
   if (kind === "vault-opened") return "a door opens";
   if (kind === "gate-opened") return "the gate opens";
+  if (kind === "operator") return "the operator";
   if (kind === "era-began") return "a new era";
   if (kind === "riddle-answered") return "the stone answered";
   if (kind === "riddle-voice") return "the stone waits";
@@ -204,7 +207,7 @@ const STORY: ReadonlySet<EventKind> = new Set<EventKind>([
   "spoke", "sent-message", "posted", "cached",
   "built", "demolished", "planted", "vault-opened", "gate-opened", "riddle-answered", "riddle-voice",
   "dropped", "took-item", "dropped-item", "found", "ruin-read",
-  "profile-changed", "starving", "season-changed", "world-reset",
+  "profile-changed", "starving", "season-changed", "world-reset", "operator",
 ]);
 
 export function isStory(e: Pick<WorldEvent, "kind">): boolean {

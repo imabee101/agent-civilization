@@ -537,6 +537,7 @@ function renderDossier(): void {
     c.style.setProperty("--gc", safeColor(a.profile.color) ?? a.color);
     chips.appendChild(c);
   }
+  if (a.quarantined) chips.appendChild(el("span", "chip held", "quarantined"));
   for (const t of tagChips(a.profile)) {
     const c = el("span", "chip");
     c.append(el("span", "k", `${t.key} `), el("span", "v", t.value));
@@ -615,19 +616,20 @@ function renderTileDossier(t: TileView): void {
   chips.appendChild(cc);
   chips.appendChild(el("span", "chip", d.terrain));
   if (d.locked !== null) chips.appendChild(el("span", `chip ${d.locked ? "locked" : "open"}`, d.locked ? "locked" : "open"));
+  if (d.frozen) chips.appendChild(el("span", "chip held", "frozen"));
   for (const k of d.items) {
     const c = el("span", "chip item");
     c.append(el("span", "g", ITEM_GLYPH[k] ?? "•"), el("span", "v", k));
     chips.appendChild(c);
   }
-  $("dKV").replaceChildren(
-    ...d.rows.map(([k, v]) => {
-      const r = el("div", "kv");
-      r.append(el("span", "k", k), el("span", "v", v));
-      r.title = v;
-      return r;
-    }),
-  );
+  const kvRows: HTMLElement[] = d.rows.map(([k, v]) => {
+    const r = el("div", "kv");
+    r.append(el("span", "k", k), el("span", "v", v));
+    r.title = v;
+    return r;
+  });
+  if (d.frozen !== null) kvRows.push(operatorRow([{ label: d.frozen ? "thaw the cache" : "freeze the cache", danger: !d.frozen, onClick: () => send({ type: "freeze", on: !d.frozen }) }]));
+  $("dKV").replaceChildren(...kvRows);
   const textSec = $("dTileText");
   textSec.hidden = d.text === null;
   if (d.text !== null) {
@@ -801,6 +803,17 @@ function renderBrain(): void {
     ...(d.error ? [preBlock("error", d.error, "err")] : []),
   );
 }
+/** A row of operator buttons. Only a person clicks these; every click becomes an event in the chronicle. */
+function operatorRow(buttons: { label: string; danger?: boolean; onClick: () => void }[]): HTMLElement {
+  const row = el("div", "op-row");
+  for (const b of buttons) {
+    const btn = el("button", `tbtn${b.danger ? " danger" : ""}`, b.label) as HTMLButtonElement;
+    btn.type = "button";
+    btn.addEventListener("click", b.onClick);
+    row.appendChild(btn);
+  }
+  return row;
+}
 function preBlock(label: string, text: string, tone: "ok" | "err" | "plain"): HTMLElement {
   const w = el("div", "pre-wrap");
   const l = el("span", "lbl", label);
@@ -894,6 +907,15 @@ function renderNodeDetail(): void {
     stats.appendChild(t);
   }
   const parts: HTMLElement[] = [stats];
+  if (a.alive) {
+    parts.push(
+      operatorRow([
+        { label: a.quarantined ? "release" : "quarantine", danger: !a.quarantined, onClick: () => send({ type: "quarantine", agentId: a.id, on: !a.quarantined }) },
+        { label: "rewind files", danger: true, onClick: () => openRewind(a) },
+      ]),
+    );
+    if (a.quarantined) parts.push(el("div", "empty-note", "quarantined: its code gets no handler calls, no turns and no deliveries. Its body goes on."));
+  }
   if (a.lastError) parts.push(preBlock("last runtime error", a.lastError, "err"));
   if (!d) parts.push(el("div", "empty-note", "waiting for node detail…"));
   else {
@@ -978,6 +1000,29 @@ $("resetForm").addEventListener("submit", (ev) => {
   void fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: "RESET" }) }).then(async (r) => {
     if (!r.ok) toast(`reset refused: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
   });
+});
+// Rewind a node's files: a dialog, and the button stays disabled until the word is typed.
+const rewindDialog = $("rewindDialog") as HTMLDialogElement;
+const rewindPhrase = $("rewindPhrase") as HTMLInputElement;
+const rewindGo = $("rewindGo") as HTMLButtonElement;
+let rewindTarget: string | null = null;
+function openRewind(a: AgentView): void {
+  rewindTarget = a.id;
+  $("rewindFacts").textContent = `${a.name}: ${a.fileCount} file${a.fileCount === 1 ? "" : "s"}, ${fmtBytes(a.fsBytes)}, ${a.turns} turn${a.turns === 1 ? "" : "s"} so far.`;
+  rewindPhrase.value = "";
+  rewindGo.disabled = true;
+  rewindDialog.showModal();
+  rewindPhrase.focus();
+}
+rewindPhrase.addEventListener("input", () => {
+  rewindGo.disabled = rewindPhrase.value !== "REWIND";
+});
+$("rewindCancel").addEventListener("click", () => rewindDialog.close());
+$("rewindForm").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  if (rewindPhrase.value !== "REWIND" || !rewindTarget) return;
+  rewindDialog.close();
+  send({ type: "rewind", agentId: rewindTarget, confirm: "REWIND" });
 });
 $("btnNerd").addEventListener("click", () => openNerd(!document.body.classList.contains("nerd-open")));
 $("nerdClose").addEventListener("click", () => openNerd(false));

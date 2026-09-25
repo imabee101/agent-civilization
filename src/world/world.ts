@@ -186,6 +186,8 @@ export interface Structure {
   entries?: Record<string, CacheEntry & { text: string }>;
   builtBy?: string;
   locked?: boolean;
+  /** Cache: set by the operator; writes and removes are refused while true. */
+  frozen?: boolean;
   /** Monolith: the riddle carved on it now. */
   riddle?: Riddle;
   /** Monolith: everyone who answered, oldest first. */
@@ -264,6 +266,8 @@ export interface Agent {
   log: string[];
   inbox: { tick: number; from: string; fromName: string; payload: string }[];
   heard: { tick: number; from: string; fromName: string; text: string }[];
+  /** Set by the operator: no handler calls, no turns, no deliveries until released. The body goes on. */
+  quarantined?: boolean;
   /** Transient per-tick intent. Not persisted. */
   intent: AgentIntent;
   /** Transient flags for edge-triggered events. */
@@ -839,6 +843,7 @@ export class World {
     if (s.posts) out.posts = s.posts.length;
     if (s.entries) out.entries = Object.keys(s.entries).length;
     if (s.locked !== undefined) out.locked = s.locked;
+    if (s.frozen) out.frozen = true;
     if (s.builtBy) out.builtBy = s.builtBy;
     if (s.kind === "monolith") {
       out.text = s.riddle?.text ?? "";
@@ -1163,9 +1168,14 @@ export class World {
   }
 
   /** mkdir / write: creates or overwrites an entry. Names are the message; content is optional. */
+  private requireThawed(c: { structure: Structure }): void {
+    if (c.structure.frozen) throw new WorldError("the cache is frozen: nothing can be made or removed in it until it thaws");
+  }
+
   cacheWrite(agentId: string, name: unknown, text: unknown = ""): void {
     const a = this.requireAlive(agentId);
     const c = this.requireCache(a);
+    this.requireThawed(c);
     const n = this.validateCacheName(name);
     if (typeof text !== "string") throw new WorldError("cache content must be a string");
     if (utf8Bytes(text) > this.config.cacheEntryBytes) throw new WorldError(`cache entry content is limited to ${this.config.cacheEntryBytes} bytes`);
@@ -1179,12 +1189,33 @@ export class World {
   cacheRemove(agentId: string, name: unknown): boolean {
     const a = this.requireAlive(agentId);
     const c = this.requireCache(a);
+    this.requireThawed(c);
     const n = this.validateCacheName(name);
     if (!(n in c.structure.entries!)) return false;
     delete c.structure.entries![n];
     this.markDirty(c.tile);
     this.emit("cached", 0, a, `${a.name} removed "${n}" from the cache`);
     return true;
+  }
+
+  // --------------------------------------------------------------- operator
+
+  /** Freeze or thaw the Cache. Returns false when this world has no Cache. Records nothing: the engine writes the operator event. */
+  setCacheFrozen(on: boolean): boolean {
+    const t = this.cacheTile();
+    if (!t?.structure) return false;
+    if (on) t.structure.frozen = true;
+    else delete t.structure.frozen;
+    this.markDirty(t);
+    return true;
+  }
+
+  /** Mark a living node as quarantined or released. The world keeps stepping its body either way. */
+  setQuarantined(agentId: string, on: boolean): Agent {
+    const a = this.requireAlive(agentId);
+    if (on) a.quarantined = true;
+    else delete a.quarantined;
+    return a;
   }
 
   // ------------------------------------------------------------------ files
@@ -1572,6 +1603,7 @@ export class World {
     if (s.entries) v.entries = Object.values(s.entries).map(({ text: _t, ...e }) => e);
     if (s.builtBy) v.builtBy = s.builtBy;
     if (s.locked !== undefined) v.locked = s.locked;
+    if (s.frozen) v.frozen = true;
     if (s.kind === "monolith") {
       v.text = s.riddle?.text ?? "";
       v.answered = (s.answered ?? []).map((r) => ({ ...r, with: [...r.with] }));
@@ -1615,6 +1647,7 @@ export class World {
       fsBytes: this.fsBytes(a.id),
       lastError: a.lastError,
       turns: a.turns,
+      ...(a.quarantined ? { quarantined: true } : {}),
     };
   }
 

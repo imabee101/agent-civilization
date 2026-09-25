@@ -222,6 +222,19 @@
 
   <div id="toast" class="glass" hidden></div>
   <!-- Resetting discards the world. It only happens from here, by typing the word. -->
+  <dialog id="rewindDialog" class="glass">
+    <form method="dialog" id="rewindForm">
+      <h2>Rewind this node's files?</h2>
+      <p id="rewindFacts"></p>
+      <p>Its files go back to what the last snapshot on disk holds, and its runtime is rebuilt from them. What it wrote since is discarded.</p>
+      <label for="rewindPhrase">Type <b>REWIND</b> to confirm</label>
+      <input id="rewindPhrase" class="mono" type="text" autocomplete="off" spellcheck="false" />
+      <div class="d-actions">
+        <button type="button" id="rewindCancel" class="tbtn">leave it</button>
+        <button type="submit" id="rewindGo" class="tbtn danger" disabled>rewind the files</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="resetDialog" class="glass">
     <form method="dialog" id="resetForm">
       <h2>Reset the world?</h2>

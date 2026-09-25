@@ -371,6 +371,91 @@ describe("Engine turns", () => {
   });
 });
 
+describe("Operator controls", () => {
+  test("quarantine holds a node's code still while its body goes on; release rebuilds it", async () => {
+    const e = await mk(new ScriptedBrain([js(`log("turn")`)]), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0.5, features: false }, turnIntervalTicks: 1 });
+    const [a, b] = e.world.livingAgents();
+    b!.q = a!.q;
+    b!.r = a!.r;
+    e.world.fsWrite(a!.id, "main.js", `var n = 0; function onTick(){ n++; fs.write("ticks.txt", String(n)); } function onMessage(f, m){ fs.write("got.txt", JSON.stringify(m)); }`);
+    await e.tick();
+    await e.tick();
+    expect(a!.files["ticks.txt"]).toBe("1");
+    const msgs: ServerMessage[] = [];
+    e.on((m) => msgs.push(m));
+    await e.quarantine(a!.id, true);
+    expect(a!.quarantined).toBe(true);
+    expect(e.hello().state.agents.find((x) => x.id === a!.id)!.quarantined).toBe(true);
+    const ev = msgs.flatMap((m) => (m.type === "events" ? m.events : [])).find((x) => x.kind === "operator")!;
+    expect(ev.importance).toBe(2);
+    expect(ev.data).toEqual({ action: "quarantine", on: true });
+    expect(ev.agentId).toBe(a!.id);
+    const food = a!.food;
+    const turnsBefore = e.brain instanceof ScriptedBrain ? e.brain.requests.length : 0;
+    e.nodes.get(b!.id)!.sandbox.eval(`send(${JSON.stringify(a!.id)}, {hello: 1})`);
+    for (let i = 0; i < 4; i++) await e.tick();
+    e.pumpTurns();
+    expect(a!.files["ticks.txt"]).toBe("1");
+    expect(a!.files["got.txt"]).toBeUndefined();
+    expect(a!.inbox.some((m) => m.from === b!.id)).toBe(true);
+    expect(a!.food).toBeLessThan(food);
+    expect((e.brain as ScriptedBrain).requests.filter((r) => r.user.includes("ticks.txt")).length).toBe(turnsBefore === 0 ? 0 : turnsBefore);
+    await e.quarantine(a!.id, false);
+    expect(a!.quarantined).toBeUndefined();
+    await e.tick();
+    await e.tick();
+    expect(Number(a!.files["ticks.txt"])).toBeGreaterThan(1);
+    expect(msgs.flatMap((m) => (m.type === "events" ? m.events : [])).filter((x) => x.kind === "operator").length).toBe(2);
+  });
+
+  test("a frozen cache refuses writes and removes with an error the node sees; reads go on", async () => {
+    const e = await mk(new ScriptedBrain(), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0, features: false } });
+    expect(() => e.freezeCache(true)).toThrow(/no cache/);
+    const [a] = e.world.livingAgents();
+    e.world.tileAt(a!)!.structure = { kind: "cache", entries: {} };
+    e.world.cacheWrite(a!.id, "before", "x");
+    e.freezeCache(true);
+    expect(e.world.tileView(e.world.tileAt(a!)!).structure!.frozen).toBe(true);
+    const r = e.nodes.get(a!.id)!.sandbox.eval(`cache.mkdir("during")`);
+    expect(r.ok).toBe(false);
+    expect(r.ok ? "" : r.error).toMatch(/frozen/);
+    expect(e.nodes.get(a!.id)!.sandbox.eval(`cache.read("before")`)).toMatchObject({ ok: true, value: "x" });
+    expect((e.world.observe(a!.id) as { me: { structure?: { frozen?: boolean } } }).me.structure?.frozen).toBe(true);
+    e.freezeCache(false);
+    expect(e.nodes.get(a!.id)!.sandbox.eval(`cache.mkdir("after")`).ok).toBe(true);
+    expect(e.recentEvents().filter((x) => x.kind === "operator").map((x) => x.data?.on)).toEqual([true, false]);
+  });
+
+  test("rewind puts a node's files back to the last snapshot on disk and rebuilds its handlers", async () => {
+    const dir = `${import.meta.dir}/../../scratch`;
+    const { mkdir, unlink } = await import("node:fs/promises");
+    await mkdir(dir, { recursive: true });
+    const path = `${dir}/engine-rewind-${Date.now()}.json`;
+    const e = await mk(new ScriptedBrain(), { snapshotPath: path });
+    const [a] = e.world.livingAgents();
+    await expect(e.rewind(a!.id)).rejects.toThrow(/no snapshot/);
+    e.world.fsWrite(a!.id, "main.js", `function onTick(){ fs.write("v.txt", "one"); }`);
+    await e.tick();
+    await e.saveSnapshot();
+    e.world.fsWrite(a!.id, "main.js", `function onTick(){ fs.write("v.txt", "two"); } function onHear(){}`);
+    e.world.fsWrite(a!.id, "extra.txt", "written after the snapshot");
+    await e.tick();
+    await e.tick();
+    expect(a!.files["v.txt"]).toBe("two");
+    await e.rewind(a!.id);
+    expect(a!.files["extra.txt"]).toBeUndefined();
+    expect(a!.files["main.js"]).toContain('"one"');
+    expect(e.nodes.get(a!.id)!.sandbox.handlers()).toEqual(["onTick"]);
+    await e.tick();
+    expect(a!.files["v.txt"]).toBe("one");
+    const ops = e.recentEvents().filter((x) => x.kind === "operator");
+    expect(ops.length).toBe(1);
+    expect(ops[0]!.data).toMatchObject({ action: "rewind", fromTick: 1 });
+    await expect(e.rewind("nobody")).rejects.toThrow(/no such/);
+    await unlink(path);
+  });
+});
+
 describe("Engine snapshots", () => {
   test("snapshot/restore keeps world, files, events, decisions and reinstalls handlers", async () => {
     const brain = new ScriptedBrain([js(`fs.write("main.js", "var c=0; function onTick(){ c++; me.set('ticks', String(c)) }")`)]);
