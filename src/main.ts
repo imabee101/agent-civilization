@@ -38,7 +38,16 @@ if (cfg.history) {
 }
 const stopBackups = scheduleBackups({ snapshotPath, dir: `${cfg.dataDir}/backups`, keep: cfg.backupsToKeep }, "7 * * * *", log);
 
-const app = createApp({ engine, port: cfg.port, hostname: cfg.hostname, tls: cfg.tls, index, log });
+let operatorToken = cfg.operatorToken;
+if (cfg.operatorTokenFile) {
+  operatorToken = (await Bun.file(cfg.operatorTokenFile).text()).trim();
+  if (!operatorToken) {
+    log(`operator token file ${cfg.operatorTokenFile} is empty`);
+    process.exit(1);
+  }
+}
+log(operatorToken ? "operator token required on every control" : "no operator token: anyone who can reach the server holds the switch");
+const app = createApp({ engine, port: cfg.port, hostname: cfg.hostname, tls: cfg.tls, index, log, operatorToken });
 engine.start();
 log(`listening on ${cfg.tls ? "https" : "http"}://${cfg.hostname === "0.0.0.0" ? "localhost" : cfg.hostname}:${app.server.port}`);
 

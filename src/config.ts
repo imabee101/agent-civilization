@@ -13,6 +13,9 @@ export interface AppConfig {
   hostname: string;
   /** PEM paths; both set means HTTPS/WSS is served in-process. */
   tls?: { cert: string; key: string };
+  /** Required on every control route and control message when set; from a file so it never shows in a process list. */
+  operatorToken?: string;
+  operatorTokenFile?: string;
   dataDir: string;
   fresh: boolean;
   /** Keep every event and decision in data/history.sqlite. */
@@ -32,6 +35,9 @@ usage: agentciv [options]
   --host <addr>         bind address (default 0.0.0.0)
   --tls-cert <file>     PEM chain; with --tls-key serves HTTPS/WSS (env AGENTCIV_TLS_CERT)
   --tls-key <file>      PEM private key (env AGENTCIV_TLS_KEY)
+  --operator-token-file <file>  file holding the token every control (pause, spawn, quarantine, reset, ...)
+                        must carry (env AGENTCIV_OPERATOR_TOKEN_FILE); --operator-token <t> / AGENTCIV_OPERATOR_TOKEN
+                        give it inline. Unset: anyone who can reach the server holds the switch.
   --data <dir>          snapshot directory (default ./data, env AGENTCIV_DATA)
   --fresh               ignore any saved snapshot and start a new world
   --no-history          do not keep the SQLite history of events and decisions
@@ -139,8 +145,12 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   const key = get("tls-key") ?? env.AGENTCIV_TLS_KEY;
   if (Boolean(cert) !== Boolean(key)) throw new Error("--tls-cert and --tls-key must be given together");
 
+  const operatorToken = get("operator-token") ?? env.AGENTCIV_OPERATOR_TOKEN;
+  const operatorTokenFile = get("operator-token-file") ?? env.AGENTCIV_OPERATOR_TOKEN_FILE;
   return {
     port: num(get("port")) ?? num(env.PORT) ?? 3000,
+    operatorToken: operatorToken || undefined,
+    operatorTokenFile: operatorTokenFile || undefined,
     hostname: get("host") ?? env.HOST ?? "0.0.0.0",
     tls: cert && key ? { cert, key } : undefined,
     dataDir: get("data") ?? env.AGENTCIV_DATA ?? "./data",

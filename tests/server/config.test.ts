@@ -34,6 +34,14 @@ describe("parseArgs", () => {
     expect(parseArgs([], {}).engine).not.toHaveProperty("promptMaxChars");
   });
 
+  test("operator token from a flag, the environment or a file path", () => {
+    expect(parseArgs([], {}).operatorToken).toBeUndefined();
+    expect(parseArgs(["--operator-token", "abc"], {}).operatorToken).toBe("abc");
+    expect(parseArgs([], { AGENTCIV_OPERATOR_TOKEN: "env" }).operatorToken).toBe("env");
+    expect(parseArgs(["--operator-token-file", "/run/x"], {}).operatorTokenFile).toBe("/run/x");
+    expect(parseArgs([], { AGENTCIV_OPERATOR_TOKEN: "" }).operatorToken).toBeUndefined();
+  });
+
   test("tls needs both halves", () => {
     expect(parseArgs([], {}).tls).toBeUndefined();
     expect(parseArgs(["--tls-cert", "c.pem", "--tls-key", "k.pem"], {}).tls).toEqual({ cert: "c.pem", key: "k.pem" });

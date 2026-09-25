@@ -471,6 +471,8 @@ export interface HelloMessage {
   /** Recent decisions with `prompt.system` left empty: it is the same for all of them and travels once as `systemPrompt`. */
   decisions: DecisionRecord[];
   systemPrompt: string;
+  /** True when the server requires the operator token on control messages and control routes. */
+  operatorTokenRequired: boolean;
   brain: BrainStatus;
   pacing: PacingStats;
   signals: SignalsView;
@@ -527,7 +529,14 @@ export interface ResetMessage {
   hello: HelloMessage;
 }
 
+/** A control message was refused: no token, or the wrong one. */
+export interface DeniedMessage {
+  type: "denied";
+  action: string;
+}
+
 export type ServerMessage =
+  | DeniedMessage
   | HelloMessage
   | TickMessage
   | TilesMessage
@@ -539,7 +548,8 @@ export type ServerMessage =
   | SignalsMessage
   | ResetMessage;
 
-export type ClientMessage =
+/** Every control message may carry the operator token; the server requires it on control messages when one is configured. */
+export type ClientMessage = (
   | { type: "pause" }
   | { type: "resume" }
   | { type: "speed"; speed: 1 | 2 | 4 }
@@ -552,7 +562,8 @@ export type ClientMessage =
   | { type: "freeze"; on: boolean }
   | { type: "rewind"; agentId: string; confirm: string }
   /** Give a node notice of the tick its code will be held still, or withdraw it with null. */
-  | { type: "retire"; agentId: string; atTick: number | null };
+  | { type: "retire"; agentId: string; atTick: number | null }
+) & { token?: string };
 
 export const REWIND_PHRASE = "REWIND";
 

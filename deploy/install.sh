@@ -45,6 +45,12 @@ fi
 LLAMA_FLAGS="-m $MODEL_FILE --alias $(basename "$MODEL" .gguf | tr '[:upper:]' '[:lower:]' | sed -E 's/^huihui-//; s/-instruct//; s/\.i1-q4_0$//') -c $((SLOTS * CTX_PER_SLOT)) -np $SLOTS $LLAMA_FLAGS"
 install -d -m 0755 /etc/agent-civ
 printf 'LLAMA_FLAGS=%s\n' "$LLAMA_FLAGS" > /etc/agent-civ/llm.env
+# The operator token: made once, root-only, never printed here. Read it with:
+#   sudo cat /etc/agent-civ/operator-token
+if [[ ! -s /etc/agent-civ/operator-token ]]; then
+  (umask 077; openssl rand -hex 16 > /etc/agent-civ/operator-token)
+  echo "install: operator token created at /etc/agent-civ/operator-token (sudo cat it to hold the switch)"
+fi
 echo "install: brain on $compute: $LLAMA_FLAGS"
 systemctl daemon-reload
 

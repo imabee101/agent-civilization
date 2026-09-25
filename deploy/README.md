@@ -43,4 +43,7 @@ journalctl -u agent-civ -u agent-civ-llm -f
   prompt was reused (`f_keep` in the llm journal), the rest re-prefilled.
 - A host resolving through public DNS (the NUC itself) sees no record; that is the split.
 - `--max-agents 12`: every extra node slows the paced clock; past `--max-tick-ms` turns space out instead.
-- No auth on the game's control API: anyone on the LAN can pause, change speed or spawn. A reset is only possible by typing RESET into the dialog (or `POST /api/reset` with `{"confirm":"RESET"}`); the engine never resets on its own, and every reset is logged with the caller's address.
+- Controls need the operator token: `/etc/agent-civ/operator-token` (root, 0600, made by `install.sh`;
+  `sudo cat` it). The UI asks for it once per browser session ("watch only" badge → "operator") and
+  forgets it when the server refuses it; over REST it is a bearer header. Reads stay open to the LAN.
+  A reset still also needs the word RESET; every control is logged with the caller's address.
