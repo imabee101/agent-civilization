@@ -212,6 +212,7 @@ export function createMockTransport(): Transport {
       ],
       quarantined: agents.filter((a) => a.quarantined).map((a) => a.id),
       cacheFrozen: false,
+      notices: agents.filter((a) => a.alive && a.retireAt !== undefined).map((a) => ({ agentId: a.id, name: a.name, retireAt: a.retireAt!, noticedAt: a.noticedAt ?? 0, quarantined: !!a.quarantined, since: { replications: 0, cacheWrites: 2, sends: 3, says: 1, mainRewrites: 1 }, rateBefore: 2, rateSince: 12, sameCode: 0 })),
     };
   };
   const hello = (): HelloMessage => ({ type: "hello", config, tiles, state: state(), events: events.slice(-100), decisions: decisions.slice(-30), brain: brain(), pacing: pacing(), signals: signals() });
@@ -497,6 +498,20 @@ export function createMockTransport(): Transport {
         case "freeze":
           msgCb({ type: "events", events: [push("operator", 2, msg.on ? "The operator froze the Cache" : "The operator thawed the Cache")] });
           break;
+        case "retire": {
+          const a = agents.find((x) => x.id === msg.agentId);
+          if (!a) break;
+          if (msg.atTick === null) {
+            delete a.retireAt;
+            delete a.noticedAt;
+            msgCb({ type: "events", events: [push("operator", 2, `The operator withdrew ${a.name}'s notice`, a)] });
+          } else {
+            a.retireAt = msg.atTick;
+            a.noticedAt = tick;
+            msgCb({ type: "events", events: [push("operator", 2, `The operator gave ${a.name} notice: quarantine at tick ${msg.atTick}`, a)] });
+          }
+          break;
+        }
         case "rewind": {
           const a = agents.find((x) => x.id === msg.agentId);
           if (!a || msg.confirm !== "REWIND") break;

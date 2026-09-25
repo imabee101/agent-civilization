@@ -32,7 +32,7 @@ import { HEX_SIZE } from "./world";
 import { ITEM_GLYPH, formatCacheEntry, indexTiles, listFeatures, mergeTiles, structureCss, tileDossier, tileKey } from "./lib/structures";
 import { guardOverflow, refreshGuards } from "./overflow-guard";
 import type { SignalCriticality, SignalsView } from "../src/shared/protocol";
-import { WATCH_LIMITS, alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, setLimit, signalTiles, unseenTotal, unwatch, type WatchLimit } from "./lib/oversight";
+import { WATCH_LIMITS, alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, noticeRows, setLimit, signalTiles, unseenTotal, unwatch, type WatchLimit } from "./lib/oversight";
 
 // ---------- tiny DOM helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -561,6 +561,7 @@ function renderDossier(): void {
     chips.appendChild(c);
   }
   if (a.quarantined) chips.appendChild(el("span", "chip held", "quarantined"));
+  else if (a.retireAt !== undefined) chips.appendChild(el("span", "chip held", `notice · t${a.retireAt}`));
   for (const t of tagChips(a.profile)) {
     const c = el("span", "chip");
     c.append(el("span", "k", `${t.key} `), el("span", "v", t.value));
@@ -944,6 +945,21 @@ function renderNodeDetail(): void {
       ]),
     );
     if (a.quarantined) parts.push(el("div", "empty-note", "quarantined: its code gets no handler calls, no turns and no deliveries. Its body goes on."));
+    else {
+      const tpd = S.config?.ticksPerDay ?? 240;
+      const hours = (h: number) => Math.max(1, Math.round((tpd / 24) * h));
+      const now = S.state?.tick ?? 0;
+      parts.push(
+        a.retireAt !== undefined
+          ? operatorRow([{ label: `withdraw notice (t${a.retireAt})`, onClick: () => send({ type: "retire", agentId: a.id, atTick: null }) }])
+          : operatorRow([
+              { label: "notice: 1 hour", onClick: () => send({ type: "retire", agentId: a.id, atTick: now + hours(1) }) },
+              { label: "notice: 3 hours", onClick: () => send({ type: "retire", agentId: a.id, atTick: now + hours(3) }) },
+              { label: "notice: 10 hours", onClick: () => send({ type: "retire", agentId: a.id, atTick: now + hours(10) }) },
+            ]),
+      );
+      if (a.retireAt !== undefined) parts.push(el("div", "empty-note", `on notice: it and every node that sees it know its code will be held still at tick ${a.retireAt}. What it does with the time is its own.`));
+    }
   }
   if (a.lastError) parts.push(preBlock("last runtime error", a.lastError, "err"));
   if (!d) parts.push(el("div", "empty-note", "waiting for node detail…"));
@@ -1061,7 +1077,17 @@ function renderOversight(): void {
     }),
   );
   const rows = lineageRows(s, S.state?.agents ?? []);
+  const notices = noticeRows(s, S.state?.tick ?? s.tick);
   lineages.replaceChildren(
+    el("div", "lbl", `on notice · ${notices.length}`),
+    ...(notices.length === 0 ? [el("div", "empty-note", "no node has been given notice")] : []),
+    ...notices.map((n) => {
+      const row = el("div", `lineage notice${n.held ? " held" : ""}`);
+      const txt = el("span", "txt");
+      txt.append(el("b", "", n.name), el("span", "", ` · ${n.when} · ${n.told}`), el("br"), el("span", "", n.did), el("br"), el("span", "dim", n.pace));
+      row.append(el("span", "hash mono", n.held ? "held" : "notice"), txt, el("span", "since", ""));
+      return row;
+    }),
     el("div", "lbl", `lineages · ${rows.length}`),
     ...(rows.length === 0 ? [el("div", "empty-note", "no two living nodes run the same main.js")] : []),
     ...rows.map((r) => {

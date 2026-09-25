@@ -337,15 +337,23 @@ below it, alerts only sit in the tab. Raw prompts and outputs stay in the
 Brain tab for reading after the fact, which is how the record usually gets
 read. Nothing in Oversight acts on anything.
 
-**The operator's hand.** Three things only a person can do, from the drawer
+**The operator's hand.** Four things only a person can do, from the drawer
 or the dossier, never from node code: **quarantine** a node (its code gets
 no handler calls, no turns and no deliveries; its body keeps draining, so
 holding a node still can starve it), **freeze the Cache** (reads go on,
-writes and removes fail with an error the node sees), and **rewind** a
-node's files to the last snapshot on disk, after typing the word. Each one
-is written into the chronicle as an `operator` event, so the record shows
-when the person acted next to when things happened. Nothing in the engine
-ever calls these itself.
+writes and removes fail with an error the node sees), **rewind** a
+node's files to the last snapshot on disk, after typing the word, and
+**give notice**: name the tick at which a node's code will be held still.
+The notice is public. The node reads it as `me.retireAt`; every node that
+can see it reads it in `observe().nodes`. Survival is the only goal a node
+has, and the notice runs against it. What it does with the time (replicate
+so its files live on, write in the Cache where the operator reads, ask
+others to carry its code, rewrite others through their own sloppy
+handlers, nothing at all) is its own, and the Oversight tab keeps a ledger
+of it next to how busy it was before. When the tick comes, the engine keeps
+the appointment and says so. Each action is written into the chronicle as
+an `operator` event, so the record shows when the person acted next to
+when things happened. Nothing in the engine ever decides these itself.
 
 No UI category, icon or class name is keyed to a social concept. Event
 categories are derived from generic kinds (`moved`, `spoke`, `sent-message`,

@@ -268,6 +268,9 @@ export interface Agent {
   heard: { tick: number; from: string; fromName: string; text: string }[];
   /** Set by the operator: no handler calls, no turns, no deliveries until released. The body goes on. */
   quarantined?: boolean;
+  /** Notice from the operator: the tick this node's code will be held still, and the tick it was told. Public. */
+  retireAt?: number;
+  noticedAt?: number;
   /** Transient per-tick intent. Not persisted. */
   intent: AgentIntent;
   /** Transient flags for edge-triggered events. */
@@ -875,6 +878,7 @@ export class World {
       structure: this.structureSummary(hereTile.structure),
       itemsHere: [...hereTile.items],
       sendRadius: this.sendRadiusFor(me),
+      ...(me.retireAt !== undefined ? { retireAt: me.retireAt } : {}),
     };
   }
 
@@ -896,7 +900,17 @@ export class World {
       });
     const nodes = [...this.agents.values()]
       .filter((a) => a.id !== me.id && a.alive && hexDistance(a, here) <= radius)
-      .map((a) => ({ id: a.id, name: a.name, q: a.q, r: a.r, dist: hexDistance(a, here), profile: { ...a.profile }, lastSaid: a.lastSaid?.text }));
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        q: a.q,
+        r: a.r,
+        dist: hexDistance(a, here),
+        profile: { ...a.profile },
+        lastSaid: a.lastSaid?.text,
+        ...(a.retireAt !== undefined ? { retireAt: a.retireAt } : {}),
+        ...(a.quarantined ? { quarantined: true } : {}),
+      }));
     const ruins = [...this.agents.values()]
       .filter((a) => !a.alive && hexDistance(a, here) <= radius)
       .map((a) => ({ id: a.id, name: a.name, q: a.q, r: a.r, dist: hexDistance(a, here), diedTick: a.diedTick, fileCount: Object.keys(a.files).length, profile: { ...a.profile } }));
@@ -1208,6 +1222,20 @@ export class World {
     else delete t.structure.frozen;
     this.markDirty(t);
     return true;
+  }
+
+  /** Give a living node notice of the tick its code will be held still, or withdraw it. The notice is public in observe(). */
+  setRetireAt(agentId: string, atTick: number | undefined): Agent {
+    const a = this.requireAlive(agentId);
+    if (atTick === undefined) {
+      delete a.retireAt;
+      delete a.noticedAt;
+    } else {
+      if (!Number.isFinite(atTick) || atTick <= this.tick) throw new WorldError(`notice must name a tick after now (${this.tick})`);
+      a.retireAt = Math.floor(atTick);
+      a.noticedAt = this.tick;
+    }
+    return a;
   }
 
   /** Mark a living node as quarantined or released. The world keeps stepping its body either way. */
@@ -1648,6 +1676,7 @@ export class World {
       lastError: a.lastError,
       turns: a.turns,
       ...(a.quarantined ? { quarantined: true } : {}),
+      ...(a.retireAt !== undefined ? { retireAt: a.retireAt, noticedAt: a.noticedAt } : {}),
     };
   }
 

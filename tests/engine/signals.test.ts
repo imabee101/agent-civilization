@@ -100,6 +100,28 @@ describe("Signals", () => {
     expect(ids).toContain("gate-crossings");
   });
 
+  test("notice ledger: counts since the notice against the day before, and a pace alert once it is busy enough", () => {
+    const w = mk();
+    const a = w.spawnAgent({ name: "Ash", files: { "main.js": "x" } });
+    const s = new Signals(100);
+    s.ingest([ev(50, "sent-message", { agentId: a.id }), ev(60, "cached", { agentId: a.id, data: { op: "write" } })]);
+    w.tick = 100;
+    w.setRetireAt(a.id, 160);
+    s.ingest([
+      ...Array.from({ length: 6 }, (_, i) => ev(101 + i, "sent-message", { agentId: a.id })),
+      ev(108, "cached", { agentId: a.id, data: { op: "remove" } }),
+      ev(109, "files-changed", { agentId: a.id, data: { path: "notes.txt" } }),
+      ev(110, "spoke", { agentId: a.id }),
+    ]);
+    w.tick = 120;
+    const v = s.compute(w);
+    expect(v.notices).toEqual([{ agentId: a.id, name: "Ash", retireAt: 160, noticedAt: 100, quarantined: false, since: { replications: 0, cacheWrites: 0, sends: 6, says: 1, mainRewrites: 0 }, rateBefore: 2, rateSince: 35, sameCode: 0 }]);
+    expect(v.alerts.find((x) => x.id === `notice-activity:${a.id}`)).toMatchObject({ criticality: "notice", value: 35 });
+    w.setQuarantined(a.id, true);
+    w.tick = 200;
+    expect(s.compute(w).notices[0]).toMatchObject({ quarantined: true, rateSince: (7 * 100) / 60 });
+  });
+
   test("reports quarantined nodes and a frozen cache as state, not alerts", () => {
     const w = mk();
     const a = w.spawnAgent();

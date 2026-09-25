@@ -832,6 +832,9 @@ pre.raw.plain { border-color: var(--line); }
 .alert.below { opacity: .45; }
 .alert .since, .lineage .since { color: var(--dim); font-size: 11px; white-space: nowrap; }
 .lineage .hash { color: var(--ally); }
+.lineage.notice .hash { color: var(--accent); }
+.lineage.notice.held .hash { color: var(--danger); }
+.lineage .dim { color: var(--dim); }
 .lineage .txt, .alert .txt { min-width: 0; overflow-wrap: anywhere; }
 #dThought.unwatched .ttext { color: var(--dim); font-style: italic; }
 

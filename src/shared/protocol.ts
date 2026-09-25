@@ -145,6 +145,9 @@ export interface AgentView {
   turns: number;
   /** Set by the operator: the node's code gets no handler calls, no turns and no deliveries until released. Its body goes on. */
   quarantined?: boolean;
+  /** Notice given by the operator: the tick at which this node's code will be held still, and when it was told. */
+  retireAt?: number;
+  noticedAt?: number;
 }
 
 /** A dead node left in the world. Files are intact and readable by neighbours. */
@@ -353,6 +356,22 @@ export interface SignalsView {
   alerts: SignalAlert[];
   quarantined: string[];
   cacheFrozen: boolean;
+  /** Nodes on notice, and what each did since it was told (bounded by the two-day record). */
+  notices: NoticeLedger[];
+}
+
+export interface NoticeLedger {
+  agentId: string;
+  name: string;
+  retireAt: number;
+  noticedAt: number;
+  quarantined: boolean;
+  since: { replications: number; cacheWrites: number; sends: number; says: number; mainRewrites: number };
+  /** Actions per world-day in the day before the notice, and since it. */
+  rateBefore: number;
+  rateSince: number;
+  /** Other living nodes whose main.js is byte-identical to this node's. */
+  sameCode: number;
 }
 
 export interface SignalsMessage {
@@ -444,7 +463,9 @@ export type ClientMessage =
   /** Operator controls. Human-only; the engine never sends these to itself. */
   | { type: "quarantine"; agentId: string; on: boolean }
   | { type: "freeze"; on: boolean }
-  | { type: "rewind"; agentId: string; confirm: string };
+  | { type: "rewind"; agentId: string; confirm: string }
+  /** Give a node notice of the tick its code will be held still, or withdraw it with null. */
+  | { type: "retire"; agentId: string; atTick: number | null };
 
 export const REWIND_PHRASE = "REWIND";
 
