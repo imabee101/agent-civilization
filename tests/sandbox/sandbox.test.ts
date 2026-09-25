@@ -443,3 +443,19 @@ describe("sandbox: handlers and persistence", () => {
     expect(sb.callHandler("onTick")).toBeNull();
   });
 });
+
+describe("me", () => {
+  test("a field me does not have throws a message that names what me has and where the verbs are; real fields, JSON and log still work", async () => {
+    const { sb } = await mk({}, fakeBridge());
+    const err = sb.eval("me.say('hi')");
+    expect(err.ok).toBe(false);
+    expect((err as { error: string }).error).toContain("me.say is not a thing; me has set, id, name, q, r, stomach, energy, health, inventory, profile, tileFood, terrain, structure, itemsHere, sendRadius, retireAt");
+    expect((err as { error: string }).error).toContain("say(), send(), move() and the rest are globals, not methods of me");
+    expect(sb.eval("me.food")).toMatchObject({ ok: false });
+    expect(sb.eval("typeof me.set")).toMatchObject({ ok: true, value: "function" });
+    expect(sb.eval("JSON.stringify(me).length > 2")).toMatchObject({ ok: true, value: "true" });
+    expect(sb.eval("log(me); String(me).length > 0")).toMatchObject({ ok: true, value: "true" });
+    expect(sb.eval("'stomach' in me && !('food' in me)")).toMatchObject({ ok: true, value: "true" });
+    sb.dispose();
+  });
+});

@@ -190,3 +190,18 @@ describe("turn.js placement", () => {
     expect(extractCode("```js\nrest()")).toBe("rest()");
   });
 });
+
+describe("notes.txt", () => {
+  test("a node's notes are shown after main.js, first 600 characters, only when the file exists", () => {
+    const base = { observation: { tick: 1, me: {}, nodes: [], ruins: [], inbox: [], heard: [] }, log: [], turn: 2, handlers: [] };
+    const p = buildUserPrompt({ ...base, files: { "main.js": "// m", "notes.txt": "plan: " + "x".repeat(1000) } });
+    expect(p).toContain("notes.txt (yours; the first 600 characters):\nplan: ");
+    expect(p.indexOf("main.js:")).toBeLessThan(p.indexOf("notes.txt (yours"));
+    expect(p.indexOf("notes.txt (yours")).toBeLessThan(p.indexOf("ACTIVE HANDLERS"));
+    expect(p).not.toContain("x".repeat(700));
+    expect(buildUserPrompt({ ...base, files: { "main.js": "// m" } })).not.toContain("notes.txt (yours");
+    expect(SYSTEM_PROMPT).toContain("notes.txt, if you keep one, is shown to you each turn");
+    expect(SYSTEM_PROMPT).toContain("inventory:{food,wood,stone,items:[...]}");
+    expect(SYSTEM_PROMPT).toContain("say(), send(), move() and the rest are globals, not methods of me");
+  });
+});
