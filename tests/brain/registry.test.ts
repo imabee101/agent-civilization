@@ -31,19 +31,19 @@ describe("registry", () => {
     expect((await b.decide({ system: "", user: "" })).text).toContain("rest()");
   });
 
-  test("brainConfigFromEnv reads LLMWAR_* with OPENAI_* fallbacks", () => {
+  test("brainConfigFromEnv reads AGENTCIV_* with OPENAI_* fallbacks", () => {
     const cfg = brainConfigFromEnv({
-      LLMWAR_BRAIN: "llamacpp",
-      LLMWAR_BASE_URL: "http://gpu:8080",
-      LLMWAR_MODEL: "tiny",
-      LLMWAR_MAX_TOKENS: "300",
-      LLMWAR_TEMPERATURE: "0.4",
-      LLMWAR_STREAM: "false",
-      LLMWAR_TIMEOUT_MS: "9000",
-      LLMWAR_PROMPT_FORMAT: "llama3",
+      AGENTCIV_BRAIN: "llamacpp",
+      AGENTCIV_BASE_URL: "http://gpu:8080",
+      AGENTCIV_MODEL: "tiny",
+      AGENTCIV_MAX_TOKENS: "300",
+      AGENTCIV_TEMPERATURE: "0.4",
+      AGENTCIV_STREAM: "false",
+      AGENTCIV_TIMEOUT_MS: "9000",
+      AGENTCIV_PROMPT_FORMAT: "llama3",
     });
     expect(cfg).toEqual({ kind: "llamacpp", baseUrl: "http://gpu:8080", model: "tiny", apiKey: undefined, maxTokens: 300, temperature: 0.4, stream: false, timeoutMs: 9000, promptFormat: "llama3" });
-    const fb = brainConfigFromEnv({ OPENAI_BASE_URL: "http://x/v1", OPENAI_API_KEY: "sk", LLMWAR_PROMPT_FORMAT: "bogus" });
+    const fb = brainConfigFromEnv({ OPENAI_BASE_URL: "http://x/v1", OPENAI_API_KEY: "sk", AGENTCIV_PROMPT_FORMAT: "bogus" });
     expect(fb.kind).toBeUndefined();
     expect(fb.baseUrl).toBe("http://x/v1");
     expect(fb.apiKey).toBe("sk");

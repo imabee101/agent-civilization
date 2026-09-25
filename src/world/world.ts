@@ -14,12 +14,23 @@ import { DIRECTION_NAMES, hexDistance, hexNeighbor, hexesWithin, inMap, hexKey, 
 import { Rng } from "./rng";
 import { generateName, colorForIndex } from "./names";
 import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
-import type { AgentView, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
+import type { AgentView, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
+
+export const SEASONS: readonly Season[] = ["spring", "summer", "autumn", "winter"];
+/** Food regrowth multiplier per season. */
+export const SEASON_REGROWTH: Record<Season, number> = { spring: 1.0, summer: 1.3, autumn: 0.8, winter: 0.25 };
 
 export interface WorldConfig {
   seed: number;
   mapRadius: number;
   ticksPerDay: number;
+  /** Days per season; four seasons make a year. */
+  seasonDays: number;
+  /** Hard cap on living nodes (replicate() fails beyond it). */
+  maxPopulation: number;
+  /** Food a node must spend from its inventory to replicate, and the energy it costs. */
+  replicateFoodCost: number;
+  replicateEnergy: number;
   visionRadius: number;
   nightVisionRadius: number;
   hearRadius: number;
@@ -85,6 +96,10 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   seed: 1337,
   mapRadius: 12,
   ticksPerDay: 240,
+  seasonDays: 3,
+  maxPopulation: 64,
+  replicateFoodCost: 40,
+  replicateEnergy: 30,
   visionRadius: 3,
   nightVisionRadius: 2,
   hearRadius: 3,
@@ -125,9 +140,9 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   signChars: 120,
   boardMaxPosts: 40,
   boardPostChars: 240,
-  cacheMaxEntries: 120,
+  cacheMaxEntries: 200,
   cacheNameChars: 64,
-  cacheEntryBytes: 512,
+  cacheEntryBytes: 4096,
   spawnRadius: 3,
   springs: 3,
   towers: 2,
@@ -171,7 +186,14 @@ export interface Delivery {
 
 export interface AgentIntent {
   move?: number;
-  body?: { kind: "gather"; what: "food" | "wood" | "stone" } | { kind: "drop"; amount: number } | { kind: "rest" } | { kind: "build"; what: StructureKind; text?: string } | { kind: "demolish" } | { kind: "plant" };
+  body?:
+    | { kind: "gather"; what: "food" | "wood" | "stone" }
+    | { kind: "drop"; amount: number }
+    | { kind: "rest" }
+    | { kind: "build"; what: StructureKind; text?: string }
+    | { kind: "demolish" }
+    | { kind: "plant" }
+    | { kind: "replicate"; name?: string };
   eat?: number;
   say?: string;
   sends: { to: string; payload: string }[];
@@ -193,6 +215,7 @@ export interface Agent {
   alive: boolean;
   bornTick: number;
   diedTick?: number;
+  parentId?: string;
   food: number;
   energy: number;
   health: number;
@@ -461,6 +484,15 @@ export class World {
     return this.phase === "night";
   }
 
+  get season(): Season {
+    return SEASONS[Math.floor((this.day - 1) / this.config.seasonDays) % 4]!;
+  }
+
+  get seasonProgress(): number {
+    const ticksPerSeason = this.config.seasonDays * this.config.ticksPerDay;
+    return (this.tick % ticksPerSeason) / ticksPerSeason;
+  }
+
   get currentVisionRadius(): number {
     return this.isNight ? this.config.nightVisionRadius : this.config.visionRadius;
   }
@@ -509,7 +541,7 @@ export class World {
     return this.rng.pick(pool);
   }
 
-  spawnAgent(opts: { name?: string; at?: Hex; files?: Record<string, string>; silent?: boolean } = {}): Agent {
+  spawnAgent(opts: { name?: string; at?: Hex; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile } = {}): Agent {
     const index = this.nextAgentIndex++;
     const id = `n${index.toString(36)}`;
     let name = opts.name?.trim() || generateName(this.rng);
@@ -527,11 +559,12 @@ export class World {
       r: tile.r,
       alive: true,
       bornTick: this.tick,
+      parentId: opts.parentId,
       food: this.config.startFood,
       energy: this.config.startEnergy,
       health: this.config.startHealth,
       inventory: { food: 10, wood: 0, stone: 0, items: [] },
-      profile: {},
+      profile: { ...(opts.profile ?? {}) },
       files: {},
       turns: 0,
       log: [],
@@ -650,6 +683,9 @@ export class World {
       tick: this.tick,
       day: this.day,
       phase: this.phase,
+      season: this.season,
+      population: this.livingAgents().length,
+      maxPopulation: this.config.maxPopulation,
       me: {
         id: me.id,
         name: me.name,
@@ -763,6 +799,27 @@ export class World {
     const t = this.tileAt(a)!;
     if (t.terrain === "water" || t.terrain === "rock") throw new WorldError("nothing grows here");
     a.intent.body = { kind: "plant" };
+  }
+
+  intentReplicate(agentId: string, name?: unknown): void {
+    const a = this.requireAlive(agentId);
+    const cfg = this.config;
+    if (a.inventory.food < cfg.replicateFoodCost) throw new WorldError(`replicate() needs ${cfg.replicateFoodCost} food in your inventory; you have ${Math.floor(a.inventory.food)}`);
+    if (a.energy < cfg.replicateEnergy) throw new WorldError(`replicate() needs ${cfg.replicateEnergy} energy`);
+    if (this.livingAgents().length >= cfg.maxPopulation) throw new WorldError(`the world holds at most ${cfg.maxPopulation} living nodes`);
+    if (!this.freeNeighbor(a)) throw new WorldError("replicate() needs a free passable hex next to you");
+    if (name !== undefined && name !== null && typeof name !== "string") throw new WorldError("replicate(name): name must be a string");
+    a.intent.body = { kind: "replicate", name: typeof name === "string" ? name.slice(0, 24) : undefined };
+  }
+
+  private freeNeighbor(a: Agent): Tile | undefined {
+    const occupied = new Set(this.livingAgents().map((x) => hexKey(x)));
+    for (let d = 0; d < 6; d++) {
+      const h = hexNeighbor(a, d);
+      const t = this.tileAt(h);
+      if (t && inMap(h, this.config.mapRadius) && this.isPassable(h) && !occupied.has(hexKey(h)) && t.structure?.kind !== "wall") return t;
+    }
+    return undefined;
   }
 
   intentSay(agentId: string, text: unknown): void {
@@ -1027,7 +1084,9 @@ export class World {
    * apply hunger/energy/health, regrow food, and produce deliveries.
    */
   step(): void {
+    const before = this.season;
     this.tick++;
+    if (this.season !== before) this.emit("season-changed", 2, undefined, `${this.season} has come (day ${this.day})`, { data: { season: this.season } });
     const order = this.rng.shuffle(this.livingAgents());
     for (const a of order) this.resolveIntent(a);
     for (const a of order) this.survival(a);
@@ -1170,6 +1229,20 @@ export class World {
           this.emit("demolished", 2, a, `${a.name} demolished the ${s.kind} at ${a.q},${a.r}`, { data: { what: s.kind, builtBy: s.builtBy } });
           break;
         }
+        case "replicate": {
+          const spot = this.freeNeighbor(a);
+          if (a.inventory.food < cfg.replicateFoodCost || a.energy < cfg.replicateEnergy || !spot || this.livingAgents().length >= cfg.maxPopulation) {
+            this.addLog(a.id, "replicate: conditions no longer met");
+            break;
+          }
+          a.inventory.food -= cfg.replicateFoodCost;
+          a.energy -= cfg.replicateEnergy;
+          const child = this.spawnAgent({ name: it.body.name, at: spot, files: { ...a.files }, parentId: a.id, profile: a.profile, silent: true });
+          child.food = 70;
+          child.inventory.food = Math.floor(cfg.replicateFoodCost / 4);
+          this.emit("replicated", 2, a, `${a.name} replicated: ${child.name} appeared at ${spot.q},${spot.r} with a copy of ${a.name}'s files`, { targetId: child.id, targetName: child.name });
+          break;
+        }
         case "plant": {
           const idx = a.inventory.items.indexOf("seeds");
           if (idx < 0 || tile.terrain === "water" || tile.terrain === "rock") {
@@ -1234,8 +1307,9 @@ export class World {
 
   private regrow(): void {
     const cfg = this.config;
+    const seasonal = SEASON_REGROWTH[this.season];
     for (const t of this.tiles) {
-      const rate = t.structure?.kind === "spring" ? cfg.springRegrowthPerTick : cfg.regrowthPerTick;
+      const rate = (t.structure?.kind === "spring" ? cfg.springRegrowthPerTick : cfg.regrowthPerTick) * seasonal;
       if (t.foodCap > 0 && t.food < t.foodCap) t.food = Math.min(t.foodCap, t.food + t.foodCap * rate);
       if (t.woodCap > 0 && t.wood < t.woodCap) t.wood = Math.min(t.woodCap, t.wood + t.woodCap * cfg.materialRegrowthPerTick);
       if (t.stoneCap > 0 && t.stone < t.stoneCap) t.stone = Math.min(t.stoneCap, t.stone + t.stoneCap * cfg.materialRegrowthPerTick);
@@ -1277,6 +1351,7 @@ export class World {
       alive: a.alive,
       bornTick: a.bornTick,
       diedTick: a.diedTick,
+      parentId: a.parentId,
       food: round1(a.food),
       energy: round1(a.energy),
       health: round1(a.health),
@@ -1292,7 +1367,7 @@ export class World {
   }
 
   ruinView(a: Agent): RuinView {
-    return { id: a.id, name: a.name, color: a.color, q: a.q, r: a.r, diedTick: a.diedTick ?? 0, fileCount: Object.keys(a.files).length, profile: { ...a.profile } };
+    return { id: a.id, name: a.name, color: a.color, q: a.q, r: a.r, diedTick: a.diedTick ?? 0, fileCount: Object.keys(a.files).length, profile: { ...a.profile }, parentId: a.parentId };
   }
 
   stateView(thinkingIds: ReadonlySet<string> = new Set()): WorldState {
@@ -1300,6 +1375,8 @@ export class World {
       tick: this.tick,
       day: this.day,
       phase: this.phase,
+      season: this.season,
+      seasonProgress: this.seasonProgress,
       dayProgress: this.dayProgress,
       agents: [...this.agents.values()].map((a) => this.agentView(a, thinkingIds.has(a.id))),
       ruins: this.deadAgents().map((a) => this.ruinView(a)),
@@ -1311,6 +1388,8 @@ export class World {
     return {
       mapRadius: c.mapRadius,
       ticksPerDay: c.ticksPerDay,
+      seasonDays: c.seasonDays,
+      maxPopulation: c.maxPopulation,
       visionRadius: c.visionRadius,
       hearRadius: c.hearRadius,
       sendRadius: c.sendRadius,

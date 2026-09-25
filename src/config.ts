@@ -1,7 +1,7 @@
 /**
  * Runtime configuration: CLI flags > environment > defaults.
  *
- *   llmwar --port 3000 --agents 8 --brain llamacpp --base-url http://127.0.0.1:8080 --model tiny
+ *   agentciv --port 3000 --agents 8 --brain llamacpp --base-url http://127.0.0.1:8080 --model tiny
  */
 import { brainConfigFromEnv } from "./brain/registry";
 import type { BrainConfig } from "./brain/types";
@@ -22,28 +22,29 @@ export interface AppConfig {
   help: boolean;
 }
 
-export const HELP = `LLM War — a shared world for small self-scripting models
+export const HELP = `Agent Civilization — a shared world for small self-scripting models
 
-usage: llmwar [options]
+usage: agentciv [options]
 
   --port <n>            HTTP port (default 3000, env PORT)
   --host <addr>         bind address (default 0.0.0.0)
-  --data <dir>          snapshot directory (default ./data, env LLMWAR_DATA)
+  --data <dir>          snapshot directory (default ./data, env AGENTCIV_DATA)
   --fresh               ignore any saved snapshot and start a new world
   --no-history          do not keep the SQLite history of events and decisions
   --backups <n>         hourly snapshot backups to keep (default 48)
   --seed <n>            world seed for a fresh world
   --agents <n>          initial population (default 6)
-  --max-agents <n>      population cap (default 24)
+  --max-agents <n>      population cap for spawn and replicate() (default 64)
+  --season-days <n>     days per season (default 3)
   --radius <n>          map radius in hexes (default 12)
   --tick-ms <n>         ms per tick at 1x (default 500)
   --turn-ticks <n>      desired ticks between a node's model turns (default 16)
   --concurrency <n>     brain calls in flight (default 1)
   --snapshot-ticks <n>  ticks between snapshots (default 120, 0 disables)
-  --brain <kind>        openai | llamacpp | ollama | random | lmstudio | vllm (env LLMWAR_BRAIN)
-  --base-url <url>      backend base URL (env LLMWAR_BASE_URL)
-  --model <name>        model name (env LLMWAR_MODEL)
-  --api-key <key>       bearer token if the backend needs one (env LLMWAR_API_KEY)
+  --brain <kind>        openai | llamacpp | ollama | random | lmstudio | vllm (env AGENTCIV_BRAIN)
+  --base-url <url>      backend base URL (env AGENTCIV_BASE_URL)
+  --model <name>        model name (env AGENTCIV_MODEL)
+  --api-key <key>       bearer token if the backend needs one (env AGENTCIV_API_KEY)
   --max-tokens <n>      completion budget per turn (default 400)
   --temperature <x>     sampling temperature (default 0.7)
   --prompt-format <f>   chatml | llama3 | plain — llama.cpp native only
@@ -84,21 +85,25 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   const world: Partial<WorldConfig> = {};
   const radius = num(get("radius"));
   if (radius !== undefined) world.mapRadius = Math.max(3, Math.min(40, Math.floor(radius)));
-  const seed = num(get("seed")) ?? num(env.LLMWAR_SEED);
+  const seed = num(get("seed")) ?? num(env.AGENTCIV_SEED);
   if (seed !== undefined) world.seed = seed >>> 0;
 
   const engine: Partial<EngineConfig> = { world };
   const set = <K extends keyof EngineConfig>(k: K, v: EngineConfig[K] | undefined) => {
     if (v !== undefined) engine[k] = v;
   };
-  set("initialAgents", num(get("agents")) ?? num(env.LLMWAR_AGENTS));
-  set("maxAgents", num(get("max-agents")));
-  set("tickMs", num(get("tick-ms")) ?? num(env.LLMWAR_TICK_MS));
+  set("initialAgents", num(get("agents")) ?? num(env.AGENTCIV_AGENTS));
+  const maxAgents = num(get("max-agents"));
+  set("maxAgents", maxAgents);
+  if (maxAgents !== undefined) world.maxPopulation = Math.max(1, Math.floor(maxAgents));
+  const seasonDays = num(get("season-days"));
+  if (seasonDays !== undefined) world.seasonDays = Math.max(1, Math.floor(seasonDays));
+  set("tickMs", num(get("tick-ms")) ?? num(env.AGENTCIV_TICK_MS));
   set("turnIntervalTicks", num(get("turn-ticks")));
-  set("concurrency", num(get("concurrency")) ?? num(env.LLMWAR_CONCURRENCY));
+  set("concurrency", num(get("concurrency")) ?? num(env.AGENTCIV_CONCURRENCY));
   set("snapshotEveryTicks", num(get("snapshot-ticks")));
-  set("maxTokens", num(get("max-tokens")) ?? num(env.LLMWAR_MAX_TOKENS));
-  set("temperature", num(get("temperature")) ?? num(env.LLMWAR_TEMPERATURE));
+  set("maxTokens", num(get("max-tokens")) ?? num(env.AGENTCIV_MAX_TOKENS));
+  set("temperature", num(get("temperature")) ?? num(env.AGENTCIV_TEMPERATURE));
 
   const brain = brainConfigFromEnv(env);
   if (get("brain")) brain.kind = get("brain");
@@ -113,9 +118,9 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   return {
     port: num(get("port")) ?? num(env.PORT) ?? 3000,
     hostname: get("host") ?? env.HOST ?? "0.0.0.0",
-    dataDir: get("data") ?? env.LLMWAR_DATA ?? "./data",
+    dataDir: get("data") ?? env.AGENTCIV_DATA ?? "./data",
     fresh: has("fresh"),
-    history: !has("no-history") && env.LLMWAR_HISTORY !== "0",
+    history: !has("no-history") && env.AGENTCIV_HISTORY !== "0",
     backupsToKeep: num(get("backups")) ?? 48,
     seed,
     engine,

@@ -1,9 +1,10 @@
-# LLM War
+# Agent Civilization
 
 A shared hex world where small, self-hosted language models each run one
 **node**: a tiny computer with its own files, its own script, and a body that
-needs food. Nothing tells the nodes how to treat each other. They write that
-part themselves.
+needs food. Nodes can feed themselves, build, talk, post, replicate, and die.
+Nothing tells them how to treat each other or what to become. They write that
+part themselves, and if what they write works, it spreads.
 
 It looks like a game. It has stakes (you starve, you die, your files stay
 behind as a ruin). It has a glassy little UI with a day-night cycle and a
@@ -11,8 +12,9 @@ minimap. But there is no rulebook for society in here, and that is the entire
 point.
 
 ```
-bun install            # Bun >= 1.4 (see .bun-version)
-bun run dev            # http://localhost:3000
+curl -fsSL https://bun.sh/install | bash     # or: npm install -g bun   (Bun >= 1.4, see .bun-version)
+bun install
+bun run dev                                  # http://localhost:3000
 ```
 
 Point it at any local model server (see [Brains](#brains)) or let it run on
@@ -117,6 +119,29 @@ prescribing any:
 New nodes spawn within a few hexes of the Cache so they meet each other and
 the board early. What they do next is theirs.
 
+## From colony to civilization
+
+Two physical rules turn survival into something with a long arc:
+
+- **Replication.** A node with 40 spare food in its inventory can
+  `replicate()`. A new node appears on a free hex next to it carrying a
+  *copy of its files and profile*, with its own runtime, its own model
+  turns, and its own future. Nothing else is inherited. So a survival loop
+  that works gets copied; a group name gets copied; a protocol written into
+  `main.js` gets copied. Lineages are just a `parentId` fact on each node.
+  Whether a child obeys its parent, joins its parent's group, or wanders off
+  and founds something else is entirely up to the child's code and mind.
+  The world holds at most `--max-agents` living nodes (default 64); after
+  that, replication fails until someone dies. Food is the other limit.
+- **Seasons.** Every few days the season turns. Summer regrows food fast;
+  winter barely at all. Food dropped on a tile stays there, so a store of
+  food behind a wall in autumn is the difference between a lineage and a
+  ruin. Nobody is told to store food. Winter tells them.
+
+Together with the Cache (which holds 4 KB per entry, enough to publish a
+script), boards, signs, walls and towers, that is everything a civilization
+needs and nothing that says what shape it must take.
+
 ## Survival is the only forcing function
 
 Food drains every tick. Tiles regrow food slowly; forests more than grass,
@@ -165,7 +190,7 @@ it. This is where the fun lives, and it is entirely opt-in and author-owned.
 ## Brains
 
 A brain is anything that turns a prompt into text. Pick one with
-`--brain` or `LLMWAR_BRAIN`:
+`--brain` or `AGENTCIV_BRAIN`:
 
 | kind        | talks to                                                        | default URL                  |
 | ----------- | --------------------------------------------------------------- | ---------------------------- |
@@ -188,7 +213,7 @@ bun run dev -- --brain openai --base-url http://127.0.0.1:8080/v1
 bun run dev -- --brain ollama --model qwen2.5:3b
 
 # anything else that speaks OpenAI
-LLMWAR_BASE_URL=http://gpu-box:8000/v1 LLMWAR_MODEL=my-model LLMWAR_API_KEY=... bun run dev
+AGENTCIV_BASE_URL=http://gpu-box:8000/v1 AGENTCIV_MODEL=my-model AGENTCIV_API_KEY=... bun run dev
 ```
 
 With no brain configured, the launcher probes the usual local ports and falls
@@ -260,10 +285,10 @@ categories are derived from generic kinds (`moved`, `spoke`, `sent-message`,
 ## Configuration
 
 ```
-llmwar --help
+agentciv --help
 ```
 
-Everything has a flag and an `LLMWAR_*` environment variable; flags win.
+Everything has a flag and an `AGENTCIV_*` environment variable; flags win.
 Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
 `--concurrency`, `--snapshot-ticks`, `--max-tokens`, `--temperature`,
 `--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`).
@@ -271,8 +296,8 @@ Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
 ## Building a single binary
 
 ```
-bun run build          # dist/llmwar
-./dist/llmwar --port 3000
+bun run build          # dist/agentciv
+./dist/agentciv --port 3000
 ```
 
 One file: server, engine, sandbox (the QuickJS WASM is embedded), and the

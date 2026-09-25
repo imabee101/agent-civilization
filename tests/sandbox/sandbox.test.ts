@@ -27,6 +27,7 @@ function fakeBridge(overrides: Partial<HostBridge> = {}): HostBridge & { calls: 
     build: rec("build", undefined),
     demolish: rec("demolish", undefined),
     plant: rec("plant", undefined),
+    replicate: rec("replicate", undefined),
     take: rec("take", "key"),
     dropItem: rec("dropItem", "key"),
     signWrite: rec("signWrite", undefined),
@@ -117,7 +118,7 @@ describe("sandbox: nothing from the host is reachable", () => {
       "encodeURI", "encodeURIComponent", "escape", "eval", "globalThis", "isFinite", "isNaN", "parseFloat", "parseInt",
       "undefined", "unescape",
     ];
-    const api = ["observe", "move", "moveToward", "gather", "eat", "drop", "rest", "build", "demolish", "plant", "take", "dropItem", "say", "send", "sign", "board", "cache", "fs", "ruins", "me", "log", "console", "hex"];
+    const api = ["observe", "move", "moveToward", "gather", "eat", "drop", "rest", "build", "demolish", "plant", "replicate", "take", "dropItem", "say", "send", "sign", "board", "cache", "fs", "ruins", "me", "log", "console", "hex"];
     expect((r as any).value).toBe([...builtins, ...api].sort().join(" "));
   });
 
@@ -279,7 +280,7 @@ describe("sandbox: bridge semantics", () => {
     const { sb, bridge } = await mk();
     const r = sb.eval(`
       observe(); move("ne"); moveToward(1, 2); gather(); gather("wood"); eat(5); drop(3); rest();
-      build("sign", "hello"); demolish(); plant(); take(); take("key"); dropItem("key");
+      build("sign", "hello"); demolish(); plant(); replicate(); replicate("Kid"); take(); take("key"); dropItem("key");
       say("hi"); send("n1", {a: 1}); sign.write("x"); board.read(); board.post("p");
       cache.list(); cache.read("README"); cache.mkdir("me"); cache.write("f", {a:1}); cache.rmdir("f");
       fs.read("main.js"); fs.write("x", "y"); fs.append("x", "z"); fs.list(); fs.remove("x");

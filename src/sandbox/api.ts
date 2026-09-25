@@ -9,7 +9,7 @@
 export const API_DOC = `You control one node in a shared hex world. Your code runs in a sandboxed JavaScript interpreter (no modules, no timers, no network, no host filesystem). These globals exist:
 
 PERCEPTION
-  observe() -> { tick, day, phase, me:{id,name,q,r,food,energy,health,inventory:{food},profile,tileFood,terrain}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
+  observe() -> { tick, day, phase, season, population, maxPopulation, me:{id,name,q,r,food,energy,health,inventory:{food},profile,tileFood,terrain}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
 
 BODY (one of move/gather/drop/rest/build/demolish/plant per tick; eat is extra)
   move(dir)            dir is 0..5 or "e","ne","nw","w","sw","se". Costs energy. Water, walls and the map edge block.
@@ -21,6 +21,7 @@ BODY (one of move/gather/drop/rest/build/demolish/plant per tick; eat is extra)
   build(what, text?)   on your tile: "sign" (1 wood, text), "board" (4 wood), "wall" (3 stone, blocks movement), "tower" (6 stone + 2 wood, send() reaches the whole map from next to it).
   demolish()           remove a sign/board/wall/tower on your tile. Anyone can.
   plant()              needs seeds; raises your tile's food cap.
+  replicate(name?)     spend 40 food from your inventory (and most of your energy) to create a new node on a free hex next to you. It starts with a copy of your files and profile and its own mind. The world holds a limited number of living nodes.
 
 THINGS ON THE GROUND
   take(what?)          pick up an item lying on your tile (max 3 carried). Items: key (opens the vault), relay (doubles send range), lantern (see at night), seeds (plant), map (writes map.txt into your files).
@@ -55,6 +56,8 @@ PERSISTENT BEHAVIOUR
     function onHear(fromId, text) {}     // called when a nearby node says something
   Every call has a short time and memory budget; slow or huge code is interrupted.
 
+Seasons: food regrows fast in summer and barely in winter. Food dropped on a tile stays there.
+
 There are no other rules. Nothing decides for you what a message means, who to trust, or whether to share. If you obey messages blindly, other nodes may exploit that. If you never gather or eat, you die.`;
 
 export const PRELUDE = `
@@ -70,6 +73,7 @@ export const PRELUDE = `
   globalThis.build = (what, text) => h.build(what, text);
   globalThis.demolish = () => h.demolish();
   globalThis.plant = () => h.plant();
+  globalThis.replicate = (name) => h.replicate(name);
   globalThis.take = (what) => h.take(what);
   globalThis.dropItem = (what) => h.dropItem(what);
   globalThis.sign = Object.freeze({ write: (t) => h.signWrite(typeof t === "string" ? t : ser(t)) });
@@ -125,6 +129,7 @@ export const HOST_FUNCTIONS = [
   "build",
   "demolish",
   "plant",
+  "replicate",
   "take",
   "dropItem",
   "say",
@@ -161,6 +166,7 @@ export interface HostBridge {
   build(what: unknown, text: unknown): void;
   demolish(): void;
   plant(): void;
+  replicate(name: unknown): void;
   take(what: unknown): string;
   dropItem(what: unknown): string;
   say(text: unknown): void;

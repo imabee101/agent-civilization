@@ -12,6 +12,9 @@ export type Terrain = "grass" | "forest" | "water" | "rock" | "sand";
 
 export type Phase = "dawn" | "day" | "dusk" | "night";
 
+/** Seasons change how fast food regrows. Winter is when stored food matters. */
+export type Season = "spring" | "summer" | "autumn" | "winter";
+
 /**
  * Things that can stand on a tile. All physical. A "board" holds posts, a
  * "cache" is a shared directory namespace (names are the message, like a
@@ -89,6 +92,8 @@ export interface AgentView {
   alive: boolean;
   bornTick: number;
   diedTick?: number;
+  /** The node that replicated to create this one, if any. A fact, not a relationship. */
+  parentId?: string;
   /** 0..100 — satiety. Reaches 0 => health drains. */
   food: number;
   /** 0..100 — spent by acting, restored by resting. */
@@ -121,6 +126,7 @@ export interface RuinView {
   diedTick: number;
   fileCount: number;
   profile: Profile;
+  parentId?: string;
 }
 
 /**
@@ -144,6 +150,8 @@ export type EventKind =
   | "planted"
   | "vault-opened"
   | "found"
+  | "replicated"
+  | "season-changed"
   | "executed-code"
   | "code-error"
   | "files-changed"
@@ -241,6 +249,8 @@ export interface PacingStats {
 export interface WorldConfigView {
   mapRadius: number;
   ticksPerDay: number;
+  seasonDays: number;
+  maxPopulation: number;
   visionRadius: number;
   hearRadius: number;
   sendRadius: number;
@@ -267,6 +277,9 @@ export interface WorldState {
   tick: number;
   day: number;
   phase: Phase;
+  season: Season;
+  /** 0..1 progress through the current season. */
+  seasonProgress: number;
   /** 0..1 progress through the current day. */
   dayProgress: number;
   agents: AgentView[];

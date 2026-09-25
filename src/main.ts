@@ -12,7 +12,7 @@ if (cfg.help) {
   process.exit(0);
 }
 
-const log = (msg: string) => console.log(`[llmwar] ${msg}`);
+const log = (msg: string) => console.log(`[agentciv] ${msg}`);
 
 const { mkdir } = await import("node:fs/promises");
 await mkdir(cfg.dataDir, { recursive: true });

@@ -48,7 +48,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   turnIntervalTicks: 16,
   concurrency: 1,
   initialAgents: 6,
-  maxAgents: 24,
+  maxAgents: 64,
   maxTokens: 400,
   temperature: 0.7,
   snapshotEveryTicks: 120,
@@ -284,6 +284,8 @@ export class Engine {
         this.runHandler(a.id, rt, "onTick", []);
       }
       this.world.step();
+      // Nodes born by replication need a mind of their own.
+      for (const a of this.world.livingAgents()) if (!this.nodes.has(a.id)) await this.attachSandbox(a.id);
       for (const a of this.world.deadAgents()) {
         const rt = this.nodes.get(a.id);
         if (rt) {

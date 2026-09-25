@@ -15,6 +15,7 @@ export function makeBridge(world: World, agentId: string, onLog?: (line: string)
     build: (what, text) => world.intentBuild(agentId, what, text),
     demolish: () => world.intentDemolish(agentId),
     plant: () => world.intentPlant(agentId),
+    replicate: (name) => world.intentReplicate(agentId, name),
     take: (what) => world.take(agentId, what),
     dropItem: (what) => world.dropItem(agentId, what),
     signWrite: (text) => world.signWrite(agentId, text),

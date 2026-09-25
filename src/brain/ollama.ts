@@ -36,7 +36,7 @@ export class OllamaBrain implements Brain {
   }
 
   async decide(req: DecisionRequest, opts: DecideOptions = {}): Promise<DecisionResult> {
-    if (!this.model) throw new BrainError("ollama: no model configured (set LLMWAR_MODEL or pull one)");
+    if (!this.model) throw new BrainError("ollama: no model configured (set AGENTCIV_MODEL or pull one)");
     const t0 = performance.now();
     const body = {
       model: this.model,

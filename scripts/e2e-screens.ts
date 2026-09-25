@@ -4,7 +4,7 @@
  *
  *   bun scripts/e2e-screens.ts [--chrome /path/to/chrome] [--out scratch/ui-shots] [--port 3950]
  *
- * It starts the LLM War server on the random brain, opens the page at a set
+ * It starts the Agent Civilization server on the random brain, opens the page at a set
  * of viewports (desktop, tablet both ways, phone both ways), drives every
  * panel, checks that nothing scrolls or overflows and that the map covers
  * the viewport, and writes PNGs plus a JSON report. Exit code 1 on any

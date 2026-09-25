@@ -3,7 +3,7 @@
  *
  *   registerBrain("mine", (cfg) => new MyBrain(cfg));
  *
- * then run with LLMWAR_BRAIN=mine. Nothing else in the engine cares.
+ * then run with AGENTCIV_BRAIN=mine. Nothing else in the engine cares.
  */
 import { LlamaCppBrain } from "./llamacpp";
 import { OllamaBrain } from "./ollama";
@@ -40,20 +40,20 @@ export function createBrain(cfg: BrainConfig): Brain {
   return f(cfg);
 }
 
-/** Read configuration from environment variables (LLMWAR_*), with a few common fallbacks. */
+/** Read configuration from environment variables (AGENTCIV_*), with a few common fallbacks. */
 export function brainConfigFromEnv(env: Record<string, string | undefined> = process.env): Partial<BrainConfig> & { kind?: string } {
   const num = (v: string | undefined) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : undefined);
   const bool = (v: string | undefined) => (v === undefined || v === "" ? undefined : !/^(0|false|no|off)$/i.test(v));
-  const format = env.LLMWAR_PROMPT_FORMAT;
+  const format = env.AGENTCIV_PROMPT_FORMAT;
   return {
-    kind: env.LLMWAR_BRAIN?.trim() || undefined,
-    baseUrl: env.LLMWAR_BASE_URL || env.OPENAI_BASE_URL || undefined,
-    model: env.LLMWAR_MODEL || env.OPENAI_MODEL || undefined,
-    apiKey: env.LLMWAR_API_KEY || env.OPENAI_API_KEY || undefined,
-    maxTokens: num(env.LLMWAR_MAX_TOKENS),
-    temperature: num(env.LLMWAR_TEMPERATURE),
-    stream: bool(env.LLMWAR_STREAM),
-    timeoutMs: num(env.LLMWAR_TIMEOUT_MS),
+    kind: env.AGENTCIV_BRAIN?.trim() || undefined,
+    baseUrl: env.AGENTCIV_BASE_URL || env.OPENAI_BASE_URL || undefined,
+    model: env.AGENTCIV_MODEL || env.OPENAI_MODEL || undefined,
+    apiKey: env.AGENTCIV_API_KEY || env.OPENAI_API_KEY || undefined,
+    maxTokens: num(env.AGENTCIV_MAX_TOKENS),
+    temperature: num(env.AGENTCIV_TEMPERATURE),
+    stream: bool(env.AGENTCIV_STREAM),
+    timeoutMs: num(env.AGENTCIV_TIMEOUT_MS),
     promptFormat: format === "chatml" || format === "llama3" || format === "plain" ? format : undefined,
   };
 }

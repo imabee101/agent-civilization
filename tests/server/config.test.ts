@@ -26,7 +26,7 @@ describe("parseArgs", () => {
   });
 
   test("environment fallbacks and CLI precedence", () => {
-    const env = { PORT: "4000", LLMWAR_BRAIN: "ollama", LLMWAR_MODEL: "envmodel", LLMWAR_AGENTS: "3", LLMWAR_DATA: "/tmp/x" };
+    const env = { PORT: "4000", AGENTCIV_BRAIN: "ollama", AGENTCIV_MODEL: "envmodel", AGENTCIV_AGENTS: "3", AGENTCIV_DATA: "/tmp/x" };
     const c = parseArgs([], env);
     expect(c.port).toBe(4000);
     expect(c.brain.kind).toBe("ollama");
