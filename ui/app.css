@@ -112,7 +112,7 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); ou
   inset: 0;
   z-index: 2;
   pointer-events: none;
-  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.3);
   transition: box-shadow 0.6s ease;
 }
 #vignette.hot { box-shadow: inset 0 0 220px rgba(0, 0, 0, 0.85), inset 0 0 90px rgba(255, 92, 92, 0.12); }
