@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Phase } from "../../src/shared/protocol";
 import type { Season } from "../../src/shared/protocol";
-import { tintFor, tintForSeason, seasonTint, phaseProgress, sunElevation, rgbToHex, PHASE_WINDOWS } from "../../ui/lib/phase";
+import { tintFor, tintForSeason, seasonTint, phaseProgress, sunElevation, rgbToHex, PHASE_WINDOWS, MIN_BRIGHTNESS } from "../../ui/lib/phase";
 
 const PHASES: Phase[] = ["dawn", "day", "dusk", "night"];
 const SEASONS: Season[] = ["spring", "summer", "autumn", "winter"];
@@ -35,9 +35,9 @@ describe("seasonTint / tintForSeason", () => {
           const t = tintForSeason(phase, p, s);
           expect(t.color).toMatch(/^#[0-9a-f]{6}$/);
           expect(t.alpha).toBeGreaterThanOrEqual(base.alpha);
-          expect(t.alpha).toBeLessThanOrEqual(0.7);
+          expect(t.alpha).toBeLessThanOrEqual(0.3);
           expect(Math.abs(t.brightness - base.brightness)).toBeLessThan(0.08);
-          expect(t.brightness).toBeGreaterThan(0.4);
+          expect(t.brightness).toBeGreaterThanOrEqual(MIN_BRIGHTNESS);
         }
       }
     }
@@ -54,10 +54,28 @@ describe("tintFor", () => {
         const t = tintFor(phase, p);
         expect(t.color).toMatch(/^#[0-9a-f]{6}$/);
         expect(t.alpha).toBeGreaterThanOrEqual(0);
-        expect(t.alpha).toBeLessThanOrEqual(0.7);
-        expect(t.brightness).toBeGreaterThan(0.4);
+        expect(t.alpha).toBeLessThanOrEqual(0.22);
+        expect(t.brightness).toBeGreaterThanOrEqual(0.82);
         expect(t.brightness).toBeLessThanOrEqual(1);
       }
+    }
+  });
+  test("night is a mood, not a blackout", () => {
+    for (let p = PHASE_WINDOWS.night[0]; p <= 1.0001; p += 0.01) {
+      const t = tintFor("night", p);
+      expect(t.alpha).toBeLessThanOrEqual(0.22);
+      expect(t.brightness).toBeGreaterThanOrEqual(0.82);
+      // the black dim layer drawn from brightness stays light
+      expect((1 - t.brightness) * 0.75).toBeLessThan(0.15);
+    }
+  });
+  test("dawn and dusk keep a warm cast", () => {
+    for (const phase of ["dawn", "dusk"] as const) {
+      const [a, b] = PHASE_WINDOWS[phase];
+      const mid = tintFor(phase, (a + b) / 2);
+      const r = parseInt(mid.color.slice(1, 3), 16), bl = parseInt(mid.color.slice(5, 7), 16);
+      expect(r).toBeGreaterThan(bl);
+      expect(mid.alpha).toBeGreaterThan(0.1);
     }
   });
   test("night is darker than day", () => {

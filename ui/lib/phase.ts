@@ -27,6 +27,12 @@ const DAWN = { r: 255, g: 154, b: 90 };
 const DUSK = { r: 255, g: 106, b: 61 };
 const DAY = { r: 255, g: 240, b: 200 };
 
+/** Night is a mood, not a blackout: [edge of night, deepest night]. */
+const NIGHT_ALPHA: [number, number] = [0.18, 0.22];
+const NIGHT_BRIGHTNESS: [number, number] = [0.86, 0.82];
+/** Floor for the combined day/night + season brightness. */
+export const MIN_BRIGHTNESS = 0.8;
+
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
@@ -64,8 +70,8 @@ export function tintFor(phase: Phase, dayProgress: number): Tint {
       // night -> warm orange -> almost clear
       const k = ease(t);
       const color = k < 0.5 ? mix(NIGHT, DAWN, k * 2) : mix(DAWN, DAY, (k - 0.5) * 2);
-      const alpha = k < 0.5 ? lerp(0.5, 0.22, k * 2) : lerp(0.22, 0.04, (k - 0.5) * 2);
-      return { color: rgbToHex(color), alpha, brightness: lerp(0.62, 1, k) };
+      const alpha = k < 0.5 ? lerp(NIGHT_ALPHA[0], 0.16, k * 2) : lerp(0.16, 0.04, (k - 0.5) * 2);
+      return { color: rgbToHex(color), alpha, brightness: lerp(NIGHT_BRIGHTNESS[0], 1, k) };
     }
     case "day": {
       return { color: rgbToHex(DAY), alpha: 0.03, brightness: 1 };
@@ -73,14 +79,14 @@ export function tintFor(phase: Phase, dayProgress: number): Tint {
     case "dusk": {
       const k = ease(t);
       const color = k < 0.5 ? mix(DAY, DUSK, k * 2) : mix(DUSK, NIGHT, (k - 0.5) * 2);
-      const alpha = k < 0.5 ? lerp(0.04, 0.24, k * 2) : lerp(0.24, 0.5, (k - 0.5) * 2);
-      return { color: rgbToHex(color), alpha, brightness: lerp(1, 0.62, k) };
+      const alpha = k < 0.5 ? lerp(0.04, 0.16, k * 2) : lerp(0.16, NIGHT_ALPHA[0], (k - 0.5) * 2);
+      return { color: rgbToHex(color), alpha, brightness: lerp(1, NIGHT_BRIGHTNESS[0], k) };
     }
     case "night":
     default: {
       // deepest in the middle of the night
       const depth = 1 - Math.abs(t - 0.5) * 2;
-      return { color: rgbToHex(NIGHT), alpha: lerp(0.5, 0.58, depth), brightness: lerp(0.62, 0.55, depth) };
+      return { color: rgbToHex(NIGHT), alpha: lerp(NIGHT_ALPHA[0], NIGHT_ALPHA[1], depth), brightness: lerp(NIGHT_BRIGHTNESS[0], NIGHT_BRIGHTNESS[1], depth) };
     }
   }
 }
@@ -114,7 +120,7 @@ export function tintForSeason(phase: Phase, dayProgress: number, season: Season)
   const wSum = base.alpha + s.alpha;
   const k = wSum > 0 ? s.alpha / wSum : 0;
   const color = rgbToHex(mix(hexToRgb(base.color), hexToRgb(s.color), k));
-  return { color, alpha: clamp01(base.alpha + s.alpha * (1 - base.alpha)), brightness: clamp01(base.brightness * s.brightness) };
+  return { color, alpha: clamp01(base.alpha + s.alpha * (1 - base.alpha)), brightness: Math.max(MIN_BRIGHTNESS, clamp01(base.brightness * s.brightness)) };
 }
 
 function hexToRgb(h: string): { r: number; g: number; b: number } {
