@@ -21,6 +21,7 @@ function fakeBridge(overrides: Partial<HostBridge> = {}): HostBridge & { calls: 
     calls,
     logs,
     observe: rec("observe", { tick: 1, me: { id: "n0", q: 0, r: 0 }, nodes: [], tiles: [] }),
+    self: rec("self", { id: "n0", q: 0, r: 0, food: 42 }),
     move: rec("move", true),
     moveToward: rec("moveToward", true),
     gather: rec("gather", undefined),
@@ -138,6 +139,12 @@ describe("sandbox: nothing from the host is reachable", () => {
     // Can an agent recover the raw bridge via the closures? Only through the wrappers, which is fine.
     sb.eval("observe()");
     expect(bridge.calls.at(-1)?.[0]).toBe("observe");
+  });
+
+  test("me exposes the live body next to set()", async () => {
+    const { sb } = await mk();
+    expect(sb.eval("me.food < 50 && me.id === 'n0'")).toMatchObject({ ok: true, value: "true" });
+    expect(sb.eval("me.food = 1; me.food")).toMatchObject({ ok: true, value: "42" });
   });
 
   test("prototype pollution inside the VM does not reach the host", async () => {
@@ -284,7 +291,7 @@ describe("sandbox: bridge semantics", () => {
       say("hi"); send("n1", {a: 1}); sign.write("x"); board.read(); board.post("p");
       cache.list(); cache.read("README"); cache.mkdir("me"); cache.write("f", {a:1}); cache.rmdir("f");
       fs.read("main.js"); fs.write("x", "y"); fs.append("x", "z"); fs.list(); fs.remove("x");
-      ruins.files("n9"); ruins.read("n9", "main.js"); me.set("group", "river"); log("done", {b: 2});
+      ruins.files("n9"); ruins.read("n9", "main.js"); me.set("group", "river"); me.food; log("done", {b: 2});
     `);
     expect(r.ok).toBe(true);
     const called = new Set(bridge.calls.map((c) => c[0]));

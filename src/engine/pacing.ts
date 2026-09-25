@@ -12,6 +12,13 @@ export interface PacingConfig {
   turnIntervalTicks: number;
   /** Max brain calls in flight. Local single-GPU setups want 1. */
   concurrency: number;
+  /**
+   * Longest a tick may be stretched so a slow brain still reaches every node
+   * within `turnIntervalTicks`. 0 keeps the clock fixed and stretches the turn
+   * interval instead. Per-tick physics are the same either way; this decides
+   * whether a slow brain costs wall-clock time or turns per lifetime.
+   */
+  maxTickMs: number;
 }
 
 const ALPHA = 0.2;
@@ -52,9 +59,12 @@ export class Pacing {
     return this.decisionTimes.filter((t) => t >= cutoff).length;
   }
 
-  /** Wall-clock ms one tick takes at the given speed. */
-  tickMsAt(speed: number): number {
-    return this.cfg.tickMs / speed;
+  /** Wall-clock ms one tick takes at the given speed, stretched up to `maxTickMs` while the brain is the bottleneck. */
+  tickMsAt(speed: number, livingNodes = 0): number {
+    const base = this.cfg.tickMs / speed;
+    if (this.cfg.maxTickMs <= base || this.avgLatencyMs <= 0 || livingNodes === 0) return base;
+    const needed = (this.avgLatencyMs * livingNodes) / Math.max(1, this.cfg.concurrency) / this.cfg.turnIntervalTicks;
+    return Math.min(Math.max(base, needed), this.cfg.maxTickMs);
   }
 
   /**
@@ -66,20 +76,21 @@ export class Pacing {
     const desired = this.cfg.turnIntervalTicks;
     if (this.avgLatencyMs <= 0 || livingNodes === 0) return desired;
     const msPerRound = (this.avgLatencyMs * livingNodes) / Math.max(1, this.cfg.concurrency);
-    const ticksPerRound = Math.ceil(msPerRound / this.tickMsAt(speed));
+    const ticksPerRound = Math.ceil(msPerRound / this.tickMsAt(speed, livingNodes));
     return Math.max(desired, ticksPerRound);
   }
 
   mode(livingNodes: number, speed: number): PacingMode {
     if (livingNodes === 0) return "idle";
-    return this.effectiveTurnInterval(livingNodes, speed) > this.cfg.turnIntervalTicks ? "queued" : "realtime";
+    if (this.effectiveTurnInterval(livingNodes, speed) > this.cfg.turnIntervalTicks) return "queued";
+    return this.tickMsAt(speed, livingNodes) > this.cfg.tickMs / speed ? "paced" : "realtime";
   }
 
   stats(opts: { livingNodes: number; speed: number; paused: boolean; now?: number }): PacingStats {
     const now = opts.now ?? Date.now();
     return {
       mode: opts.paused ? "idle" : this.mode(opts.livingNodes, opts.speed),
-      tps: opts.paused ? 0 : 1000 / this.tickMsAt(opts.speed),
+      tps: opts.paused ? 0 : 1000 / this.tickMsAt(opts.speed, opts.livingNodes),
       speed: opts.speed,
       paused: opts.paused,
       avgLatencyMs: Math.round(this.avgLatencyMs),

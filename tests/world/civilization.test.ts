@@ -13,7 +13,7 @@ describe("replication", () => {
     const w = mk();
     const a = w.spawnAgent({ files: { "main.js": "function onTick(){}", "notes.txt": "x" } });
     w.setProfile(a.id, "group", "river");
-    a.inventory.food = 50;
+    a.inventory.food = 60;
     a.energy = 100;
     w.drainEvents();
     w.intentReplicate(a.id, "Kid");
@@ -26,8 +26,10 @@ describe("replication", () => {
     expect(kid.files).toEqual(a.files);
     expect(kid.files).not.toBe(a.files);
     expect(kid.profile.group).toBe("river");
+    // conservation: the 60 the parent paid is the child's body plus what it carries
+    expect(a.inventory.food).toBe(0);
     expect(kid.inventory.food).toBe(10);
-    expect(a.inventory.food).toBe(10);
+    expect(kid.food + kid.inventory.food).toBeCloseTo(60 - w.config.foodDrainPerTick, 5);
     expect(a.energy).toBeLessThanOrEqual(100 - w.config.replicateEnergy);
     const ev = w.drainEvents().find((e) => e.kind === "replicated")!;
     expect(ev.agentId).toBe(a.id);
@@ -42,7 +44,7 @@ describe("replication", () => {
     const w = mk({ maxPopulation: 2 });
     const a = w.spawnAgent({ at: { q: 0, r: 0 } });
     a.inventory.food = 5;
-    expect(() => w.intentReplicate(a.id)).toThrow(/needs 40 food/);
+    expect(() => w.intentReplicate(a.id)).toThrow(/needs 60 food/);
     a.inventory.food = 60;
     a.energy = 10;
     expect(() => w.intentReplicate(a.id)).toThrow(/energy/);

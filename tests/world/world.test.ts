@@ -203,6 +203,24 @@ describe("World agents and survival", () => {
   });
 });
 
+describe("World body actions", () => {
+  test("one body action per tick: the last call wins and the replaced one is logged", () => {
+    const w = mk();
+    const a = w.spawnAgent({});
+    a.energy = 100;
+    const start = { q: a.q, r: a.r };
+    w.intentMove(a.id, 0);
+    w.intentRest(a.id);
+    w.step();
+    expect({ q: a.q, r: a.r }).toEqual(start);
+    expect(a.log.some((l) => l.includes("move replaced by rest"))).toBe(true);
+    w.intentRest(a.id);
+    w.intentRest(a.id);
+    w.step();
+    expect(a.log.filter((l) => l.includes("replaced")).length).toBe(1);
+  });
+});
+
 describe("World speech and messages", () => {
   test("say is heard only within hearRadius", () => {
     const w = mk({ hearRadius: 2, mapRadius: 8 });

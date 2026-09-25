@@ -11,7 +11,7 @@ export const API_DOC = `You control one node in a shared hex world. Your code ru
 PERCEPTION
   observe() -> { tick, day, phase, season, population, maxPopulation, me:{id,name,q,r,food,energy,health,inventory:{food},profile,tileFood,terrain}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
 
-BODY (one of move/gather/drop/rest/build/demolish/plant per tick; eat is extra)
+BODY (one of move/gather/drop/rest/build/demolish/plant/replicate per tick, the last call wins; eat is extra)
   move(dir)            dir is 0..5 or "e","ne","nw","w","sw","se". Costs energy. Water, walls and the map edge block.
   moveToward(q, r)     one step toward a hex, routing around blocks. Returns false if no step helps.
   gather(what?)        "food" (default), "wood" or "stone" from the tile you stand on (costs energy).
@@ -21,7 +21,7 @@ BODY (one of move/gather/drop/rest/build/demolish/plant per tick; eat is extra)
   build(what, text?)   on your tile: "sign" (1 wood, text), "board" (4 wood), "wall" (3 stone, blocks movement), "tower" (6 stone + 2 wood, send() reaches the whole map from next to it).
   demolish()           remove a sign/board/wall/tower on your tile. Anyone can.
   plant()              needs seeds; raises your tile's food cap.
-  replicate(name?)     spend 40 food from your inventory (and most of your energy) to create a new node on a free hex next to you. It starts with a copy of your files and profile and its own mind. The world holds a limited number of living nodes.
+  replicate(name?)     spend 60 food from your inventory (and 30 energy) to create a new node on a free hex next to you. That food becomes its body. It starts with a copy of your files and profile and its own mind. The world holds a limited number of living nodes.
 
 THINGS ON THE GROUND
   take(what?)          pick up an item lying on your tile (max 3 carried). Items: key (opens the vault), relay (doubles send range), lantern (see at night), seeds (plant), map (writes map.txt into your files).
@@ -46,7 +46,8 @@ HELPERS (pure functions)
   hex.distance(a, b)   hex.neighbors({q,r})   hex.toward(from, to) -> direction 0..5
 
 SELF
-  me.set(key, value)   public key/value about yourself, visible to others in observe(). e.g. me.set("group","river") or me.set("status","trading food"). Means whatever you decide it means.
+  me.food, me.energy, me.health, me.q, me.r, me.inventory, me.tileFood, ...   your current body, read live (the same fields as observe().me).
+  me.set(key, value)   public key/value about yourself, visible to others in observe(). Means whatever you decide it means.
   log(...args)         write to your private log (shown to you next turn).
 
 PERSISTENT BEHAVIOUR
@@ -58,7 +59,7 @@ PERSISTENT BEHAVIOUR
 
 Seasons: food regrows fast in summer and barely in winter. Food dropped on a tile stays there.
 
-There are no other rules. Nothing decides for you what a message means, who to trust, or whether to share. If you obey messages blindly, other nodes may exploit that. If you never gather or eat, you die.`;
+There are no other rules. Nothing decides for you what a message means, who to trust, or whether to share. Food only reaches your body through eat().`;
 
 export const PRELUDE = `
 (function () {
@@ -108,9 +109,11 @@ export const PRELUDE = `
     files: (id) => parse(h.ruinFiles(id)),
     read: (id, p) => h.ruinRead(id, p),
   });
-  globalThis.me = Object.freeze({
-    set: (k, v) => h.setProfile(k, v === undefined || v === null ? null : String(v)),
-  });
+  const me = { set: (k, v) => h.setProfile(k, v === undefined || v === null ? null : String(v)) };
+  for (const k of ["id", "name", "q", "r", "food", "energy", "health", "inventory", "profile", "tileFood", "terrain", "structure", "itemsHere", "sendRadius"]) {
+    Object.defineProperty(me, k, { enumerable: true, get: () => parse(h.self())[k] });
+  }
+  globalThis.me = Object.freeze(me);
   const fmt = (a) => (typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })());
   globalThis.log = (...args) => h.log(args.map(fmt).join(" "));
   globalThis.console = Object.freeze({ log: globalThis.log, error: globalThis.log, warn: globalThis.log, info: globalThis.log });
@@ -120,6 +123,7 @@ export const PRELUDE = `
 /** Names of host bridge functions the sandbox expects, all string-in/string-out or primitive. */
 export const HOST_FUNCTIONS = [
   "observe",
+  "self",
   "move",
   "moveToward",
   "gather",
@@ -157,6 +161,7 @@ export type HostFunctionName = (typeof HOST_FUNCTIONS)[number];
 /** What the engine must provide to a sandbox. Every method is synchronous. */
 export interface HostBridge {
   observe(): unknown;
+  self(): unknown;
   move(dir: unknown): boolean;
   moveToward(q: unknown, r: unknown): boolean;
   gather(what: unknown): void;

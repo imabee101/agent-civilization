@@ -98,7 +98,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   ticksPerDay: 240,
   seasonDays: 3,
   maxPopulation: 64,
-  replicateFoodCost: 40,
+  replicateFoodCost: 60,
   replicateEnergy: 30,
   visionRadius: 3,
   nightVisionRadius: 2,
@@ -267,6 +267,8 @@ export class World {
   private nextEventId = 1;
   /** Events produced since the last drain. */
   private pendingEvents: WorldEvent[] = [];
+  /** Per node: how many of each own event resolved since the engine last drained it. Not persisted. */
+  private tallies = new Map<string, Record<string, number>>();
   /** Deliveries produced by the last step, to be handed to node code. */
   private pendingDeliveries: Delivery[] = [];
   /** Tiles whose structure/items/materials changed since the last drain. */
@@ -530,18 +532,22 @@ export class World {
   }
 
   /** Random passable tile near the Cache (so nodes meet), preferring free ones. */
-  private pickSpawnTile(): Tile {
+  /** Near the centre for a founding population; on the outer ring for a newcomer walking in. */
+  private pickSpawnTile(edge = false): Tile {
     const occupied = new Set([...this.agents.values()].map((a) => hexKey(a)));
     const centre = this.cacheTile() ?? { q: 0, r: 0 };
     const free = (t: Tile) => t.terrain !== "water" && !occupied.has(hexKey(t)) && (!t.structure || t.structure.kind === "spring");
-    let pool = this.tiles.filter((t) => free(t) && hexDistance(t, centre) <= this.config.spawnRadius);
+    const near = edge
+      ? (t: Tile) => hexDistance(t, { q: 0, r: 0 }) >= this.config.mapRadius - 1
+      : (t: Tile) => hexDistance(t, centre) <= this.config.spawnRadius;
+    let pool = this.tiles.filter((t) => free(t) && near(t));
     if (!pool.length) pool = this.tiles.filter(free);
     if (!pool.length) pool = this.tiles.filter((t) => t.terrain !== "water");
     if (!pool.length) throw new WorldError("no land to spawn on");
     return this.rng.pick(pool);
   }
 
-  spawnAgent(opts: { name?: string; at?: Hex; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile } = {}): Agent {
+  spawnAgent(opts: { name?: string; at?: Hex; edge?: boolean; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile } = {}): Agent {
     const index = this.nextAgentIndex++;
     const id = `n${index.toString(36)}`;
     let name = opts.name?.trim() || generateName(this.rng);
@@ -550,7 +556,7 @@ export class World {
     let n = 2;
     while (names.has(candidate)) candidate = `${name}${n++}`;
     name = candidate;
-    const tile = opts.at && this.isPassable(opts.at) ? this.tileAt(opts.at)! : this.pickSpawnTile();
+    const tile = opts.at && this.isPassable(opts.at) ? this.tileAt(opts.at)! : this.pickSpawnTile(opts.edge);
     const agent: Agent = {
       id,
       name,
@@ -576,7 +582,7 @@ export class World {
     };
     this.agents.set(id, agent);
     if (opts.files) for (const [p, c] of Object.entries(opts.files)) this.fsWrite(id, p, c, { silent: true });
-    if (!opts.silent) this.emit("spawned", 2, agent, `${name} appeared at ${tile.q},${tile.r}`);
+    if (!opts.silent) this.emit("spawned", 2, agent, opts.edge ? `${name} arrived from beyond the edge at ${tile.q},${tile.r}` : `${name} appeared at ${tile.q},${tile.r}`);
     return agent;
   }
 
@@ -589,6 +595,7 @@ export class World {
     this.nextAgentIndex = 0;
     this.pendingDeliveries = [];
     this.dirtyTiles.clear();
+    this.tallies.clear();
     if (seed !== undefined) this.config.seed = seed;
     this.rng.setState(this.config.seed);
     this.generate();
@@ -602,9 +609,19 @@ export class World {
     if (agent) {
       ev.agentId = agent.id;
       ev.agentName = agent.name;
+      const t = this.tallies.get(agent.id) ?? {};
+      t[kind] = (t[kind] ?? 0) + 1;
+      this.tallies.set(agent.id, t);
     }
     this.pendingEvents.push(ev);
     return ev;
+  }
+
+  /** Counts of this node's own events since the last drain, then reset. */
+  drainTally(agentId: string): Record<string, number> {
+    const t = this.tallies.get(agentId) ?? {};
+    this.tallies.delete(agentId);
+    return t;
   }
 
   /** Public hook for the engine to record code-execution facts as events. */
@@ -656,6 +673,28 @@ export class World {
     return out;
   }
 
+  /** The node's own body and tile: `observe().me`, and what the `me.*` getters read. */
+  selfView(agentId: string): Record<string, unknown> {
+    const me = this.getAgent(agentId);
+    const hereTile = this.tileAt(me)!;
+    return {
+      id: me.id,
+      name: me.name,
+      q: me.q,
+      r: me.r,
+      food: Math.round(me.food),
+      energy: Math.round(me.energy),
+      health: Math.round(me.health),
+      inventory: { ...me.inventory, items: [...me.inventory.items] },
+      profile: { ...me.profile },
+      tileFood: Math.round(hereTile.food),
+      terrain: hereTile.terrain,
+      structure: this.structureSummary(hereTile.structure),
+      itemsHere: [...hereTile.items],
+      sendRadius: this.sendRadiusFor(me),
+    };
+  }
+
   observe(agentId: string): Record<string, unknown> {
     const me = this.getAgent(agentId);
     const radius = this.visionRadiusFor(me);
@@ -678,7 +717,6 @@ export class World {
     const ruins = [...this.agents.values()]
       .filter((a) => !a.alive && hexDistance(a, here) <= radius)
       .map((a) => ({ id: a.id, name: a.name, q: a.q, r: a.r, dist: hexDistance(a, here), diedTick: a.diedTick, fileCount: Object.keys(a.files).length, profile: { ...a.profile } }));
-    const hereTile = this.tileAt(here)!;
     return {
       tick: this.tick,
       day: this.day,
@@ -686,22 +724,7 @@ export class World {
       season: this.season,
       population: this.livingAgents().length,
       maxPopulation: this.config.maxPopulation,
-      me: {
-        id: me.id,
-        name: me.name,
-        q: me.q,
-        r: me.r,
-        food: Math.round(me.food),
-        energy: Math.round(me.energy),
-        health: Math.round(me.health),
-        inventory: { ...me.inventory, items: [...me.inventory.items] },
-        profile: { ...me.profile },
-        tileFood: Math.round(hereTile.food),
-        terrain: hereTile.terrain,
-        structure: this.structureSummary(hereTile.structure),
-        itemsHere: [...hereTile.items],
-        sendRadius: this.sendRadiusFor(me),
-      },
+      me: this.selfView(agentId),
       visionRadius: radius,
       mapRadius: this.config.mapRadius,
       tiles,
@@ -720,11 +743,21 @@ export class World {
     return a;
   }
 
+  /** One body action per tick: the last call wins, and a replaced different action is logged. */
+  private setAction(a: Agent, next: Pick<AgentIntent, "move" | "body">): void {
+    const name = (i: Pick<AgentIntent, "move" | "body">) => (i.move !== undefined ? "move" : i.body?.kind);
+    const prev = name(a.intent);
+    if (prev && prev !== name(next)) this.addLog(a.id, `${prev} replaced by ${name(next)} this tick (one body action per tick)`);
+    delete a.intent.move;
+    delete a.intent.body;
+    Object.assign(a.intent, next);
+  }
+
   intentMove(agentId: string, dir: unknown): boolean {
     const a = this.requireAlive(agentId);
     const d = parseDirection(dir);
     if (d === null) throw new WorldError("move(dir): dir must be 0..5 or e|ne|nw|w|sw|se");
-    a.intent.move = d;
+    this.setAction(a, { move: d });
     return true;
   }
 
@@ -747,24 +780,24 @@ export class World {
       }
     }
     if (best === null) return false;
-    a.intent.move = best;
+    this.setAction(a, { move: best });
     return true;
   }
 
   intentGather(agentId: string, what: unknown = "food"): void {
     const a = this.requireAlive(agentId);
     if (what !== "food" && what !== "wood" && what !== "stone") throw new WorldError('gather(what): what must be "food", "wood" or "stone"');
-    a.intent.body = { kind: "gather", what };
+    this.setAction(a, { body: { kind: "gather", what } });
   }
 
   intentDrop(agentId: string, amount: unknown): void {
     const a = this.requireAlive(agentId);
-    a.intent.body = { kind: "drop", amount: clampAmount(amount, "drop") };
+    this.setAction(a, { body: { kind: "drop", amount: clampAmount(amount, "drop") } });
   }
 
   intentRest(agentId: string): void {
     const a = this.requireAlive(agentId);
-    a.intent.body = { kind: "rest" };
+    this.setAction(a, { body: { kind: "rest" } });
   }
 
   intentEat(agentId: string, amount: unknown = 10): void {
@@ -782,7 +815,7 @@ export class World {
     const tile = this.tileAt(a)!;
     if (tile.structure && !(what === "sign" && tile.structure.kind === "sign")) throw new WorldError(`there is already a ${tile.structure.kind} here`);
     if (text !== undefined && typeof text !== "string") throw new WorldError("build text must be a string");
-    a.intent.body = { kind: "build", what: what as StructureKind, text: typeof text === "string" ? text.slice(0, this.config.signChars) : undefined };
+    this.setAction(a, { body: { kind: "build", what: what as StructureKind, text: typeof text === "string" ? text.slice(0, this.config.signChars) : undefined } });
   }
 
   intentDemolish(agentId: string): void {
@@ -790,7 +823,7 @@ export class World {
     const s = this.tileAt(a)!.structure;
     if (!s) throw new WorldError("nothing to demolish here");
     if (!DEMOLISHABLE.has(s.kind)) throw new WorldError(`a ${s.kind} cannot be demolished`);
-    a.intent.body = { kind: "demolish" };
+    this.setAction(a, { body: { kind: "demolish" } });
   }
 
   intentPlant(agentId: string): void {
@@ -798,7 +831,7 @@ export class World {
     if (!a.inventory.items.includes("seeds")) throw new WorldError("plant() needs seeds");
     const t = this.tileAt(a)!;
     if (t.terrain === "water" || t.terrain === "rock") throw new WorldError("nothing grows here");
-    a.intent.body = { kind: "plant" };
+    this.setAction(a, { body: { kind: "plant" } });
   }
 
   intentReplicate(agentId: string, name?: unknown): void {
@@ -809,7 +842,7 @@ export class World {
     if (this.livingAgents().length >= cfg.maxPopulation) throw new WorldError(`the world holds at most ${cfg.maxPopulation} living nodes`);
     if (!this.freeNeighbor(a)) throw new WorldError("replicate() needs a free passable hex next to you");
     if (name !== undefined && name !== null && typeof name !== "string") throw new WorldError("replicate(name): name must be a string");
-    a.intent.body = { kind: "replicate", name: typeof name === "string" ? name.slice(0, 24) : undefined };
+    this.setAction(a, { body: { kind: "replicate", name: typeof name === "string" ? name.slice(0, 24) : undefined } });
   }
 
   private freeNeighbor(a: Agent): Tile | undefined {
@@ -1238,8 +1271,9 @@ export class World {
           a.inventory.food -= cfg.replicateFoodCost;
           a.energy -= cfg.replicateEnergy;
           const child = this.spawnAgent({ name: it.body.name, at: spot, files: { ...a.files }, parentId: a.id, profile: a.profile, silent: true });
-          child.food = 70;
-          child.inventory.food = Math.floor(cfg.replicateFoodCost / 4);
+          // The child is made of what the parent paid: no food is created.
+          child.inventory.food = Math.floor(cfg.replicateFoodCost / 6);
+          child.food = cfg.replicateFoodCost - child.inventory.food;
           this.emit("replicated", 2, a, `${a.name} replicated: ${child.name} appeared at ${spot.q},${spot.r} with a copy of ${a.name}'s files`, { targetId: child.id, targetName: child.name });
           break;
         }
