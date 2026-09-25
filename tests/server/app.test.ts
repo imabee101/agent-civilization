@@ -1,0 +1,158 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import type { Server } from "bun";
+import { Engine } from "../../src/engine/engine";
+import { createApp } from "../../src/server/app";
+import type { ClientMessage, ServerMessage } from "../../src/shared/protocol";
+import { ScriptedBrain, js } from "../engine/helpers";
+
+const cleanup: (() => Promise<unknown> | unknown)[] = [];
+afterEach(async () => {
+  for (const f of cleanup.splice(0).reverse()) await f();
+});
+
+async function boot(brain = new ScriptedBrain()) {
+  const engine = new Engine(brain, { world: { seed: 3, mapRadius: 5, foodDrainPerTick: 0 }, initialAgents: 2, healthEveryMs: 0, snapshotEveryTicks: 0 });
+  await engine.init();
+  const app = createApp({ engine, port: 0, hostname: "127.0.0.1" });
+  const server = app.server;
+  cleanup.push(() => engine.shutdown(), () => app.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  return { engine, server, base };
+}
+
+function connect(server: Server<unknown>): Promise<{ ws: WebSocket; messages: ServerMessage[]; next: (type: string) => Promise<ServerMessage>; send: (m: ClientMessage) => void }> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const messages: ServerMessage[] = [];
+    const waiters: { type: string; resolve: (m: ServerMessage) => void }[] = [];
+    ws.onmessage = (ev) => {
+      const m = JSON.parse(String(ev.data)) as ServerMessage;
+      messages.push(m);
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (waiters[i]!.type === m.type) waiters.splice(i, 1)[0]!.resolve(m);
+      }
+    };
+    ws.onerror = (e) => reject(e);
+    ws.onopen = () => {
+      cleanup.push(() => ws.close());
+      resolve({
+        ws,
+        messages,
+        next: (type) =>
+          new Promise((res, rej) => {
+            const found = messages.find((m) => m.type === type);
+            if (found) return res(found);
+            waiters.push({ type, resolve: res });
+            setTimeout(() => rej(new Error(`timeout waiting for ${type}`)), 3000);
+          }),
+        send: (m) => ws.send(JSON.stringify(m)),
+      });
+    };
+  });
+}
+
+describe("REST API", () => {
+  test("state, agents, events, decisions, brain, pacing, health", async () => {
+    const { base, engine } = await boot();
+    const state = await (await fetch(`${base}/api/state`)).json();
+    expect(state.state.agents.length).toBe(2);
+    expect(state.config.mapRadius).toBe(5);
+    expect(state.brain.kind).toBe("scripted");
+    const agents = await (await fetch(`${base}/api/agents`)).json();
+    expect(agents.length).toBe(2);
+    const one = await (await fetch(`${base}/api/agents/${agents[0].id}`)).json();
+    expect(one.id).toBe(agents[0].id);
+    expect((await fetch(`${base}/api/agents/nope`)).status).toBe(404);
+    const files = await (await fetch(`${base}/api/agents/${agents[0].id}/files`)).json();
+    expect(files.files["main.js"]).toBeDefined();
+    expect((await fetch(`${base}/api/agents/nope/files`)).status).toBe(404);
+    expect(Array.isArray(await (await fetch(`${base}/api/events`)).json())).toBe(true);
+    expect(await (await fetch(`${base}/api/decisions`)).json()).toEqual([]);
+    expect((await (await fetch(`${base}/api/brain`)).json()).connected).toBe(true);
+    expect((await (await fetch(`${base}/api/pacing`)).json()).paused).toBe(true);
+    expect((await (await fetch(`${base}/api/health`)).json()).tick).toBe(engine.world.tick);
+    expect((await (await fetch(`${base}/api/tiles`)).json()).length).toBe(engine.world.tiles.length);
+    expect((await (await fetch(`${base}/api/hello`)).json()).type).toBe("hello");
+    expect((await fetch(`${base}/nope`)).status).toBe(404);
+  });
+
+  test("controls: pause/resume/speed/spawn/reset/snapshot", async () => {
+    const { base, engine } = await boot();
+    expect((await (await fetch(`${base}/api/resume`, { method: "POST" })).json()).paused).toBe(false);
+    expect(engine.paused).toBe(false);
+    expect((await (await fetch(`${base}/api/pause`, { method: "POST" })).json()).paused).toBe(true);
+    expect(engine.paused).toBe(true);
+    const bad = await fetch(`${base}/api/speed`, { method: "POST", body: JSON.stringify({ speed: 3 }) });
+    expect(bad.status).toBe(400);
+    const ok = await fetch(`${base}/api/speed`, { method: "POST", body: JSON.stringify({ speed: 4 }) });
+    expect((await ok.json()).speed).toBe(4);
+    expect(engine.speed).toBe(4);
+    const sp = await (await fetch(`${base}/api/spawn`, { method: "POST", body: JSON.stringify({ name: "Rest" }) })).json();
+    expect(engine.world.getAgent(sp.id).name).toBe("Rest");
+    const rs = await (await fetch(`${base}/api/reset`, { method: "POST", body: JSON.stringify({ seed: 77 }) })).json();
+    expect(rs.seed).toBe(77);
+    expect(engine.world.livingAgents().length).toBe(2);
+    expect((await fetch(`${base}/api/snapshot`, { method: "POST" })).status).toBe(409);
+    const snap = await (await fetch(`${base}/api/snapshot`)).json();
+    expect(snap.world.config.seed).toBe(77);
+  });
+
+  test("spawn beyond the cap is a 409", async () => {
+    const { base, engine } = await boot();
+    engine.cfg.maxAgents = 2;
+    expect((await fetch(`${base}/api/spawn`, { method: "POST" })).status).toBe(409);
+  });
+});
+
+describe("WebSocket", () => {
+  test("hello on connect, ticks stream, controls work, watch pushes node detail", async () => {
+    const brain = new ScriptedBrain([js(`fs.write("note.txt", "hi"); log("turn ran")`)]);
+    const { server, engine } = await boot(brain);
+    const c = await connect(server);
+    const hello = (await c.next("hello")) as Extract<ServerMessage, { type: "hello" }>;
+    expect(hello.state.agents.length).toBe(2);
+    expect(hello.tiles.length).toBe(engine.world.tiles.length);
+    const [a] = engine.world.livingAgents();
+    c.send({ type: "watch", agentId: a!.id });
+    const node = (await c.next("node")) as Extract<ServerMessage, { type: "node" }>;
+    expect(node.detail.agentId).toBe(a!.id);
+    expect(node.detail.files["main.js"]).toBeDefined();
+    c.send({ type: "speed", speed: 2 });
+    c.send({ type: "resume" });
+    await c.next("tick");
+    expect(engine.paused).toBe(false);
+    expect(engine.speed).toBe(2);
+    c.send({ type: "pause" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(engine.paused).toBe(true);
+    // A turn changes the watched node's files/log => a fresh node message.
+    const before = c.messages.filter((m) => m.type === "node").length;
+    await engine.runTurn(a!.id);
+    await new Promise((r) => setTimeout(r, 30));
+    const nodes = c.messages.filter((m) => m.type === "node") as Extract<ServerMessage, { type: "node" }>[];
+    expect(nodes.length).toBeGreaterThan(before);
+    expect(nodes.at(-1)!.detail.files["note.txt"]).toBe("hi");
+    expect(nodes.at(-1)!.detail.lastDecision?.agentId).toBe(a!.id);
+    expect(c.messages.some((m) => m.type === "decision")).toBe(true);
+    expect(c.messages.some((m) => m.type === "thinking")).toBe(true);
+    c.send({ type: "watch", agentId: null });
+    c.send({ type: "spawn", name: "Wsy" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(engine.world.livingAgents().some((x) => x.name === "Wsy")).toBe(true);
+    c.send({ type: "reset", seed: 5 });
+    const reset = (await c.next("reset")) as Extract<ServerMessage, { type: "reset" }>;
+    expect(reset.hello.config.seed).toBe(5);
+  });
+
+  test("garbage and unknown messages are ignored; second client also gets hello", async () => {
+    const { server } = await boot();
+    const c1 = await connect(server);
+    await c1.next("hello");
+    c1.ws.send("not json");
+    c1.ws.send(JSON.stringify({ type: "explode" }));
+    c1.ws.send(JSON.stringify(42));
+    const c2 = await connect(server);
+    await c2.next("hello");
+    expect(c1.ws.readyState).toBe(WebSocket.OPEN);
+  });
+});
