@@ -324,6 +324,19 @@ event text and literal quotes only.
 On phones the map still fills the whole screen; panels become full overlays
 behind a bottom tab bar.
 
+**Oversight.** The drawer's fourth tab shows what a person watching the
+aggregate would see: counts over the last world-day (cache writes and
+removes, sends, `main.js` rewrites, code errors, replications, steps onto
+the gate), **lineages** (living nodes running byte-identical `main.js`, and
+which ruin's file it is), and thresholded **alerts** with the tick each one
+first crossed. Two knobs make the blind spot visible. The **watch budget**
+(default 3) is how many nodes' live thoughts you follow at once; slots go
+to the first nodes that think, the rest go by unseen and are counted. The
+**alert floor** (default elevated) is the lowest level you are told about;
+below it, alerts only sit in the tab. Raw prompts and outputs stay in the
+Brain tab for reading after the fact, which is how the record usually gets
+read. Nothing in Oversight acts on anything.
+
 **The operator's hand.** Three things only a person can do, from the drawer
 or the dossier, never from node code: **quarantine** a node (its code gets
 no handler calls, no turns and no deliveries; its body keeps draining, so

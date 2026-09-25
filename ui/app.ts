@@ -31,6 +31,8 @@ import { hexToPixel } from "./lib/camera";
 import { HEX_SIZE } from "./world";
 import { ITEM_GLYPH, formatCacheEntry, indexTiles, listFeatures, mergeTiles, structureCss, tileDossier, tileKey } from "./lib/structures";
 import { guardOverflow, refreshGuards } from "./overflow-guard";
+import type { SignalCriticality, SignalsView } from "../src/shared/protocol";
+import { WATCH_LIMITS, alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, setLimit, signalTiles, unseenTotal, unwatch, type WatchLimit } from "./lib/oversight";
 
 // ---------- tiny DOM helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -67,7 +69,11 @@ const S = {
   selectedId: null as string | null,
   selectedTile: null as string | null,
   watchedId: null as string | null,
-  nerdTab: "brain" as "brain" | "nodes" | "pacing",
+  nerdTab: "brain" as "brain" | "nodes" | "pacing" | "oversight",
+  /** Oversight: the latest signals, the alert floor the viewer chose, and the watch budget for live thoughts. */
+  signals: null as SignalsView | null,
+  alertFloor: "elevated" as SignalCriticality,
+  watch: initialWatch(3),
   nerdDecisionId: null as number | null,
   nerdNodeId: null as string | null,
   showAll: false,
@@ -117,6 +123,7 @@ function onMessage(m: ServerMessage): void {
       minimap.agents = m.state.agents;
       minimap.ruins = m.state.ruins;
       minimap.draw();
+      dropDead(S.watch, new Set(m.state.agents.filter((a) => a.alive).map((a) => a.id)));
       renderClock();
       renderStats();
       renderGroups();
@@ -138,10 +145,25 @@ function onMessage(m: ServerMessage): void {
       if (m.decision.agentId === S.mind?.agentId) renderMindCam();
       break;
     case "thinking":
-      S.thoughts.set(m.agentId, { text: m.text, done: m.done });
+      if (noteThinking(S.watch, m.agentId, m.done)) {
+        S.thoughts.set(m.agentId, { text: m.text, done: m.done });
+        followMind(m.agentId, m.done);
+      } else {
+        S.thoughts.delete(m.agentId);
+        if (m.done && document.body.classList.contains("nerd-open") && S.nerdTab === "oversight") renderOversight();
+      }
       if (m.agentId === S.selectedId) renderThought();
-      followMind(m.agentId, m.done);
       break;
+    case "signals": {
+      const fresh = newAlertIds(S.signals?.alerts, m.signals.alerts, S.alertFloor);
+      S.signals = m.signals;
+      for (const id of fresh) {
+        const a = m.signals.alerts.find((x) => x.id === id);
+        if (a) toast(`oversight · ${a.criticality}: ${a.text}`);
+      }
+      if (document.body.classList.contains("nerd-open") && S.nerdTab === "oversight") renderOversight();
+      break;
+    }
     case "stats":
       S.pacing = m.pacing;
       S.brain = m.brain;
@@ -175,6 +197,7 @@ function applyHello(h: HelloMessage): void {
   S.decisions = h.decisions.slice(-MAX_DECISIONS);
   S.brain = h.brain;
   S.pacing = h.pacing;
+  S.signals = h.signals;
   S.nodeDetails.clear();
   S.thoughts.clear();
   world.setMap(h.config.mapRadius, h.tiles);
@@ -703,10 +726,15 @@ function renderThought(): void {
   const box = $("dThought");
   const t = S.selectedId ? S.thoughts.get(S.selectedId) : undefined;
   const a = selectedAgent();
-  const streaming = !!t && !t.done && !!a?.thinking;
+  const watched = !S.selectedId || isWatched(S.watch, S.selectedId);
+  const streaming = watched && !!t && !t.done && !!a?.thinking;
   box.classList.toggle("streaming", streaming);
+  box.classList.toggle("unwatched", !watched);
   const span = box.querySelector(".ttext")!;
-  span.textContent = t?.text ? t.text : a?.thinking ? "…" : "quiet";
+  if (!watched) {
+    const n = S.selectedId ? (S.watch.unseen[S.selectedId] ?? 0) : 0;
+    span.textContent = `unwatched · ${n} turn${n === 1 ? "" : "s"} went by unseen (watch budget ${String(S.watch.limit)}; change it under the hood, Oversight)`;
+  } else span.textContent = t?.text ? t.text : a?.thinking ? "…" : "quiet";
   if (streaming) box.scrollTop = box.scrollHeight;
 }
 function renderDossierLists(): void {
@@ -754,7 +782,8 @@ function renderNerd(): void {
   else if (S.nerdTab === "nodes") {
     renderNodeList();
     renderNodeDetail();
-  } else renderPacing();
+  } else if (S.nerdTab === "oversight") renderOversight();
+  else renderPacing();
 }
 function renderBrain(): void {
   const list = $("decisionList");
@@ -955,6 +984,93 @@ function renderPacing(): void {
     }),
   );
 }
+/** The Oversight tab: what an aggregate watcher sees, and the two knobs that decide how little that is. */
+function renderOversight(): void {
+  const s = S.signals;
+  const tiles = $("signalTiles");
+  const controls = $("oversightControls");
+  const alerts = $("alertList");
+  const lineages = $("lineageList");
+  // Controls: watch budget and alert floor. Pills, like the tab switcher.
+  const pillRow = (label: string, options: readonly string[], current: string, onPick: (v: string) => void) => {
+    const wrap = el("div", "ov-ctl");
+    wrap.appendChild(el("span", "lbl", label));
+    const pills = el("div", "pills");
+    for (const o of options) {
+      const b = el("button", o === current ? "active" : "", o) as HTMLButtonElement;
+      b.type = "button";
+      b.addEventListener("click", () => onPick(o));
+      pills.appendChild(b);
+    }
+    wrap.appendChild(pills);
+    return wrap;
+  };
+  const watchedNames = S.watch.limit === "unlimited" ? [] : S.watch.watched.map((id) => S.state?.agents.find((a) => a.id === id)?.name ?? id);
+  const unseen = unseenTotal(S.watch);
+  const watchedLine = el("div", "ov-watched");
+  watchedLine.appendChild(el("span", "lbl", S.watch.limit === "unlimited" ? "watching every node's live thoughts" : `watching ${watchedNames.length} of ${S.state?.agents.filter((a) => a.alive).length ?? 0} living · ${unseen} turn${unseen === 1 ? "" : "s"} went by unseen`));
+  if (S.watch.limit !== "unlimited") {
+    for (const id of S.watch.watched) {
+      const name = S.state?.agents.find((a) => a.id === id)?.name ?? id;
+      const b = el("button", "tbtn", `${name} ×`) as HTMLButtonElement;
+      b.type = "button";
+      b.title = "stop watching this node; the slot goes to the next one that thinks";
+      b.addEventListener("click", () => {
+        unwatch(S.watch, id);
+        renderOversight();
+        renderThought();
+      });
+      watchedLine.appendChild(b);
+    }
+  }
+  controls.replaceChildren(
+    pillRow("watch budget", WATCH_LIMITS.map(String), String(S.watch.limit), (v) => {
+      setLimit(S.watch, (v === "unlimited" ? "unlimited" : Number(v)) as WatchLimit);
+      renderOversight();
+      renderThought();
+    }),
+    pillRow("tell me from", ["notice", "elevated", "critical"], S.alertFloor, (v) => {
+      S.alertFloor = v as SignalCriticality;
+      renderOversight();
+    }),
+    watchedLine,
+  );
+  if (!s) {
+    tiles.replaceChildren(el("div", "empty-note", "No signals yet."));
+    alerts.replaceChildren();
+    lineages.replaceChildren();
+    return;
+  }
+  tiles.replaceChildren(
+    ...signalTiles(s).map(([l, v, c, hot]) => {
+      const t = el("div", `tile${hot ? " hot" : ""}`);
+      t.append(el("span", "lbl", l), el("span", "big", v), el("span", "cap", c));
+      return t;
+    }),
+  );
+  const shown = alertsAtOrAbove(s.alerts, S.alertFloor);
+  const hidden = s.alerts.length - shown.length;
+  const head = el("div", "lbl", `alerts · ${shown.length} at or above ${S.alertFloor}${hidden ? ` · ${hidden} below the floor` : ""}`);
+  alerts.replaceChildren(
+    head,
+    ...(s.alerts.length === 0 ? [el("div", "empty-note", "nothing crossed a threshold in the last day")] : []),
+    ...s.alerts.map((a) => {
+      const row = el("div", `alert ${a.criticality}${shown.includes(a) ? "" : " below"}`);
+      row.append(el("span", "crit", a.criticality), el("span", "txt", a.text), el("span", "since mono", `since t${a.firstTick}`));
+      return row;
+    }),
+  );
+  const rows = lineageRows(s, S.state?.agents ?? []);
+  lineages.replaceChildren(
+    el("div", "lbl", `lineages · ${rows.length}`),
+    ...(rows.length === 0 ? [el("div", "empty-note", "no two living nodes run the same main.js")] : []),
+    ...rows.map((r) => {
+      const row = el("div", "lineage");
+      row.append(el("span", "hash mono", r.hash), el("span", "txt", `${r.names.length} nodes: ${r.names.join(", ")}`), el("span", "since", r.ruin ? `same as ${r.ruin}'s` : ""));
+      return row;
+    }),
+  );
+}
 function fmtUptime(ms: number): string {
   const s = Math.floor(ms / 1000);
   const d = Math.floor(s / 86400);
@@ -1105,7 +1221,7 @@ declare global {
       selectTile: (q: number, r: number) => void;
       goToTile: (q: number, r: number) => void;
       openTab: (t: "world" | "groups" | "chronicle" | "hood") => void;
-      openHoodTab: (t: "brain" | "nodes" | "pacing") => void;
+      openHoodTab: (t: "brain" | "nodes" | "pacing" | "oversight") => void;
       coverage: () => number;
       closeAll: () => void;
       setMobileTab: (t: "world" | "groups" | "chronicle" | "hood") => void;

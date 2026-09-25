@@ -1183,7 +1183,7 @@ export class World {
     if (!(n in entries) && Object.keys(entries).length >= this.config.cacheMaxEntries) throw new WorldError(`the cache is full (${this.config.cacheMaxEntries} entries); rmdir something`);
     entries[n] = { name: n, by: a.id, byName: a.name, tick: this.tick, bytes: utf8Bytes(text), text };
     this.markDirty(c.tile);
-    this.emit("cached", 1, a, `${a.name} made "${n}" in the cache`, { quote: n });
+    this.emit("cached", 1, a, `${a.name} made "${n}" in the cache`, { quote: n, data: { op: "write", name: n } });
   }
 
   cacheRemove(agentId: string, name: unknown): boolean {
@@ -1194,7 +1194,7 @@ export class World {
     if (!(n in c.structure.entries!)) return false;
     delete c.structure.entries![n];
     this.markDirty(c.tile);
-    this.emit("cached", 0, a, `${a.name} removed "${n}" from the cache`);
+    this.emit("cached", 0, a, `${a.name} removed "${n}" from the cache`, { data: { op: "remove", name: n } });
     return true;
   }
 

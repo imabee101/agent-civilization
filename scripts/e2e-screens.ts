@@ -178,6 +178,7 @@ const STATES: StateSpec[] = [
   { name: "hood-brain", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('hood'), (window.__llmwar.openHoodTab && window.__llmwar.openHoodTab('brain')), true) : (${clickJs("hood", "#tabbar")} || ${clickJs("hood", "#topbar")} || ${clickJs("under the hood")})`, panel: "hood", fills: true },
   { name: "hood-nodes", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('nodes'), true) : ${clickJs("nodes", "#nerd")}`, panel: "hood", fills: true },
   { name: "hood-pacing", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('pacing'), true) : ${clickJs("pacing", "#nerd")}`, panel: "hood", fills: true },
+  { name: "hood-oversight", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('oversight'), true) : ${clickJs("oversight", "#nerd")}`, panel: "hood", fills: true },
   { name: "back-to-world", enter: `(window.__llmwar && window.__llmwar.closeAll) ? (window.__llmwar.closeAll(), true) : (${clickJs("world", "#tabbar")} || (document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), true))` },
 ];
 
@@ -231,7 +232,10 @@ async function main(): Promise<void> {
         } catch {
           entered = false;
         }
-        await Bun.sleep(600);
+        // Panels slide and fade in; measure once nothing is still animating (or after two seconds).
+        await Bun.sleep(150);
+        await waitFor(async () => (await page.evaluate<number>("document.getAnimations().filter(a => a.playState === 'running' && !(a instanceof CSSAnimation)).length")) === 0, 2000, "animations to settle").catch(() => undefined);
+        await Bun.sleep(150);
         const facts = await page.evaluate<Record<string, unknown>>(AUDIT_JS);
         const problems: string[] = [];
         if (!entered && st.name !== "back-to-world") problems.push("could not enter state");
