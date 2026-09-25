@@ -254,23 +254,23 @@ export class Engine {
     await this.attachSandbox(agentId);
   }
 
-  async spawn(name?: string, opts: { edge?: boolean } = {}): Promise<string> {
+  async spawn(name?: string, opts: { arrival?: boolean } = {}): Promise<string> {
     if (this.world.livingAgents().length >= this.cfg.maxAgents) throw new Error(`at most ${this.cfg.maxAgents} living nodes`);
-    const a = this.world.spawnAgent({ name, edge: opts.edge, files: this.cfg.starterFiles });
+    const a = this.world.spawnAgent({ name, arrival: opts.arrival, files: this.cfg.starterFiles });
     await this.attachSandbox(a.id);
     this.flushEvents();
     this.emitTick();
     return a.id;
   }
 
-  /** A stranger with starter files walks in while the population is under the floor. */
+  /** A stranger with starter files walks in while the population is under the floor: beside the newest ruin if there is one, else from the edge. */
   private async maybeArrive(): Promise<void> {
     const { arrivalFloor, arrivalEveryTicks, maxAgents } = this.cfg;
     const living = this.world.livingAgents().length;
     if (arrivalFloor <= 0 || living >= arrivalFloor || living >= maxAgents) return;
     if (this.world.tick - this.lastArrivalTick < arrivalEveryTicks) return;
     this.lastArrivalTick = this.world.tick;
-    await this.spawn(undefined, { edge: true });
+    await this.spawn(undefined, { arrival: true });
   }
 
   /** Cancel every brain call in flight; their results must not reach the world that replaces this one. */

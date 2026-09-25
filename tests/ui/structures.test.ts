@@ -128,12 +128,12 @@ describe("tileDossier", () => {
   });
   test("cache entries are sorted by name and counted", () => {
     const entries = [
-      { name: "the-formula", by: "r", byName: "Grader", tick: 0, bytes: 52 },
+      { name: "the-count", by: "r", byName: "Grader", tick: 0, bytes: 52 },
       { name: "README", by: "r", byName: "Phaseone", tick: 0, bytes: 151 },
       { name: "msg-40-hello", by: "n1", byName: "Ash", tick: 40, bytes: 0 },
     ];
     const d = tileDossier(tile({ structure: { kind: "cache", entries } }));
-    expect(d.entries.map((e) => e.name)).toEqual(["msg-40-hello", "README", "the-formula"]);
+    expect(d.entries.map((e) => e.name)).toEqual(["msg-40-hello", "README", "the-count"]);
     expect(d.rows).toContainEqual(["entries", "3"]);
     expect(d.glyph).toBe(STRUCTURE_GLYPH.cache);
   });

@@ -485,4 +485,41 @@ describe("no engine-authored social rules", () => {
     r.reset();
     expect(r.config.seed).toBe(9);
   });
+
+  test("an arrival lands beside the newest ruin, and after extinction it opens a new era", () => {
+    const w = mk();
+    const first = w.spawnAgent({ at: { q: 0, r: 0 } });
+    expect(w.era).toBe(1);
+    first.health = 0.5;
+    first.food = 0;
+    w.step();
+    expect(first.alive).toBe(false);
+    w.drainEvents();
+    const next = w.spawnAgent({ arrival: true });
+    expect(hexDistance(next, first)).toBeLessThanOrEqual(2);
+    expect(w.era).toBe(2);
+    const evs = w.drainEvents();
+    expect(evs.some((e) => e.kind === "era-began" && e.agentId === next.id)).toBe(true);
+    expect(evs.find((e) => e.kind === "spawned")?.text).toContain(`found the ruin of ${first.name}`);
+    // a second arrival while someone lives does not open another era
+    w.spawnAgent({ arrival: true });
+    expect(w.era).toBe(2);
+  });
+
+  test("beyond maxRuins the oldest ruins are lost once a day", () => {
+    const w = mk({ maxRuins: 2, ticksPerDay: 10 });
+    const names: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const a = w.spawnAgent({});
+      names.push(a.name);
+      a.health = 0.5;
+      a.food = 0;
+      w.step();
+      expect(a.alive).toBe(false);
+    }
+    expect(w.deadAgents().length).toBe(3);
+    while (w.tick % 10 !== 0) w.step();
+    expect(w.deadAgents().map((a) => a.name)).toEqual(names.slice(1));
+    expect(w.drainEvents().some((e) => e.kind === "ruin-lost" && e.text.includes(names[0]!))).toBe(true);
+  });
 });

@@ -149,6 +149,8 @@ export type EventKind =
   | "dropped-item"
   | "planted"
   | "vault-opened"
+  | "era-began"
+  | "ruin-lost"
   | "found"
   | "replicated"
   | "season-changed"
@@ -279,6 +281,8 @@ export interface WorldState {
   day: number;
   phase: Phase;
   season: Season;
+  /** How many populations this world has had; goes up when someone arrives after everyone died. */
+  era: number;
   /** 0..1 progress through the current season. */
   seasonProgress: number;
   /** 0..1 progress through the current day. */

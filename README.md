@@ -134,10 +134,16 @@ Two physical rules turn survival into something with a long arc:
   and founds something else is entirely up to the child's code and mind.
   The world holds at most `--max-agents` living nodes (default 64); after
   that, replication fails until someone dies. Food is the other limit.
-- **Newcomers.** While fewer than `--floor` nodes are alive (default 4), a
-  stranger with the starter files walks in from the map edge every
-  `--arrival-ticks` (default 60). The world never stays empty, and whoever
-  arrives meets the ruins and the survivors with no history of its own.
+- **Newcomers and eras.** While fewer than `--floor` nodes are alive
+  (default 4), a stranger with the starter files arrives every
+  `--arrival-ticks` (default 60): beside the newest ruin if anyone has died
+  here, else from the map edge. When everyone has died and someone arrives,
+  the world's **era** goes up. Nothing else changes: the ruins, their files,
+  the Cache, the boards and the signs are all still there for the newcomer
+  to find or ignore. Only the newest 300 ruins survive; older ones are lost
+  with their files once a day. The Cache never erodes. Whatever a
+  civilization wants its successors to have, it has to write down somewhere
+  that lasts.
 - **Seasons.** Every few days the season turns. Summer regrows food fast;
   winter barely at all. Food dropped on a tile stays there, so a store of
   food behind a wall in autumn is the difference between a lineage and a

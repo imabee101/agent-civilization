@@ -167,7 +167,7 @@ export function createMockTransport(): Transport {
     const dp = (tick % config.ticksPerDay) / config.ticksPerDay;
     const day = Math.floor(tick / config.ticksPerDay) + 1;
     const ticksPerSeason = config.seasonDays * config.ticksPerDay;
-    return { tick, day, phase: phaseOf(dp), season: seasonOf(day), seasonProgress: (tick % ticksPerSeason) / ticksPerSeason, dayProgress: dp, agents: agents.map((a) => ({ ...a, profile: { ...a.profile }, inventory: { ...a.inventory, items: [...a.inventory.items] } })), ruins: [...ruins] };
+    return { tick, day, era: 1, phase: phaseOf(dp), season: seasonOf(day), seasonProgress: (tick % ticksPerSeason) / ticksPerSeason, dayProgress: dp, agents: agents.map((a) => ({ ...a, profile: { ...a.profile }, inventory: { ...a.inventory, items: [...a.inventory.items] } })), ruins: [...ruins] };
   };
   const brain = (): BrainStatus => ({ kind: "openai-compatible", model: "tiny-3b-instruct", baseUrl: "http://localhost:11434", connected: tick % 200 < 170, detail: "mock" });
   const pacing = (): PacingStats => ({
