@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0a0d14" />
+  <title>Agent Civilization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Cinzel:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body class="tab-world">
+  <!-- Full-bleed PixiJS world. Everything else floats over it. -->
+  <div id="stage" aria-label="World map"></div>
+  <div id="vignette" aria-hidden="true"></div>
+
+  <!-- Top bar -->
+  <header id="topbar" class="glass">
+    <div class="brand">
+      <span class="sigil" aria-hidden="true"></span>
+      <span class="wordmark"><span class="wm-a">Agent </span>Civilization</span>
+    </div>
+    <span class="vdiv" aria-hidden="true"></span>
+
+    <div class="clock" title="Day / phase">
+      <svg class="sunarc" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path d="M3 17 A9 9 0 0 1 21 17" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.4" />
+        <line x1="2" y1="17" x2="22" y2="17" stroke="currentColor" stroke-opacity=".35" stroke-width="1.2" />
+        <circle id="sun" cx="12" cy="8" r="2.6" fill="var(--accent)" />
+      </svg>
+      <span id="dayNum" class="mono">Day 1</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span id="phaseName" class="phase">dawn</span>
+      <span class="sep season-sep" aria-hidden="true">·</span>
+      <span id="seasonName" class="phase season lbl">spring</span>
+    </div>
+
+    <div class="playback">
+      <button id="btnPause" class="ibtn" title="Pause / resume" aria-label="Pause or resume">
+        <svg class="ic-pause" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" rx="1" fill="currentColor"/><rect x="9.5" y="2" width="3.5" height="12" rx="1" fill="currentColor"/></svg>
+        <svg class="ic-play" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 2.5 L13.5 8 L4 13.5 Z" fill="currentColor"/></svg>
+      </button>
+      <div class="seg" id="speedSeg" role="group" aria-label="Speed">
+        <button data-speed="1" class="active">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="4">4×</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat" title="Living nodes / population cap"><span class="lbl">alive</span><span id="stAlive" class="mono">0</span></div>
+      <div class="stat minor"><span class="lbl">groups</span><span id="stGroups" class="mono">0</span></div>
+      <div class="stat hot"><span class="lbl">thinking</span><span id="stThinking" class="mono">0</span></div>
+      <div class="stat minor"><span class="lbl">avg ms</span><span id="stLatency" class="mono">–</span></div>
+    </div>
+
+    <div id="brainBadge" class="badge" title="Brain backend">
+      <span class="dot" id="brainDot"></span>
+      <span id="brainName" class="mono">connecting…</span>
+      <span id="pacingMode" class="pacing">idle</span>
+    </div>
+
+    <div class="actions">
+      <button id="btnNarrate" class="tbtn" title="Toggle spoken narration of literal events" aria-pressed="false">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor"/><path d="M11 5.5a3 3 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+        <span class="txt">narrate</span>
+      </button>
+      <button id="btnNerd" class="tbtn" title="Under the hood" aria-label="Under the hood" aria-pressed="false">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 4 L2 8 L5 12 M11 4 L14 8 L11 12 M9.5 3 L6.5 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span class="txt">under the hood</span>
+      </button>
+      <button id="btnSpawn" class="tbtn" title="Spawn a new node">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span class="txt">spawn</span>
+      </button>
+      <button id="btnReset" class="tbtn" title="Reset the world">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M13 3v3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="txt">reset</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Left rail: groups derived from agents' own profiles -->
+  <aside class="rail-left" id="railLeft" aria-label="Groups">
+    <div class="rail-title lbl">groups</div>
+    <div id="groupList" class="cards"></div>
+    <div id="groupEmpty" class="empty glass">No groups yet — nodes have not declared any.</div>
+  </aside>
+
+  <!-- Right rail: chronicle -->
+  <aside class="rail-right glass" id="railRight" aria-label="Chronicle">
+    <div class="chron-head">
+      <span class="lbl">chronicle</span>
+      <label class="chk"><input type="checkbox" id="chkAll" /> <span>all</span></label>
+    </div>
+    <div id="evList" class="ev-list"></div>
+  </aside>
+
+  <!-- Selected-agent dossier -->
+  <section id="dossier" class="glass" aria-label="Selected node or tile" data-mode="agent" hidden>
+    <button class="close" id="dossierClose" aria-label="Close">×</button>
+    <div class="d-head">
+      <span class="portrait" id="dPortrait">?</span>
+      <div class="d-title">
+        <div class="d-name" id="dName">—</div>
+        <div class="d-chips" id="dChips"></div>
+      </div>
+    </div>
+    <div class="d-bars d-agent">
+      <div class="bar"><span class="lbl">health</span><div class="track"><div class="fill health" id="dHealth"></div></div><span class="mono val" id="dHealthV">0</span></div>
+      <div class="bar"><span class="lbl">food</span><div class="track"><div class="fill food" id="dFood"></div></div><span class="mono val" id="dFoodV">0</span></div>
+      <div class="bar"><span class="lbl">energy</span><div class="track"><div class="fill energy" id="dEnergy"></div></div><span class="mono val" id="dEnergyV">0</span></div>
+    </div>
+    <div class="d-inv d-agent">
+      <span class="lbl">inventory</span>
+      <div class="chips" id="dInv"></div>
+    </div>
+    <div class="d-kv" id="dKV"></div>
+    <div class="d-thought d-agent">
+      <span class="lbl">live thought</span>
+      <div class="thought mono" id="dThought"><span class="ttext"></span><span class="caret" aria-hidden="true"></span></div>
+    </div>
+    <div class="d-cols d-agent">
+      <div class="col"><span class="lbl">recent log</span><ul id="dLog" class="mini-list mono"></ul></div>
+      <div class="col"><span class="lbl">inbox &amp; heard</span><ul id="dInbox" class="mini-list"></ul></div>
+    </div>
+    <!-- Tile mode: structure text, board posts, cache directory listing, items. All agent text is literal. -->
+    <div id="dTile" class="d-tile" hidden>
+      <div class="d-sec" id="dTileText" hidden>
+        <span class="lbl">text</span>
+        <pre class="t-text"></pre>
+      </div>
+      <div class="d-sec" id="dTilePosts" hidden>
+        <span class="lbl">posts · newest first</span>
+        <ul class="post-list"></ul>
+      </div>
+      <div class="d-sec" id="dTileEntries" hidden>
+        <span class="lbl">directory listing <span class="mono">0</span></span>
+        <div class="dir mono"></div>
+      </div>
+      <div class="d-sec" id="dTileItems" hidden>
+        <span class="lbl">items here</span>
+        <div class="chips"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Minimap -->
+  <canvas id="minimap" class="glass" width="180" height="150" aria-label="Minimap"></canvas>
+
+  <!-- Cinematic ribbon (importance-3 events only) -->
+  <div id="ribbon" aria-hidden="true">
+    <div class="bar top"></div>
+    <div class="bar bottom"></div>
+    <div class="rb-content">
+      <div class="rb-kicker lbl" id="rbKicker"></div>
+      <div class="rb-title" id="rbTitle"></div>
+      <div class="rb-rule"></div>
+      <div class="rb-sub" id="rbSub"></div>
+    </div>
+  </div>
+
+  <!-- Under the hood drawer -->
+  <section id="nerd" class="panel-strong" aria-label="Under the hood">
+    <div class="n-head">
+      <div class="pills" id="nerdTabs" role="tablist">
+        <button data-tab="brain" class="active" role="tab">Brain</button>
+        <button data-tab="nodes" role="tab">Nodes</button>
+        <button data-tab="pacing" role="tab">Pacing</button>
+      </div>
+      <button class="close" id="nerdClose" aria-label="Close">×</button>
+    </div>
+    <div class="n-body">
+      <div class="n-tab" data-tab="brain" id="tabBrain">
+        <div class="n-cols">
+          <div class="dlist" id="decisionList"></div>
+          <div class="ddetail" id="decisionDetail">
+            <div class="empty-note">Select a decision to inspect its prompt and raw output.</div>
+          </div>
+        </div>
+      </div>
+      <div class="n-tab" data-tab="nodes" id="tabNodes" hidden>
+        <div class="n-cols">
+          <div class="dlist" id="nodeList"></div>
+          <div class="ddetail" id="nodeDetail">
+            <div class="empty-note">Select a node to see its live files, code and log.</div>
+          </div>
+        </div>
+      </div>
+      <div class="n-tab" data-tab="pacing" id="tabPacing" hidden>
+        <div class="tiles" id="pacingTiles"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Mobile tab bar -->
+  <nav id="tabbar" class="glass" aria-label="Panels">
+    <button data-tab="world" class="active">World</button>
+    <button data-tab="groups">Groups</button>
+    <button data-tab="chronicle">Chronicle</button>
+    <button data-tab="hood">Hood</button>
+  </nav>
+
+  <div id="toast" class="glass" hidden></div>
+
+  <script type="module" src="./app.ts"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "includeCoAuthoredBy": false,
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh .claude/hooks/git-identity.sh"
+          },
+          {
+            "type": "command",
+            "command": "sh .claude/hooks/ensure-bun.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
