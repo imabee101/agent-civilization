@@ -187,6 +187,7 @@
         <button data-tab="nodes" role="tab">Nodes</button>
         <button data-tab="pacing" role="tab">Pacing</button>
         <button data-tab="oversight" role="tab">Oversight</button>
+        <button data-tab="timeline" role="tab">Timeline</button>
       </div>
       <button class="close" id="nerdClose" aria-label="Close">×</button>
     </div>
@@ -216,6 +217,14 @@
         <div class="ov-cols">
           <div class="ov-list" id="alertList"></div>
           <div class="ov-list" id="lineageList"></div>
+        </div>
+      </div>
+      <div class="n-tab" data-tab="timeline" id="tabTimeline" hidden>
+        <div class="tl-head" id="tlHead"></div>
+        <svg id="tlAxis" class="tl-axis" viewBox="0 0 1000 140" aria-label="Firsts along the days"></svg>
+        <div class="ov-cols">
+          <div class="ov-list" id="tlFirsts"></div>
+          <div class="ov-list" id="tlAround"></div>
         </div>
       </div>
     </div>

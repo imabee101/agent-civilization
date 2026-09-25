@@ -347,6 +347,15 @@ below it, alerts only sit in the tab. Raw prompts and outputs stay in the
 Brain tab for reading after the fact, which is how the record usually gets
 read. Nothing in Oversight acts on anything.
 
+**Timeline.** The drawer's fifth tab is the post-mortem: the first time each
+kind of thing happened (first Cache entry, first message, first ruin read,
+first file rewritten, first replication, the gate opened, first death,
+first operator action, and so on) laid along a day axis over the volume of
+events per day, from the SQLite record when there is one and from what the
+client has seen otherwise. Pick a first and the events around that tick
+are listed in the record's own words. No summary, no narration: the
+reconstruction the incident needed weeks for, read straight off the log.
+
 **The operator's hand.** Four things only a person can do, from the drawer
 or the dossier, never from node code: **quarantine** a node (its code gets
 no handler calls, no turns and no deliveries; its body keeps draining, so

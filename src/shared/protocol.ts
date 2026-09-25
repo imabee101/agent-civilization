@@ -374,6 +374,16 @@ export interface NoticeLedger {
   sameCode: number;
 }
 
+/** The post-mortem timeline: the first time each kind of thing happened, and event volume per day. */
+export interface TimelineView {
+  firsts: { key: string; label: string; event: WorldEvent }[];
+  days: { day: number; total: number; byKind: Record<string, number> }[];
+  firstTick: number;
+  lastTick: number;
+  /** "history" when built from the SQLite record, "live" when built from the events a client holds. */
+  source: "history" | "live";
+}
+
 export interface SignalsMessage {
   type: "signals";
   signals: SignalsView;
