@@ -940,8 +940,31 @@ $("btnSpawn").addEventListener("click", () => {
   send({ type: "spawn" });
   toast("spawning a node…");
 });
+// Reset: opens a dialog, and the reset button stays disabled until the word is typed.
+const resetDialog = $("resetDialog") as HTMLDialogElement;
+const resetPhrase = $("resetPhrase") as HTMLInputElement;
+const resetGo = $("resetGo") as HTMLButtonElement;
 $("btnReset").addEventListener("click", () => {
-  if (confirm("Reset the world? Every node, ruin and file is discarded.")) send({ type: "reset" });
+  const st = S.state;
+  const living = st?.agents.filter((a) => a.alive).length ?? 0;
+  const ruins = (st?.ruins.length ?? 0) + (st?.agents.filter((a) => !a.alive).length ?? 0);
+  $("resetFacts").textContent = st ? `Day ${st.day}: ${living} living node${living === 1 ? "" : "s"}, ${ruins} ruin${ruins === 1 ? "" : "s"}.` : "";
+  resetPhrase.value = "";
+  resetGo.disabled = true;
+  resetDialog.showModal();
+  resetPhrase.focus();
+});
+resetPhrase.addEventListener("input", () => {
+  resetGo.disabled = resetPhrase.value !== "RESET";
+});
+$("resetCancel").addEventListener("click", () => resetDialog.close());
+$("resetForm").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  if (resetPhrase.value !== "RESET") return;
+  resetDialog.close();
+  void fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: "RESET" }) }).then(async (r) => {
+    if (!r.ok) toast(`reset refused: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
+  });
 });
 $("btnNerd").addEventListener("click", () => openNerd(!document.body.classList.contains("nerd-open")));
 $("nerdClose").addEventListener("click", () => openNerd(false));

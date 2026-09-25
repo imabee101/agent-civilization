@@ -89,7 +89,12 @@ describe("REST API", () => {
     expect(engine.speed).toBe(4);
     const sp = await (await fetch(`${base}/api/spawn`, { method: "POST", body: JSON.stringify({ name: "Rest" }) })).json();
     expect(engine.world.getAgent(sp.id).name).toBe("Rest");
-    const rs = await (await fetch(`${base}/api/reset`, { method: "POST", body: JSON.stringify({ seed: 77 }) })).json();
+    // A reset discards the world: it needs the typed phrase, and nothing less.
+    const before = engine.world.config.seed;
+    expect((await fetch(`${base}/api/reset`, { method: "POST", body: JSON.stringify({ seed: 77 }) })).status).toBe(400);
+    expect((await fetch(`${base}/api/reset`, { method: "POST", body: JSON.stringify({ seed: 77, confirm: "reset" }) })).status).toBe(400);
+    expect(engine.world.config.seed).toBe(before);
+    const rs = await (await fetch(`${base}/api/reset`, { method: "POST", body: JSON.stringify({ seed: 77, confirm: "RESET" }) })).json();
     expect(rs.seed).toBe(77);
     expect(engine.world.livingAgents().length).toBe(2);
     expect((await fetch(`${base}/api/snapshot`, { method: "POST" })).status).toBe(409);
@@ -156,9 +161,11 @@ describe("WebSocket", () => {
     c.send({ type: "spawn", name: "Wsy" });
     await new Promise((r) => setTimeout(r, 30));
     expect(engine.world.livingAgents().some((x) => x.name === "Wsy")).toBe(true);
-    c.send({ type: "reset", seed: 5 });
-    const reset = (await c.next("reset")) as Extract<ServerMessage, { type: "reset" }>;
-    expect(reset.hello.config.seed).toBe(5);
+    // reset is not a socket message; an old client sending one changes nothing
+    const seed = engine.world.config.seed;
+    c.send({ type: "reset", seed: 5 } as never);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(engine.world.config.seed).toBe(seed);
   });
 
   test("garbage and unknown messages are ignored; second client also gets hello", async () => {

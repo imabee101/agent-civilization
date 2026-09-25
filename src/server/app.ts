@@ -24,6 +24,8 @@ interface WsData {
 }
 
 const TOPIC = "world";
+/** What a person must type to discard the world. */
+export const RESET_PHRASE = "RESET";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
 const error = (message: string, status = 400) => json({ error: message }, status);
@@ -79,9 +81,6 @@ export function createApp(opts: AppOptions): App {
       }
       case "spawn":
         await engine.spawn(typeof msg.name === "string" ? msg.name.slice(0, 24) : undefined).catch((e) => log(`spawn failed: ${(e as Error).message}`));
-        break;
-      case "reset":
-        await engine.reset(typeof msg.seed === "number" ? msg.seed : undefined);
         break;
       case "snapshot":
         await engine.saveSnapshot();
@@ -140,9 +139,14 @@ export function createApp(opts: AppOptions): App {
         }
       },
     },
+    // Discards every node, ruin and file. Never called by the engine; only a
+    // person can, and only by typing the word. Not reachable over the socket.
     "/api/reset": {
-      POST: async (req: Request) => {
-        const body = (await req.json().catch(() => ({}))) as { seed?: unknown };
+      POST: async (req: Request, srv?: Server<WsData>) => {
+        const body = (await req.json().catch(() => ({}))) as { seed?: unknown; confirm?: unknown };
+        if (body.confirm !== RESET_PHRASE) return error(`reset discards the whole world; send {"confirm":"${RESET_PHRASE}"} to do it`, 400);
+        const from = srv?.requestIP(req)?.address ?? "unknown";
+        opts.log?.(`world reset by ${from} at tick ${engine.world.tick} (${engine.world.livingAgents().length} living, ${engine.world.deadAgents().length} ruins)`);
         await engine.reset(typeof body.seed === "number" ? body.seed : undefined);
         return json({ ok: true, seed: engine.world.config.seed });
       },

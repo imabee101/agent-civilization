@@ -364,7 +364,6 @@ export type ClientMessage =
   | { type: "resume" }
   | { type: "speed"; speed: 1 | 2 | 4 }
   | { type: "spawn"; name?: string }
-  | { type: "reset"; seed?: number }
   | { type: "snapshot" }
   /** Subscribe to file/log detail updates for one node (or null to stop). */
   | { type: "watch"; agentId: string | null };

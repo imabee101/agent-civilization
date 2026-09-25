@@ -785,6 +785,33 @@ pre.raw.plain { border-color: var(--line); }
 #tabbar { display: none; }
 
 /* ---------- toast ---------- */
+#resetDialog {
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 24px;
+  max-width: min(440px, calc(100vw - 32px));
+  color: var(--text);
+  background: var(--panel-strong);
+}
+#resetDialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+#resetDialog h2 { margin: 0 0 8px; font: 600 16px/1.3 var(--font); }
+#resetDialog p { margin: 0 0 8px; color: var(--dim); }
+#resetDialog label { display: block; margin: 16px 0 8px; }
+#resetDialog input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+}
+#resetDialog .d-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+#resetDialog .tbtn { height: 32px; padding: 0 14px; border: 1px solid var(--line-strong); }
+#resetDialog .tbtn.danger { color: var(--danger); border-color: var(--danger); }
+#resetDialog .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
+
 #toast {
   position: fixed;
   left: 50%;

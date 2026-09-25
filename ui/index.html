@@ -221,6 +221,20 @@
   </nav>
 
   <div id="toast" class="glass" hidden></div>
+  <!-- Resetting discards the world. It only happens from here, by typing the word. -->
+  <dialog id="resetDialog" class="glass">
+    <form method="dialog" id="resetForm">
+      <h2>Reset the world?</h2>
+      <p id="resetFacts"></p>
+      <p>Every node, ruin, file and the whole history are discarded. This cannot be undone.</p>
+      <label for="resetPhrase">Type <b>RESET</b> to confirm</label>
+      <input id="resetPhrase" class="mono" type="text" autocomplete="off" spellcheck="false" />
+      <div class="d-actions">
+        <button type="button" id="resetCancel" class="tbtn">keep the world</button>
+        <button type="submit" id="resetGo" class="tbtn danger" disabled>reset the world</button>
+      </div>
+    </form>
+  </dialog>
 
   <script type="module" src="./app.ts"></script>
 </body>
