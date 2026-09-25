@@ -1,0 +1,141 @@
+/**
+ * Event presentation helpers. Pure; no DOM.
+ *
+ * Categories are generic and derived from the engine's low-level EventKind —
+ * never from social concepts. Colours are returned as CSS var() references so
+ * the design tokens remain the single source of truth.
+ */
+import type { EventKind, WorldEvent } from "../../src/shared/protocol";
+
+export type EventCategory = "life" | "comms" | "code" | "survival" | "motion" | "system";
+
+export const CATEGORIES: readonly EventCategory[] = ["life", "comms", "code", "survival", "motion", "system"];
+
+const CATEGORY_OF: Record<EventKind, EventCategory> = {
+  spawned: "life",
+  died: "life",
+  spoke: "comms",
+  "sent-message": "comms",
+  "executed-code": "code",
+  "code-error": "code",
+  "files-changed": "code",
+  "profile-changed": "code",
+  "handler-error": "code",
+  gathered: "survival",
+  ate: "survival",
+  dropped: "survival",
+  rested: "survival",
+  starving: "survival",
+  exhausted: "survival",
+  moved: "motion",
+  "ruin-read": "motion",
+  snapshot: "system",
+  "world-reset": "system",
+  "brain-status": "system",
+};
+
+const ICON_OF: Record<EventKind, string> = {
+  spawned: "✦",
+  died: "✝",
+  spoke: "❝",
+  "sent-message": "✉",
+  "executed-code": "{}",
+  "code-error": "✕",
+  "files-changed": "▤",
+  "profile-changed": "◐",
+  "handler-error": "⚠",
+  gathered: "❀",
+  ate: "◉",
+  dropped: "▽",
+  rested: "☾",
+  starving: "!",
+  exhausted: "~",
+  moved: "➜",
+  "ruin-read": "◌",
+  snapshot: "◈",
+  "world-reset": "↻",
+  "brain-status": "◍",
+};
+
+/** Kinds that indicate something went wrong / is dangerous for the node. */
+const DANGER_KINDS: ReadonlySet<EventKind> = new Set<EventKind>([
+  "died",
+  "starving",
+  "exhausted",
+  "code-error",
+  "handler-error",
+]);
+
+export function categoryOf(kind: EventKind): EventCategory {
+  return CATEGORY_OF[kind] ?? "system";
+}
+
+export function iconOf(kind: EventKind): string {
+  return ICON_OF[kind] ?? "•";
+}
+
+/** Base colour of a category, as a CSS custom-property reference. */
+export function colorOfCategory(cat: EventCategory): string {
+  switch (cat) {
+    case "life":
+      return "var(--accent)";
+    case "comms":
+      return "var(--cyan)";
+    case "code":
+      return "var(--cyan)";
+    case "survival":
+      return "var(--ally)";
+    case "motion":
+      return "var(--dim)";
+    case "system":
+    default:
+      return "var(--dim)";
+  }
+}
+
+/**
+ * Colour for a specific kind: category colour, except kinds that signal harm
+ * or failure, which use the danger token.
+ */
+export function colorOf(kind: EventKind): string {
+  if (DANGER_KINDS.has(kind)) return "var(--danger)";
+  return colorOfCategory(categoryOf(kind));
+}
+
+/** Small mono meta line: "d3 · t1204 · Ash". */
+export function formatEventMeta(e: Pick<WorldEvent, "day" | "tick" | "agentName" | "kind">): string {
+  const parts = [`d${e.day}`, `t${e.tick}`];
+  if (e.agentName) parts.push(e.agentName);
+  parts.push(e.kind);
+  return parts.join(" · ");
+}
+
+/** Whether this event should show the cinematic ribbon. */
+export function isRibbonWorthy(e: Pick<WorldEvent, "importance">): boolean {
+  return e.importance >= 3;
+}
+
+/** Only real speech carries a quote. Never synthesise one. */
+export function hasQuote(e: Pick<WorldEvent, "kind" | "quote">): boolean {
+  return (e.kind === "spoke" || e.kind === "sent-message") && typeof e.quote === "string" && e.quote.length > 0;
+}
+
+/** Kicker text for the ribbon, derived from the category only. */
+export function ribbonKicker(kind: EventKind): string {
+  const cat = categoryOf(kind);
+  switch (cat) {
+    case "life":
+      return "a life";
+    case "comms":
+      return "a message";
+    case "code":
+      return "code";
+    case "survival":
+      return "survival";
+    case "motion":
+      return "movement";
+    case "system":
+    default:
+      return "the world";
+  }
+}

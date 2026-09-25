@@ -221,7 +221,7 @@ describe("sandbox: memory limits", () => {
     sb.loadScript("globalThis.keep=[]; function onTick(){ for(let i=0;i<1e8;i++){ keep.push({i, s: 'x'.repeat(100)}) } }");
     const r = sb.callHandler("onTick")!;
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/out of memory/i);
+    expect((r as any).error).toMatch(/out of memory/i);
     expect(sb.poisoned).toBe(true);
   });
 
@@ -351,7 +351,7 @@ describe("sandbox: handlers and persistence", () => {
     sb.loadScript("function onTick(){ throw new TypeError('bad tick') }");
     const r = sb.callHandler("onTick")!;
     expect(r.ok).toBe(false);
-    expect(r.error).toContain("bad tick");
+    expect((r as any).error).toContain("bad tick");
     expect(sb.poisoned).toBe(false);
   });
 
@@ -359,7 +359,7 @@ describe("sandbox: handlers and persistence", () => {
     const { sb } = await mk();
     const r = sb.loadScript("function onTick( {");
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/SyntaxError/);
+    expect((r as any).error).toMatch(/SyntaxError/);
   });
 
   test("nodes are isolated from each other", async () => {
