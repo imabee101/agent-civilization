@@ -136,8 +136,8 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); ou
 }
 /* Nothing in the bar may push past its edge: fixed groups never shrink, the stat cluster and badge give way first. */
 .brand, .clock, .playback, .actions, .vdiv { flex: 0 0 auto; }
-.stats { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.badge { flex: 0 1 auto; min-width: 0; }
+.stats { flex: 0 0 auto; }
+.badge { flex: 0 1 auto; min-width: 48px; overflow: hidden; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .sigil {
   width: 16px;
@@ -431,6 +431,8 @@ body.paused .ibtn .ic-pause { display: none; }
   overflow-y: auto;
   animation: d-rise 0.25s var(--ease-out);
 }
+/* sections keep their natural height; the sheet scrolls instead of squeezing them */
+#dossier > * { flex: 0 0 auto; }
 @keyframes d-rise {
   from { opacity: 0; transform: translateX(-50%) translateY(14px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -803,10 +805,12 @@ pre.raw.plain { border-color: var(--line); }
    minor stat tiles and the pacing word. The bar itself can never overflow
    (fixed groups do not shrink; the stat cluster is the flex "give").
    ========================================================================== */
+@media (max-width: 1520px) {
+  .wm-a { display: none; }
+}
 @media (max-width: 1350px) {
   .tbtn .txt { display: none; }
   .tbtn { padding: 0 7px; }
-  .wm-a { display: none; }
   #topbar { gap: 10px; }
   .stats { gap: 12px; }
 }

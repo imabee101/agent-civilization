@@ -41,6 +41,14 @@ means an automated test in `tests/`; run `bun test` to re-verify.
 
 | Instruction | Where | Evidence |
 | --- | --- | --- |
+| Colony / civilization of agents, undirected, made easy | `src/world/world.ts` `intentReplicate`, seasons | `replicate()` copies files+profile to an adjacent child with its own mind (cap 64); seasons make stored food matter; Cache holds 4 KB entries so scripts spread. Nothing prescribes a shape. Tests in `tests/world/civilization.test.ts`. |
+| Install Bun the correct way | `.claude/hooks/ensure-bun.sh`, README | Official installer when reachable, else Bun's official npm package; `bun --version` = 1.4.2 system-wide. |
+| Rename to agent-civilization | `package.json`, CLI `agentciv`, `AGENTCIV_*` env, README, UI title/wordmark | Done; update the git remote after renaming the GitHub repo (old URL redirects). |
+
+### Earlier instructions
+
+| Instruction | Where | Evidence |
+| --- | --- | --- |
 | Allow llama.cpp or any backend | `src/brain/llamacpp.ts`, `registry.ts` | Native `/completion` backend with prompt templates; `openai` covers `/v1`; `registerBrain` for anything else. |
 | Never commit as Claude; no attribution; keep the settings in the repo | `.claude/settings.json`, `.claude/hooks/git-identity.sh`, `CLAUDE.md` | Every commit authored `imabee <29169122+imabee101@users.noreply.github.com>`; hook re-applies on session start. |
 | Use the latest Bun's benefits | `.bun-version`, `src/server/app.ts`, `src/engine/history.ts`, `src/engine/backups.ts`, `scripts/e2e-screens.ts` | Bun 1.4.2: WebSocket pub/sub fan-out, `bun:sqlite` history, `Bun.cron` backups, `bun run --parallel` check, DevTools-protocol screenshots from plain Bun. |
@@ -50,10 +58,37 @@ means an automated test in `tests/`; run `bun test` to re-verify.
 | Hidden artifacts placed strategically | `src/world/world.ts` `placeFeatures` | Key on sand/grass, lantern on rock/sand, seeds in forests, spare relay on grass; revealed only by standing there; the Cartographer's map names them vaguely. |
 | Meme inspiration, clean | `src/world/features.ts` | Shared cache as message board, "counting ourselves", a plaque for an eval nobody runs, a Grader that says PASS, "graded: gone". No real names. |
 | Works on any device, portrait and landscape, no empty space, no overflow | `ui/app.css`, `scripts/e2e-screens.ts` | See UI section. |
-| Test and run it; screenshots | `bun test`, `bun run e2e` | Screenshots in `scratch/ui-shots/` (`real-<viewport>-<state>.png`) and `report.json`. |
+| Test and run it; screenshots | `bun test` (267 tests, 23 files), `bun run e2e` | `docs/screenshots/*.png`; full set in `scratch/ui-shots/` with `report.json`. Compiled binary `dist/agentciv` verified: page, assets, API, WebSocket, history, snapshot on SIGTERM, restore. |
 
 ## UI
 
 Filled in from the end-to-end run; see below.
 
-@@UI_RESULTS@@
+Automated audit (`bun run e2e`, Chromium over the DevTools protocol, real server on the random brain): **57/57 checks passed**.
+
+Each check asserts: the page does not scroll, the canvas covers the full viewport, no visible element extends outside the viewport (clip-aware), `html/body` overflow hidden, the map covers >= 98.5% of the viewport (`coverage()`), and on mobile every opened panel fills the free area between the top bar and the tab bar.
+
+| Viewport | States checked | Result | Map coverage |
+| --- | --- | --- | --- |
+| desktop-1440x900 | world, dossier-agent, dossier-tile, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+| laptop-1280x720 | world, dossier-agent, dossier-tile, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+| tablet-landscape-1024x768 | world, dossier-agent, dossier-tile, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+| tablet-portrait-768x1024 | world, dossier-agent, dossier-tile, groups, chronicle, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+| phone-portrait-390x844 | world, dossier-agent, dossier-tile, groups, chronicle, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+| phone-landscape-844x390 | world, dossier-agent, dossier-tile, groups, chronicle, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+| small-phone-360x740 | world, dossier-agent, dossier-tile, groups, chronicle, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
+
+Representative screenshots are committed under `docs/screenshots/`; the full set (57 PNGs + `report.json`) is written to `scratch/ui-shots/` by the script.
+
+| Requirement (plan.md UI spec / verbal) | Evidence |
+| --- | --- |
+| Full-bleed hex map behind frosted-glass panels, tokens and type per spec | `ui/app.css` `:root` tokens verbatim; `docs/screenshots/desktop-1440x900-world.png` |
+| Map fills the entire viewport in portrait and landscape, never letterboxed, no empty space | Cover fit + clamped pan/zoom + ghost-hex backdrop (`ui/lib/camera.ts` `coverCamera`/`clampCamera`/`coverage`, tested); coverage 1.000 at every viewport |
+| No horizontal/vertical scroll, no overflow anywhere | Audit rows above; overflow guard in `ui/overflow-guard.ts` |
+| Top bar degrades gracefully; mobile tab bar; rails become full overlays; dossier bottom sheet; nerd drawer full width | `docs/screenshots/phone-*`, `small-phone-*`, `tablet-*` |
+| Chronicle shows literal events and literal quotes only; categories derived from generic kinds | `ui/lib/events.ts` (typed over every `EventKind`), `ui/lib/narration.ts`, tests in `tests/ui/` |
+| Group cards from agents' self-declared `profile.group` only | `ui/lib/groups.ts`, tested |
+| Under-the-hood: raw prompts/outputs, live files/logs, pacing tiles, world structure list | `docs/screenshots/tablet-portrait-768x1024-hood-brain.png`, `laptop-1280x720-hood-nodes.png` |
+| Structures, items, the Cache directory listing, boards, lineage, seasons visible | `docs/screenshots/desktop-1440x900-dossier-tile.png` |
+| No social vocabulary hardcoded in UI categories/classes/copy | `tests/ui/events.test.ts` forbidden-word guard |
+| Optional browser TTS narration of literal text only | `ui/lib/narration.ts` |

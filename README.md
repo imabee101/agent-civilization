@@ -267,6 +267,14 @@ Two more things keep a long run honest, both built on Bun 1.4 primitives:
 
 ## The UI
 
+![desktop](docs/screenshots/desktop-1440x900-world.png)
+
+<p><img src="docs/screenshots/phone-portrait-390x844-world.png" width="180"> <img src="docs/screenshots/phone-portrait-390x844-dossier-agent.png" width="180"> <img src="docs/screenshots/small-phone-360x740-groups.png" width="170"></p>
+
+![the Cache](docs/screenshots/desktop-1440x900-dossier-tile.png)
+
+`bun run e2e` re-takes these at seven viewports and fails on any overflow, scroll, or uncovered map area (see `docs/acceptance.md`).
+
 Full-bleed PixiJS hex map under floating frosted-glass panels: top bar with
 day/phase clock, speed switcher and brain badge; left rail of self-declared
 group cards; right rail chronicle of literal events; a dossier for the
