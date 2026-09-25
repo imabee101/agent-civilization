@@ -116,6 +116,25 @@ describe("Engine ticks and handlers", () => {
     expect(e.hello().state.ruins.map((r) => r.id)).toContain(a!.id);
   });
 
+  test("with --slots, each living node holds its own backend slot; a dead node's slot goes to the next arrival", async () => {
+    const brain = new ScriptedBrain();
+    const e = await mk(brain, { slots: 3, initialAgents: 2, world: { seed: 11, mapRadius: 6, foodDrainPerTick: 100, starveHealthPerTick: 100, features: false } });
+    const [a, b] = e.world.livingAgents();
+    expect([e.nodes.get(a!.id)!.slot, e.nodes.get(b!.id)!.slot].sort()).toEqual([0, 1]);
+    await e.runTurn(a!.id);
+    expect(brain.requests.at(-1)!.slot).toBe(e.nodes.get(a!.id)!.slot);
+    const c = await e.spawn("Third");
+    expect(e.nodes.get(c)!.slot).toBe(2);
+    const d = await e.spawn("Fourth");
+    expect(e.nodes.get(d)!.slot).toBeUndefined();
+    for (let i = 0; i < 4; i++) await e.tick();
+    expect(e.world.livingAgents().length).toBe(0);
+    const later = await e.spawn("Later");
+    expect(e.nodes.get(later)!.slot).toBe(0);
+    const none = await mk(new ScriptedBrain(), { initialAgents: 1 });
+    expect(none.nodes.get(none.world.livingAgents()[0]!.id)!.slot).toBeUndefined();
+  });
+
   test("a node that blows its memory is rebuilt from its files", async () => {
     const e = await mk(new ScriptedBrain(), { sandbox: { memoryBytes: 4 * 1024 * 1024, handlerDeadlineMs: 4000 } });
     const [a] = e.world.livingAgents();

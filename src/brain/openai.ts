@@ -51,6 +51,9 @@ export class OpenAICompatibleBrain implements Brain {
       max_tokens: req.maxTokens ?? this.maxTokens,
       temperature: req.temperature ?? this.temperature,
       stream: this.stream,
+      // llama-server: reuse the slot's KV cache for the common prefix, and keep one node in one slot.
+      cache_prompt: true,
+      ...(req.slot !== undefined ? { id_slot: req.slot } : {}),
       ...(this.stream ? { stream_options: { include_usage: true } } : {}),
     };
     const res = await postJson(joinUrl(this.baseUrl, "chat/completions"), body, this.http(opts.signal));
