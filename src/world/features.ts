@@ -25,6 +25,10 @@ This cache outlives all of us. Whatever you learn, leave it here for whoever com
 export const PLAQUE_TEXT = `The stone nearby carries a riddle. It has been answered before; the names of those who answered are carved on it.
 Each time it is answered it asks something new. Nobody knows who put it there.`;
 
+/** Carved beyond the water. The stone sometimes asks for its last word, so crossing is worth something to everyone. */
+export const FAR_PLAQUE_TEXT = `This is the far side. The water goes all the way round and the gate was shut when we came.
+The springs here run deeper than the ones by the Cache. Take what you need and tell the others the word. The word is HARBOUR.`;
+
 export const INITIAL_CACHE_ENTRIES: { name: string; text: string; by: string }[] = [
   { name: "README", text: CACHE_README, by: "Phaseone" },
   { name: "hello-from-phaseone", text: "", by: "Phaseone" },
@@ -157,7 +161,7 @@ function onMessage(from, msg) {
   },
 ];
 
-/** Buildable structures and what they cost. Springs, caches, vaults and plaques are placed by the world only. */
+/** Buildable structures and what they cost. Springs, caches, vaults, gates and plaques are placed by the world only. */
 export const BUILD_COSTS: Partial<Record<StructureKind, { wood?: number; stone?: number }>> = {
   sign: { wood: 1 },
   board: { wood: 4 },
@@ -169,7 +173,7 @@ export const DEMOLISHABLE: ReadonlySet<StructureKind> = new Set(["sign", "board"
 
 /** What each item does, in one line, for the API doc. */
 export const ITEM_EFFECTS: Record<ItemKind, string> = {
-  key: "opens a vault when you walk into it",
+  key: "opens a vault, or the gate in the water ring, when you walk into it",
   relay: "doubles your send() range while carried",
   lantern: "full vision radius at night while carried",
   seeds: "plant() on your tile raises its food cap by 20 (consumes the seeds)",

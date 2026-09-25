@@ -122,6 +122,7 @@ export function createMockTransport(): Transport {
     ],
   });
   place(3, 4, { kind: "vault", locked: true });
+  place(0, 6, { kind: "gate", locked: true });
   place(3, 3, { kind: "wall" });
   place(4, 3, { kind: "wall" });
   place(2, 5, { kind: "wall" });

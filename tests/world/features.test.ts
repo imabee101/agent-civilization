@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { World, WorldError } from "../../src/world/world";
 import { hexDistance, hexNeighbor, hexesWithin } from "../../src/world/hex";
-import { ANCIENT_RUINS, INITIAL_CACHE_ENTRIES } from "../../src/world/features";
+import * as lore from "../../src/world/features";
+const { ANCIENT_RUINS, INITIAL_CACHE_ENTRIES } = lore;
 
 function mk(extra = {}) {
   return new World({ seed: 9, mapRadius: 9, foodDrainPerTick: 0, ...extra });
@@ -16,11 +17,12 @@ describe("world generation places nuggets", () => {
     const w = mk();
     const kinds = structures(w);
     expect(kinds.filter((k) => k === "cache").length).toBe(1);
-    expect(kinds.filter((k) => k === "plaque").length).toBe(1);
-    expect(kinds.filter((k) => k === "spring").length).toBe(w.config.springs);
+    expect(kinds.filter((k) => k === "plaque").length).toBe(2);
+    expect(kinds.filter((k) => k === "spring").length).toBe(w.config.springs + w.config.outerSprings);
     expect(kinds.filter((k) => k === "tower").length).toBe(w.config.towers);
     expect(kinds.filter((k) => k === "board").length).toBe(w.config.boards);
-    expect(kinds.filter((k) => k === "vault").length).toBe(1);
+    expect(kinds.filter((k) => k === "vault").length).toBe(2);
+    expect(kinds.filter((k) => k === "gate").length).toBe(1);
     expect(structures(mk())).toEqual(kinds);
     expect(mk().tiles).toEqual(w.tiles);
   });
@@ -86,6 +88,115 @@ describe("world generation places nuggets", () => {
     const w = mk({ features: false });
     expect(structures(w)).toEqual([]);
     expect(w.agents.size).toBe(0);
+    expect(w.moatRadius()).toBe(0);
+  });
+});
+
+describe("the enclosure", () => {
+  const origin = { q: 0, r: 0 };
+  const gateOf = (w: World) => w.tiles.find((t) => t.structure?.kind === "gate")!;
+
+  test("a ring of water at half the radius, one causeway with a locked gate, land on both sides of it", () => {
+    const w = mk();
+    const m = w.moatRadius();
+    expect(m).toBe(4);
+    const ring = w.tiles.filter((t) => hexDistance(t, origin) === m);
+    const gate = gateOf(w);
+    expect(gate.structure!.locked).toBe(true);
+    expect(hexDistance(gate, origin)).toBe(m);
+    for (const t of ring) if (t !== gate) expect(t.terrain).toBe("water");
+    const sides = hexesWithin(gate, 1).filter((h) => hexDistance(h, origin) !== m).map((h) => w.tileAt(h)!);
+    expect(sides.some((t) => hexDistance(t, origin) < m && t.terrain !== "water")).toBe(true);
+    expect(sides.some((t) => hexDistance(t, origin) > m && t.terrain !== "water")).toBe(true);
+    expect(mk().tiles).toEqual(w.tiles);
+  });
+
+  test("the cache, plaque, monolith, key, first spring and the map board are inside; the far plaque, stash and outer springs are outside", () => {
+    const w = mk();
+    const inside = (t: { q: number; r: number }) => w.isInner(t);
+    for (const kind of ["cache", "monolith"] as const) expect(inside(w.tiles.find((t) => t.structure?.kind === kind)!)).toBe(true);
+    const plaques = w.tiles.filter((t) => t.structure?.kind === "plaque");
+    expect(plaques.filter(inside).length).toBe(1);
+    expect(plaques.filter((t) => !inside(t))[0]!.structure!.text).toBe(lore.FAR_PLAQUE_TEXT);
+    expect(inside(w.tiles.find((t) => t.hidden.includes("key"))!)).toBe(true);
+    expect(inside(w.tiles.find((t) => t.items.includes("map"))!)).toBe(true);
+    const springs = w.tiles.filter((t) => t.structure?.kind === "spring");
+    expect(springs.some(inside)).toBe(true);
+    const outerSprings = springs.filter((t) => !inside(t));
+    expect(outerSprings.length).toBeGreaterThanOrEqual(w.config.outerSprings);
+    for (const t of outerSprings.filter((t) => t.foodCap === 100)) expect(t.food).toBe(100);
+    const stash = w.tiles.find((t) => t.structure?.kind === "vault" && !t.structure.locked)!;
+    expect(inside(stash)).toBe(false);
+    expect(stash.food).toBe(200);
+    expect(stash.items).toEqual(["seeds", "relay", "lantern"]);
+    const cart = w.deadAgents().find((r) => r.name === "Cartographer")!;
+    expect(cart.files["map.txt"]).toContain("gate");
+  });
+
+  test("the gate blocks a keyless node, opens for a key holder once, then stays open for everyone", () => {
+    const w = mk();
+    const gate = gateOf(w);
+    const m = w.moatRadius();
+    const shore = hexesWithin(gate, 1).map((h) => w.tileAt(h)!).find((t) => hexDistance(t, origin) < m && t.terrain !== "water")!;
+    const a = w.spawnAgent({ at: shore });
+    w.drainEvents();
+    const dir = [0, 1, 2, 3, 4, 5].find((d) => hexNeighbor(a, d).q === gate.q && hexNeighbor(a, d).r === gate.r)!;
+    expect(w.isPassable(gate, a)).toBe(false);
+    w.intentMove(a.id, dir);
+    w.step();
+    expect(hexDistance(a, origin)).toBe(m - 1);
+    a.inventory.items.push("key");
+    w.intentMove(a.id, dir);
+    w.step();
+    expect(hexDistance(a, origin)).toBe(m);
+    expect(gate.structure!.locked).toBe(false);
+    const evs = w.drainEvents();
+    const opened = evs.filter((e) => e.kind === "gate-opened");
+    expect(opened.length).toBe(1);
+    expect(opened[0]!.importance).toBe(3);
+    expect(evs.find((e) => e.kind === "moved" && e.data?.onto === "gate")).toBeDefined();
+    const b = w.spawnAgent({ at: shore });
+    expect(w.isPassable(gate, b)).toBe(true);
+    expect(() => w.intentDemolish(a.id)).toThrow(/cannot be demolished/);
+  });
+
+  test("newcomers walk in from the inner shore, not from beyond the water", () => {
+    const w = mk();
+    const m = w.moatRadius();
+    for (let i = 0; i < 6; i++) {
+      const a = w.spawnAgent({ arrival: true });
+      expect(hexDistance(a, origin)).toBe(m - 1);
+    }
+  });
+
+  test("enclosure:false keeps the open disc", () => {
+    const w = mk({ enclosure: false });
+    expect(w.moatRadius()).toBe(0);
+    expect(w.tiles.some((t) => t.structure?.kind === "gate")).toBe(false);
+    expect(w.tiles.filter((t) => t.structure?.kind === "plaque").length).toBe(1);
+  });
+
+  test("a world saved before the ring existed gets one on restore; whatever stood on the ring is moved off it", () => {
+    const w = mk({ enclosure: false });
+    const m = 4;
+    const ringLand = w.tiles.find((t) => hexDistance(t, origin) === m && t.terrain !== "water" && !t.structure)!;
+    ringLand.structure = { kind: "tower" };
+    ringLand.items.push("lantern");
+    const standing = w.spawnAgent({ at: ringLand });
+    const snap = w.snapshot();
+    snap.config.enclosure = true;
+    const r = World.restore(snap);
+    expect(r.moatRadius()).toBe(m);
+    const ring = r.tiles.filter((t) => hexDistance(t, origin) === m);
+    const gates = ring.filter((t) => t.structure?.kind === "gate");
+    expect(gates.length).toBe(1);
+    for (const t of ring) if (t.structure?.kind !== "gate") expect(t.terrain).toBe("water");
+    expect(r.tiles.filter((t) => t.structure?.kind === "tower").length).toBe(w.config.towers + 1);
+    expect(r.tiles.some((t) => t.items.includes("lantern") && hexDistance(t, origin) !== m)).toBe(true);
+    const moved = r.getAgent(standing.id);
+    expect(hexDistance(moved, origin)).not.toBe(m);
+    expect(r.isPassable(moved)).toBe(true);
+    expect(World.restore(r.snapshot()).tiles.filter((t) => t.structure?.kind === "gate").length).toBe(1);
   });
 });
 

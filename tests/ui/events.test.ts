@@ -42,6 +42,7 @@ const ALL_KINDS: Record<EventKind, true> = {
   "dropped-item": true,
   planted: true,
   "vault-opened": true,
+  "gate-opened": true,
   "era-began": true,
   "riddle-answered": true,
   "riddle-voice": true,

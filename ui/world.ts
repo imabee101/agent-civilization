@@ -1030,6 +1030,24 @@ function drawStructure(g: Graphics, kind: StructureKind, locked: boolean): void 
       g.circle(0, S * 0.16, S * 0.07).fill({ color: INK, alpha: 0.9 * a });
       break;
     }
+    case "gate": {
+      // two posts and a crossbar on the causeway; the bar is down while locked, raised once open
+      const a = locked ? 0.7 : 1;
+      g.rect(-S * 0.34, -S * 0.5, S * 0.12, S * 0.95).fill({ color: col, alpha: a });
+      g.rect(S * 0.22, -S * 0.5, S * 0.12, S * 0.95).fill({ color: col, alpha: a });
+      g.rect(-S * 0.34, -S * 0.5, S * 0.12, S * 0.95).stroke({ color: INK, width: 1, alpha: 0.8 });
+      g.rect(S * 0.22, -S * 0.5, S * 0.12, S * 0.95).stroke({ color: INK, width: 1, alpha: 0.8 });
+      if (locked) {
+        g.rect(-S * 0.34, -S * 0.08, S * 0.68, S * 0.1).fill({ color: 0x3a3428 });
+        g.rect(-S * 0.34, S * 0.14, S * 0.68, S * 0.1).fill({ color: 0x3a3428 });
+        g.rect(-S * 0.34, -S * 0.08, S * 0.68, S * 0.1).stroke({ color: col, width: 1, alpha: 0.9 });
+        g.rect(-S * 0.34, S * 0.14, S * 0.68, S * 0.1).stroke({ color: col, width: 1, alpha: 0.9 });
+      } else {
+        g.rect(-S * 0.34, -S * 0.56, S * 0.68, S * 0.1).fill({ color: col });
+        g.rect(-S * 0.34, -S * 0.56, S * 0.68, S * 0.1).stroke({ color: INK, width: 1, alpha: 0.8 });
+      }
+      break;
+    }
     case "spring": {
       // teal pool with a soft glow (ripples are animated separately)
       g.circle(0, 0, S * 0.62).fill({ color: col, alpha: 0.18 });

@@ -42,7 +42,7 @@ usage: agentciv [options]
   --floor <n>           below this many living nodes a newcomer arrives (default 4, 0 = never)
   --arrival-ticks <n>   ticks between newcomers while under the floor (default 60)
   --season-days <n>     days per season (default 3)
-  --radius <n>          map radius in hexes (default 12)
+  --radius <n>          map radius in hexes (default 16; the water ring sits at half of it)
   --tick-ms <n>         ms per tick at 1x (default 500)
   --turn-ticks <n>      desired ticks between a node's model turns (default 16)
   --max-tick-ms <n>     slow ticks up to this so a slow brain keeps --turn-ticks (default 5000, 0 = fixed clock)

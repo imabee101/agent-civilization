@@ -15,6 +15,7 @@ export const STRUCTURE_GLYPH: Record<StructureKind, string> = {
   wall: "▮",
   tower: "▲",
   vault: "⚿",
+  gate: "⌸",
   spring: "≋",
   plaque: "▭",
   monolith: "◆",
@@ -28,6 +29,7 @@ export const STRUCTURE_LABEL: Record<StructureKind, string> = {
   wall: "wall",
   tower: "tower",
   vault: "vault",
+  gate: "gate",
   spring: "spring",
   plaque: "plaque",
   monolith: "monolith",
@@ -41,6 +43,7 @@ export const STRUCTURE_COLOR: Record<StructureKind, number> = {
   wall: 0x1a1d24,
   tower: 0xe6e9ef,
   vault: 0xc4b5fd,
+  gate: 0xd9c28a,
   spring: 0x4fd1c5,
   plaque: 0xd9c28a,
   monolith: 0xf6a83c,
@@ -62,10 +65,11 @@ const KIND_ORDER: Record<StructureKind, number> = {
   plaque: 2,
   board: 3,
   vault: 4,
-  spring: 5,
-  tower: 6,
-  sign: 7,
-  wall: 8,
+  gate: 5,
+  spring: 6,
+  tower: 7,
+  sign: 8,
+  wall: 9,
 };
 
 export const STRUCTURE_KINDS: readonly StructureKind[] = (Object.keys(KIND_ORDER) as StructureKind[]).sort((a, b) => KIND_ORDER[a] - KIND_ORDER[b]);
@@ -103,6 +107,7 @@ export function structureSummary(s: NonNullable<TileView["structure"]>): string 
       return `${n} ${n === 1 ? "post" : "posts"}`;
     }
     case "vault":
+    case "gate":
       return s.locked ? "locked" : "open";
     case "monolith": {
       const n = s.answered?.length ?? 0;
@@ -177,7 +182,7 @@ export function tileDossier(t: TileView): TileDossier {
     ["stone", String(t.stone)],
   ];
   if (s?.builtBy) rows.push(["built by", s.builtBy]);
-  if (s?.kind === "vault") rows.push(["door", s.locked ? "locked" : "open"]);
+  if (s?.kind === "vault" || s?.kind === "gate") rows.push(["door", s.locked ? "locked" : "open"]);
   if (s?.kind === "board") rows.push(["posts", String(s.posts?.length ?? 0)]);
   if (s?.kind === "cache") rows.push(["entries", String(s.entries?.length ?? 0)]);
   if (s?.kind === "monolith") {
@@ -199,7 +204,7 @@ export function tileDossier(t: TileView): TileDossier {
     posts: s?.kind === "board" ? [...(s.posts ?? [])].reverse() : [],
     entries: s?.kind === "cache" ? [...(s.entries ?? [])].sort((a, b) => a.name.localeCompare(b.name)) : [],
     items,
-    locked: s?.kind === "vault" ? !!s.locked : null,
+    locked: s?.kind === "vault" || s?.kind === "gate" ? !!s.locked : null,
   };
 }
 
