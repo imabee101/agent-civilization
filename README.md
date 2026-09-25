@@ -274,6 +274,16 @@ run this against one local GPU. None of this changes what a node may do; it
 only changes when its model is consulted. Handlers in `main.js` keep running
 every tick regardless.
 
+Within that interval, turns go where something happened. A node is **hot**
+when it was sent something, heard something, hit a new error, crossed a
+body line (starving, exhausted), found an item, was heard by the stone, was
+touched by the operator, or stands on a structure it had not seen at its
+last turn: its next turn is due at half the interval and it goes to the
+front of the queue. A node is **cold** when nothing at all changed since its
+last turn: it waits three intervals. Everything else is warm and waits one.
+Same brain throughput, two to three times the living population that can
+be kept in the game.
+
 ## Persistence
 
 Routine history rows (moves, gathers, rests, eats, repeated handler errors)

@@ -794,6 +794,11 @@ export class World {
     return ev;
   }
 
+  /** Counts of this node's own events since the last drain, left in place. */
+  peekTally(agentId: string): Record<string, number> {
+    return { ...(this.tallies.get(agentId) ?? {}) };
+  }
+
   /** Counts of this node's own events since the last drain, then reset. */
   drainTally(agentId: string): Record<string, number> {
     const t = this.tallies.get(agentId) ?? {};

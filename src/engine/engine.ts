@@ -10,11 +10,11 @@ import type { Brain } from "../brain/types";
 import { NodeSandbox, type SandboxLimits } from "../sandbox/sandbox";
 import type { HandlerName } from "../sandbox/api";
 import type { BrainStatus, DecisionRecord, HelloMessage, NodeDetail, PacingStats, ServerMessage, SignalsView, Speed, WorldEvent } from "../shared/protocol";
-import { World, type WorldConfig, type WorldSnapshot, type Delivery } from "../world/world";
+import { World, type Agent, type WorldConfig, type WorldSnapshot, type Delivery } from "../world/world";
 import { makeBridge } from "./bridge";
 import { Signals } from "./signals";
 import type { HistoryStore } from "./history";
-import { Pacing, type PacingConfig } from "./pacing";
+import { Pacing, dueIn, type PacingConfig, type Urgency } from "./pacing";
 
 export interface EngineConfig extends PacingConfig {
   world: Partial<WorldConfig>;
@@ -90,8 +90,10 @@ interface NodeRuntime {
   /** The main.js source currently loaded into the sandbox. */
   loadedScript: string | undefined;
   lastResult?: string;
-  /** Body at the start of the previous turn, for the "since your last turn" facts. */
-  lastTurn?: { tick: number; stomach: number; energy: number; health: number; carried: number };
+  /** Body at the start of the previous turn, for the "since your last turn" facts, plus what the node had seen by then (for urgency). */
+  lastTurn?: { tick: number; stomach: number; energy: number; health: number; carried: number; inboxTick?: number; heardTick?: number; lastError?: string; structureKey?: string };
+  /** Tick the node's last turn was dispatched; its next is due `dueIn(interval, urgency)` ticks later. */
+  turnStartedTick?: number;
   nextTurnTick: number;
   inFlight: boolean;
   /** Backend slot this node's turns run in, for the life of the node. */
@@ -101,6 +103,12 @@ interface NodeRuntime {
 }
 
 type Listener = (msg: ServerMessage) => void;
+
+/** Own events that make a node's next turn hot: its body crossed a line, it found something, the stone heard it, the operator touched it. */
+const HOT_EVENTS = ["starving", "exhausted", "found", "riddle-voice", "riddle-answered", "vault-opened", "gate-opened", "operator", "died"] as const;
+const URGENCY_RANK: Record<Urgency, number> = { hot: 2, warm: 1, cold: 0 };
+/** A node's own upkeep and the turn's own bookkeeping: not news, so a node whose handlers keep it fed can stay cold. */
+const ROUTINE_EVENTS: ReadonlySet<string> = new Set(["executed-code", "code-error", "rested", "gathered", "ate", "moved", "dropped"]);
 
 export class Engine {
   readonly cfg: EngineConfig;
@@ -521,20 +529,48 @@ export class Engine {
 
   // ------------------------------------------------------------- turns
 
-  /** Start model turns for nodes that are due, up to the concurrency limit. */
+  /**
+   * How badly a node needs its model: hot when something reached it or its body crossed
+   * a line since its last turn, cold when nothing changed, warm otherwise. Only its own
+   * facts are read; nothing here judges what happened.
+   */
+  urgencyOf(agent: Agent, rt: NodeRuntime): Urgency {
+    const last = rt.lastTurn;
+    if (!last) return "hot";
+    const inboxTick = agent.inbox.at(-1)?.tick;
+    const heardTick = agent.heard.at(-1)?.tick;
+    if (inboxTick !== undefined && inboxTick > (last.inboxTick ?? -1)) return "hot";
+    if (heardTick !== undefined && heardTick > (last.heardTick ?? -1)) return "hot";
+    if (agent.lastError && agent.lastError !== last.lastError) return "hot";
+    const tally = this.world.peekTally(agent.id);
+    for (const k of HOT_EVENTS) if (tally[k]) return "hot";
+    const tile = this.world.tileAt(agent);
+    const structureKey = tile?.structure ? `${tile.q},${tile.r}` : undefined;
+    if (structureKey !== undefined && structureKey !== last.structureKey) return "hot";
+    const acted = Object.keys(tally).some((k) => !ROUTINE_EVENTS.has(k));
+    const small = (a: number, b: number) => Math.abs(a - b) < 15;
+    if (!acted && small(agent.food, last.stomach) && small(agent.energy, last.energy) && Math.round(agent.health) === last.health) return "cold";
+    return "warm";
+  }
+
+  /** Start model turns for nodes that are due, hottest first, up to the concurrency limit. */
   pumpTurns(): void {
     if (this.paused || this.stopped) return;
     if (Date.now() < this.brainBlockedUntil) return;
     const living = this.world.livingAgents();
     const interval = this.pacing.effectiveTurnInterval(living.length, this.speed);
+    const tick = this.world.tick;
     const due = living
       .map((a) => ({ a, rt: this.nodes.get(a.id) }))
-      .filter((x): x is { a: (typeof living)[number]; rt: NodeRuntime } => !!x.rt && !x.a.quarantined && !x.rt.inFlight && this.world.tick >= x.rt.nextTurnTick)
-      .sort((x, y) => x.rt.nextTurnTick - y.rt.nextTurnTick);
+      .filter((x): x is { a: (typeof living)[number]; rt: NodeRuntime } => !!x.rt && !x.a.quarantined && !x.rt.inFlight)
+      .map((x) => ({ ...x, urgency: this.urgencyOf(x.a, x.rt) }))
+      .filter((x) => x.rt.turnStartedTick === undefined || tick >= x.rt.turnStartedTick + dueIn(interval, x.urgency))
+      .sort((x, y) => URGENCY_RANK[y.urgency] - URGENCY_RANK[x.urgency] || (x.rt.turnStartedTick ?? -1) - (y.rt.turnStartedTick ?? -1));
     this.pacing.queued = Math.max(0, due.length - Math.max(0, this.cfg.concurrency - this.pacing.inFlight));
     for (const { a, rt } of due) {
       if (this.pacing.inFlight >= this.cfg.concurrency) break;
-      rt.nextTurnTick = this.world.tick + interval;
+      rt.turnStartedTick = tick;
+      rt.nextTurnTick = tick + interval;
       void this.runTurn(a.id);
     }
   }
@@ -555,7 +591,8 @@ export class Engine {
     delete tally["executed-code"];
     delete tally["code-error"];
     const since = rt.lastTurn ? { from: rt.lastTurn, to: body, events: tally } : undefined;
-    rt.lastTurn = body;
+    const tileNow = this.world.tileAt(agent);
+    rt.lastTurn = { ...body, inboxTick: agent.inbox.at(-1)?.tick, heardTick: agent.heard.at(-1)?.tick, lastError: agent.lastError, structureKey: tileNow?.structure ? `${tileNow.q},${tileNow.r}` : undefined };
     const facts = {
       since,
       observation: this.world.observe(agentId),
@@ -660,6 +697,8 @@ export class Engine {
       };
     } finally {
       rt.inFlight = false;
+      // The error this turn itself produced is not news for the next one; only a fresh error since is.
+      if (rt.lastTurn) rt.lastTurn.lastError = agent.lastError;
       this.pacing.endDecision(startedAt);
       this.turnAborts.delete(abort);
       this.thinking.delete(agentId);

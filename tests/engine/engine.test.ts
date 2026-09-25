@@ -540,6 +540,61 @@ describe("Engine signals", () => {
   });
 });
 
+describe("Salience scheduling", () => {
+  test("a quiet node waits three intervals; one that was sent something is due at half; hot goes before warm", async () => {
+    const brain = new ScriptedBrain([], 0);
+    // No starter files: nothing happens to these nodes between turns unless someone does something to them.
+    const e = await mk(brain, { concurrency: 1, turnIntervalTicks: 10, initialAgents: 2, starterFiles: {} });
+    const [a, b] = e.world.livingAgents();
+    b!.q = a!.q;
+    b!.r = a!.r;
+    e.paused = false;
+    // Both are hot on their first turn.
+    expect(e.urgencyOf(a!, e.nodes.get(a!.id)!)).toBe("hot");
+    for (let i = 0; i < 4; i++) {
+      e.pumpTurns();
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    expect(brain.requests.length).toBe(2);
+    expect(e.urgencyOf(a!, e.nodes.get(a!.id)!)).toBe("cold");
+    // Quiet: not due until 30 ticks after the turn started (at tick 0).
+    for (let t = 0; t < 29; t++) await e.tick();
+    expect(brain.requests.length).toBe(2);
+    await e.tick(); // tick 30: both are due; the tick serves one, the next pump the other
+    await new Promise((r) => setTimeout(r, 15));
+    e.pumpTurns();
+    await new Promise((r) => setTimeout(r, 15));
+    expect(brain.requests.length).toBe(4);
+    // A message makes the receiver hot: due five ticks after its last turn, and served before a warm node.
+    const rtA = e.nodes.get(a!.id)!;
+    const rtB = e.nodes.get(b!.id)!;
+    rtA.turnStartedTick = e.world.tick;
+    rtB.turnStartedTick = e.world.tick;
+    rtA.lastTurn = { ...rtA.lastTurn!, tick: e.world.tick, stomach: Math.round(a!.food), energy: Math.round(a!.energy), health: Math.round(a!.health), carried: 0, inboxTick: a!.inbox.at(-1)?.tick };
+    rtB.lastTurn = { ...rtB.lastTurn!, tick: e.world.tick, stomach: Math.round(b!.food) - 20, energy: Math.round(b!.energy), health: Math.round(b!.health), carried: 0 };
+    e.world.drainTally(a!.id);
+    e.world.drainTally(b!.id);
+    rtB.sandbox.eval(`send(${JSON.stringify(a!.id)}, { hi: 1 })`);
+    await e.tick(); // the send resolves and lands in A's inbox
+    expect(e.urgencyOf(a!, rtA)).toBe("hot");
+    expect(e.urgencyOf(b!, rtB)).toBe("warm"); // its stomach moved 20 since its "last turn"
+    const before = brain.requests.length;
+    for (let t = 0; t < 3; t++) await e.tick(); // up to four ticks after the "last turn": nobody is due yet
+    expect(brain.requests.length).toBe(before);
+    await e.tick(); // five ticks after: hot A is served by the tick's own pump, warm B is not
+    await new Promise((r) => setTimeout(r, 15));
+    expect(brain.requests.length).toBe(before + 1);
+    expect(e.recentDecisions().at(-1)!.agentId).toBe(a!.id);
+    e.pumpTurns();
+    await new Promise((r) => setTimeout(r, 15));
+    expect(brain.requests.length).toBe(before + 1);
+    for (let t = 0; t < 5; t++) await e.tick(); // ten ticks after: warm B is due
+    await new Promise((r) => setTimeout(r, 15));
+    expect(brain.requests.length).toBe(before + 2);
+    expect(e.recentDecisions().at(-1)!.agentId).toBe(b!.id);
+  });
+});
+
 describe("Engine snapshots", () => {
   test("snapshot/restore keeps world, files, events, decisions and reinstalls handlers", async () => {
     const brain = new ScriptedBrain([js(`fs.write("main.js", "var c=0; function onTick(){ c++; me.set('ticks', String(c)) }")`)]);
