@@ -15,10 +15,12 @@ install -d -m 0755 /opt/agent-civ/models /opt/agent-civ/llama.cpp
 install -m 0755 dist/agentciv deploy/renew-tls.sh /opt/agent-civ/
 cp -a --remove-destination "$LLAMA/bin" "$LLAMA/lib" /opt/agent-civ/llama.cpp/
 install -m 0644 "$MODEL" /opt/agent-civ/models/
-install -m 0644 deploy/agent-civ{,-llm,-renew}.service deploy/agent-civ-renew.timer /etc/systemd/system/
+install -m 0644 deploy/agentciv.slice deploy/agent-civ{,-llm,-renew}.service deploy/agent-civ-renew.timer /etc/systemd/system/
 systemctl daemon-reload
 
 /opt/agent-civ/renew-tls.sh
 systemctl enable --now agent-civ-llm.service agent-civ-renew.timer
+# Slice or ExecStart changes need a restart to take effect.
+systemctl restart agent-civ-llm.service
 systemctl enable agent-civ.service
 systemctl restart agent-civ.service

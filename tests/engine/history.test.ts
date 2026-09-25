@@ -96,4 +96,13 @@ describe("HistoryStore", () => {
     expect(h.stats().events).toBeGreaterThan(0); // reset clears, then records the new world's spawns
     expect(h.events({ kind: "executed-code" }).length).toBe(0);
   });
+
+  test("prune drops old routine rows and keeps everything else", () => {
+    const h = new HistoryStore(":memory:");
+    stores.push(h);
+    const ev = (id: number, tick: number, importance: 0 | 1 | 2 | 3) => ({ id, tick, day: 1, kind: "moved" as const, importance, text: "x" });
+    h.recordEvents([ev(1, 10, 0), ev(2, 10, 1), ev(3, 900, 0), ev(4, 1000, 0)]);
+    expect(h.prune(50)).toBe(2);
+    expect(h.events({}).map((e) => e.id).sort()).toEqual([2, 4]);
+  });
 });

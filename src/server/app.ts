@@ -80,7 +80,10 @@ export function createApp(opts: AppOptions): App {
         break;
       }
       case "spawn":
-        await engine.spawn(typeof msg.name === "string" ? msg.name.slice(0, 24) : undefined).catch((e) => log(`spawn failed: ${(e as Error).message}`));
+        await engine
+          .spawn(typeof msg.name === "string" ? msg.name.slice(0, 24) : undefined)
+          .then((id) => log(`spawn ${id} by ${ws.remoteAddress}`))
+          .catch((e) => log(`spawn failed: ${(e as Error).message}`));
         break;
       case "snapshot":
         await engine.saveSnapshot();
@@ -129,10 +132,11 @@ export function createApp(opts: AppOptions): App {
       },
     },
     "/api/spawn": {
-      POST: async (req: Request) => {
+      POST: async (req: Request, srv?: Server<WsData>) => {
         const body = (await req.json().catch(() => ({}))) as { name?: unknown };
         try {
           const id = await engine.spawn(typeof body.name === "string" ? body.name.slice(0, 24) : undefined);
+          opts.log?.(`spawn ${id} by ${srv?.requestIP(req)?.address ?? "unknown"}`);
           return json({ id });
         } catch (e) {
           return error((e as Error).message, 409);

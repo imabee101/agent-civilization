@@ -31,6 +31,8 @@ export interface EngineConfig extends PacingConfig {
   /** Ring buffer sizes for the UI. */
   keepDecisions: number;
   keepEvents: number;
+  /** Days of routine (importance-0) history rows kept; the rest of the history is kept forever. */
+  historyNoiseDays: number;
   /** Ms between brain health probes. */
   healthEveryMs: number;
   /** Ms to wait before retrying the brain after a failed call. */
@@ -61,6 +63,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   snapshotPath: undefined,
   keepDecisions: 200,
   keepEvents: 600,
+  historyNoiseDays: 7,
   healthEveryMs: 30_000,
   brainRetryMs: 5_000,
   starterFiles: { "main.js": STARTER_MAIN_JS },
@@ -84,6 +87,8 @@ interface NodeRuntime {
   lastTurn?: { tick: number; food: number; energy: number; health: number; carried: number };
   nextTurnTick: number;
   inFlight: boolean;
+  /** Last handler error recorded, so a loop that throws the same thing every tick is written down once. */
+  lastHandlerError?: string;
 }
 
 type Listener = (msg: ServerMessage) => void;
@@ -350,7 +355,10 @@ export class Engine {
       this.flushEvents();
       this.flushTiles();
       this.emitTick();
-      if (this.cfg.snapshotEveryTicks > 0 && this.world.tick % this.cfg.snapshotEveryTicks === 0) await this.saveSnapshot();
+      if (this.cfg.snapshotEveryTicks > 0 && this.world.tick % this.cfg.snapshotEveryTicks === 0) {
+        await this.saveSnapshot();
+        this.history?.prune(this.cfg.historyNoiseDays * this.world.config.ticksPerDay);
+      }
       this.pumpTurns();
     } finally {
       this.ticking = false;
@@ -382,10 +390,13 @@ export class Engine {
     this.pacing.sandboxCalls++;
     if (!r.ok) {
       const agent = this.world.agents.get(agentId);
-      if (agent) agent.lastError = `${name}: ${r.error}`;
+      const key = `${name}: ${r.error}`;
+      if (agent) agent.lastError = key;
+      if (rt.lastHandlerError === key) return;
+      rt.lastHandlerError = key;
       this.world.addLog(agentId, `${name} error: ${r.error}`);
       this.world.record("handler-error", 0, agentId, `${agent?.name ?? agentId}'s ${name} threw`, { data: { error: r.error } });
-    }
+    } else rt.lastHandlerError = undefined;
   }
 
   // ------------------------------------------------------------- turns

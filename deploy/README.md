@@ -9,6 +9,8 @@ Runs on the workstation `192.168.101.7` (`local.imabee.com`), reachable from the
 | Game | `agent-civ.service`: `/opt/agent-civ/agentciv` on `192.168.101.7:443`, state in `/var/lib/agent-civ` |
 | Brain | `agent-civ-llm.service`: llama-server on `127.0.0.1:8080`, `huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated` i1-Q4_0, 3 slots |
 | Renewal | `agent-civ-renew.timer`, daily; reissues under 30 days left and restarts the game |
+| CPU | both services run in `agentciv.slice` (`CPUWeight=200`): about half the CPU when your builds saturate the box, nothing extra when it is idle |
+| History | `/var/lib/agent-civ/history.sqlite`: routine rows (moves, gathers, rests) kept 7 days; everything else and every prompt/reply kept forever |
 
 ## Commands
 

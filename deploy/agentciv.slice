@@ -1,0 +1,9 @@
+[Unit]
+Description=Agent Civilization (brain and game)
+
+# The cpu controller is on, so priority between the user session's builds
+# and this is decided by slice weight, not nice. At 200 against the default
+# 100 for system.slice and user.slice, the brain gets about half the CPU
+# when everything is saturated and nothing extra when the box is idle.
+[Slice]
+CPUWeight=200
