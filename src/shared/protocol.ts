@@ -216,7 +216,8 @@ export interface BrainStatus {
   lastCheckAt?: number;
 }
 
-export type PacingMode = "realtime" | "queued" | "idle";
+/** paced: ticks slowed so a slow brain still reaches every node on schedule. */
+export type PacingMode = "realtime" | "paced" | "queued" | "idle";
 
 export interface PacingStats {
   mode: PacingMode;

@@ -39,10 +39,13 @@ usage: agentciv [options]
   --seed <n>            world seed for a fresh world
   --agents <n>          initial population (default 6)
   --max-agents <n>      population cap for spawn and replicate() (default 64)
+  --floor <n>           below this many living nodes a newcomer arrives (default 4, 0 = never)
+  --arrival-ticks <n>   ticks between newcomers while under the floor (default 60)
   --season-days <n>     days per season (default 3)
   --radius <n>          map radius in hexes (default 12)
   --tick-ms <n>         ms per tick at 1x (default 500)
   --turn-ticks <n>      desired ticks between a node's model turns (default 16)
+  --max-tick-ms <n>     slow ticks up to this so a slow brain keeps --turn-ticks (default 5000, 0 = fixed clock)
   --concurrency <n>     brain calls in flight (default 1)
   --snapshot-ticks <n>  ticks between snapshots (default 120, 0 disables)
   --brain <kind>        openai | llamacpp | ollama | random | lmstudio | vllm (env AGENTCIV_BRAIN)
@@ -99,11 +102,14 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   set("initialAgents", num(get("agents")) ?? num(env.AGENTCIV_AGENTS));
   const maxAgents = num(get("max-agents"));
   set("maxAgents", maxAgents);
+  set("arrivalFloor", num(get("floor")));
+  set("arrivalEveryTicks", num(get("arrival-ticks")));
   if (maxAgents !== undefined) world.maxPopulation = Math.max(1, Math.floor(maxAgents));
   const seasonDays = num(get("season-days"));
   if (seasonDays !== undefined) world.seasonDays = Math.max(1, Math.floor(seasonDays));
   set("tickMs", num(get("tick-ms")) ?? num(env.AGENTCIV_TICK_MS));
   set("turnIntervalTicks", num(get("turn-ticks")));
+  set("maxTickMs", num(get("max-tick-ms")));
   set("concurrency", num(get("concurrency")) ?? num(env.AGENTCIV_CONCURRENCY));
   set("snapshotEveryTicks", num(get("snapshot-ticks")));
   set("maxTokens", num(get("max-tokens")) ?? num(env.AGENTCIV_MAX_TOKENS));

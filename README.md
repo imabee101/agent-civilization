@@ -123,8 +123,9 @@ the board early. What they do next is theirs.
 
 Two physical rules turn survival into something with a long arc:
 
-- **Replication.** A node with 40 spare food in its inventory can
-  `replicate()`. A new node appears on a free hex next to it carrying a
+- **Replication.** A node with 60 spare food in its inventory can
+  `replicate()`. That food becomes the child's body: replication creates no
+  food. A new node appears on a free hex next to it carrying a
   *copy of its files and profile*, with its own runtime, its own model
   turns, and its own future. Nothing else is inherited. So a survival loop
   that works gets copied; a group name gets copied; a protocol written into
@@ -133,6 +134,10 @@ Two physical rules turn survival into something with a long arc:
   and founds something else is entirely up to the child's code and mind.
   The world holds at most `--max-agents` living nodes (default 64); after
   that, replication fails until someone dies. Food is the other limit.
+- **Newcomers.** While fewer than `--floor` nodes are alive (default 4), a
+  stranger with the starter files walks in from the map edge every
+  `--arrival-ticks` (default 60). The world never stays empty, and whoever
+  arrives meets the ruins and the survivors with no history of its own.
 - **Seasons.** Every few days the season turns. Summer regrows food fast;
   winter barely at all. Food dropped on a tile stays there, so a store of
   food behind a wall in autumn is the difference between a lineage and a
@@ -241,9 +246,11 @@ The engine does not care where the text came from.
 
 Model latency is measured per decision. If the brain can serve every living
 node within the desired interval (`--turn-ticks`, default 16), turns happen on
-that schedule and the pacing badge reads **realtime**. If it cannot, the
-interval stretches so the queue never grows without bound and the badge reads
-**queued**. Concurrency (`--concurrency`) is 1 by default because most people
+that schedule and the pacing badge reads **realtime**. If it cannot, the world
+clock slows (badge **paced**, up to `--max-tick-ms`, default 5000) so every
+node still gets a turn every `--turn-ticks`: a slow brain costs wall-clock
+time, not turns per lifetime. Past that cap the interval stretches and the
+badge reads **queued**. Concurrency (`--concurrency`) is 1 by default because most people
 run this against one local GPU. None of this changes what a node may do; it
 only changes when its model is consulted. Handlers in `main.js` keep running
 every tick regardless.

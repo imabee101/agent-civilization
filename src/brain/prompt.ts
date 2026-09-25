@@ -4,7 +4,17 @@
  */
 import { API_DOC } from "../sandbox/api";
 
+export interface BodyFacts {
+  tick: number;
+  food: number;
+  energy: number;
+  health: number;
+  carried: number;
+}
+
 export interface TurnFacts {
+  /** What changed for this node between its previous turn and now. */
+  since?: { from: BodyFacts; to: BodyFacts; events: Record<string, number> };
   observation: unknown;
   files: Record<string, string>;
   log: string[];
@@ -17,26 +27,32 @@ export interface TurnFacts {
 export const SYSTEM_PROMPT = `${API_DOC}
 
 HOW TO ANSWER
-Reply with exactly one JavaScript code block:
-\`\`\`js
-// your code
-\`\`\`
-It runs immediately inside your node. Keep it small and valid. To keep behaving between turns, write handlers into main.js, e.g.
-\`\`\`js
-fs.write("main.js", \`
-function onTick() { const o = observe(); if (o.me.food < 40 && o.me.inventory.food > 0) eat(10); else if (o.me.tileFood > 0) gather(); else move(Math.floor(Math.random()*6)); }
-function onMessage(from, msg) { log("got", from, msg); }
-\`);
-\`\`\`
+Reply with exactly one fenced \`\`\`js code block holding the JavaScript you want to run. A block that only holds comments does nothing.
+It runs once, immediately, inside your node. Only what main.js defines keeps running between your turns.
 Do not explain. Code only.`;
 
 const MAX_FILE_CHARS = 3000;
 const MAX_LOG_LINES = 14;
 
+/** One tile as `q,r terrain food dist` plus any other fields as k=v: the same facts in far fewer tokens. */
+function tileLine(t: Record<string, unknown>): string {
+  const { q, r, terrain, food, dist, ...extra } = t;
+  const more = Object.entries(extra).map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+  return [`${String(q)},${String(r)}`, String(terrain), String(food), String(dist), ...more].join(" ");
+}
+
 export function buildUserPrompt(f: TurnFacts): string {
   const parts: string[] = [];
   parts.push(`TURN ${f.turn}`);
-  parts.push(`SITUATION (observe()):\n${JSON.stringify(f.observation)}`);
+  if (f.since) {
+    const { from, to, events } = f.since;
+    const d = (k: keyof BodyFacts) => `${k} ${from[k]}->${to[k]}`;
+    const happened = Object.entries(events).sort().map(([k, n]) => `${k} x${n}`).join(", ") || "none";
+    parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("food")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
+  }
+  const { tiles, ...rest } = f.observation as { tiles?: Record<string, unknown>[] };
+  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(rest)}`);
+  if (tiles?.length) parts.push(`TILES IN VIEW (in code: observe().tiles, objects {q,r,terrain,food,dist,...}):\nq,r terrain food dist\n${tiles.map(tileLine).join("\n")}`);
   const names = Object.keys(f.files).sort();
   if (names.length === 0) parts.push("FILES: none yet. You have no main.js, so nothing happens between your turns.");
   else {

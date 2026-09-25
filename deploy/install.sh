@@ -13,7 +13,7 @@ MODEL=${MODEL:-/home/imma/projects/llm/models/mlabonne_Qwen3-1.7B-abliterated-Q4
 
 install -d -m 0755 /opt/agent-civ/models /opt/agent-civ/llama.cpp
 install -m 0755 dist/agentciv deploy/renew-tls.sh /opt/agent-civ/
-cp -a "$LLAMA/bin" "$LLAMA/lib" /opt/agent-civ/llama.cpp/
+cp -a --remove-destination "$LLAMA/bin" "$LLAMA/lib" /opt/agent-civ/llama.cpp/
 install -m 0644 "$MODEL" /opt/agent-civ/models/
 install -m 0644 deploy/agent-civ{,-llm,-renew}.service deploy/agent-civ-renew.timer /etc/systemd/system/
 systemctl daemon-reload

@@ -27,4 +27,5 @@ journalctl -u agent-civ -u agent-civ-llm -f
 - Model choice is speed-gated for this CPU (i9-12900K, no GPU): ~35-40 tok/s and ~6 s
   per turn. Qwen3-4B-2507 abliterated was more coherent but ran at 18 tok/s with 11 s cold prompts.
 - A host resolving through public DNS (the NUC itself) sees no record; that is the split.
+- `--max-agents 12`: a CPU brain at ~4 s per turn serves 12 nodes with ticks paced to ~3 s. More nodes slow the world further.
 - No auth on the game's control API: anyone on the LAN can change speed or reset.

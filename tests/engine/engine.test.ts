@@ -171,6 +171,21 @@ describe("Engine turns", () => {
     expect(brain.requests[1]!.user).toContain("dir must be");
   });
 
+  test("the next prompt reports body changes and the node's own events since its last turn", async () => {
+    const brain = new ScriptedBrain([js("1"), js("2")]);
+    const e = await mk(brain);
+    const [a] = e.world.livingAgents();
+    await e.runTurn(a!.id);
+    expect(brain.requests[0]!.user).not.toContain("SINCE YOUR LAST TURN");
+    for (let i = 0; i < 3; i++) {
+      e.world.intentRest(a!.id);
+      await e.tick();
+    }
+    await e.runTurn(a!.id);
+    expect(brain.requests[1]!.user).toContain("SINCE YOUR LAST TURN (3 ticks)");
+    expect(brain.requests[1]!.user).toContain("rested x3");
+  });
+
   test("an output with no code is recorded as such", async () => {
     const e = await mk(new ScriptedBrain(["   "]));
     const [a] = e.world.livingAgents();
@@ -292,5 +307,28 @@ describe("Engine snapshots", () => {
     expect(e.nodeStamp(a!.id)).not.toBe(s1);
     expect(e.nodeDetail("zzz")).toBeUndefined();
     expect(e.nodeStamp("zzz")).toBe("");
+  });
+});
+
+describe("Engine arrivals", () => {
+  test("below the floor a newcomer walks in from the edge, one per interval, never at once", async () => {
+    const e = await mk(new ScriptedBrain(), { initialAgents: 1, arrivalFloor: 3, arrivalEveryTicks: 5 });
+    expect(e.world.livingAgents().length).toBe(1);
+    for (let i = 0; i < 4; i++) await e.tick();
+    expect(e.world.livingAgents().length).toBe(1);
+    await e.tick();
+    expect(e.world.livingAgents().length).toBe(2);
+    const newcomer = e.world.livingAgents().at(-1)!;
+    expect(Math.max(Math.abs(newcomer.q), Math.abs(newcomer.r), Math.abs(newcomer.q + newcomer.r))).toBeGreaterThanOrEqual(e.world.config.mapRadius - 1);
+    expect(e.nodes.has(newcomer.id)).toBe(true);
+    expect(e.recentEvents().some((ev) => ev.kind === "spawned" && /arrived from beyond the edge/.test(ev.text))).toBe(true);
+    for (let i = 0; i < 20; i++) await e.tick();
+    expect(e.world.livingAgents().length).toBe(3);
+  });
+
+  test("floor 0 disables arrivals", async () => {
+    const e = await mk(new ScriptedBrain(), { initialAgents: 1, arrivalFloor: 0, arrivalEveryTicks: 1 });
+    for (let i = 0; i < 5; i++) await e.tick();
+    expect(e.world.livingAgents().length).toBe(1);
   });
 });

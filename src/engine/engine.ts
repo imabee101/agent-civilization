@@ -20,6 +20,9 @@ export interface EngineConfig extends PacingConfig {
   sandbox: Partial<SandboxLimits>;
   initialAgents: number;
   maxAgents: number;
+  /** While fewer nodes than this are alive, a newcomer arrives every `arrivalEveryTicks`. 0 disables. */
+  arrivalFloor: number;
+  arrivalEveryTicks: number;
   maxTokens: number;
   temperature: number;
   /** Ticks between automatic snapshots (0 disables). */
@@ -47,8 +50,11 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   tickMs: 500,
   turnIntervalTicks: 16,
   concurrency: 1,
+  maxTickMs: 5000,
   initialAgents: 6,
   maxAgents: 64,
+  arrivalFloor: 4,
+  arrivalEveryTicks: 60,
   maxTokens: 400,
   temperature: 0.7,
   snapshotEveryTicks: 120,
@@ -74,6 +80,8 @@ interface NodeRuntime {
   /** The main.js source currently loaded into the sandbox. */
   loadedScript: string | undefined;
   lastResult?: string;
+  /** Body at the start of the previous turn, for the "since your last turn" facts. */
+  lastTurn?: { tick: number; food: number; energy: number; health: number; carried: number };
   nextTurnTick: number;
   inFlight: boolean;
 }
@@ -101,6 +109,8 @@ export class Engine {
   private lastHealthAt = 0;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
+  /** Set from the world clock in the constructor so the first newcomer waits a full interval. */
+  private lastArrivalTick: number;
   /** Optional durable history (SQLite). */
   history: HistoryStore | undefined;
 
@@ -108,8 +118,9 @@ export class Engine {
     this.cfg = { ...DEFAULT_ENGINE_CONFIG, ...cfg, world: { ...cfg.world }, sandbox: { ...cfg.sandbox } };
     this.brain = brain;
     this.world = world ?? new World(this.cfg.world);
-    this.pacing = new Pacing({ tickMs: this.cfg.tickMs, turnIntervalTicks: this.cfg.turnIntervalTicks, concurrency: this.cfg.concurrency });
+    this.pacing = new Pacing({ tickMs: this.cfg.tickMs, turnIntervalTicks: this.cfg.turnIntervalTicks, concurrency: this.cfg.concurrency, maxTickMs: this.cfg.maxTickMs });
     this.brainStatus = { kind: brain.kind, model: brain.model, baseUrl: brain.baseUrl, connected: false };
+    this.lastArrivalTick = this.world.tick;
   }
 
   // ------------------------------------------------------------ lifecycle
@@ -176,7 +187,7 @@ export class Engine {
     if (this.paused || this.stopped) return;
     this.timer = setTimeout(() => {
       void this.tick().finally(() => this.schedule());
-    }, this.pacing.tickMsAt(this.speed));
+    }, this.pacing.tickMsAt(this.speed, this.world.livingAgents().length));
   }
 
   // ------------------------------------------------------------- listeners
@@ -239,13 +250,23 @@ export class Engine {
     await this.attachSandbox(agentId);
   }
 
-  async spawn(name?: string): Promise<string> {
+  async spawn(name?: string, opts: { edge?: boolean } = {}): Promise<string> {
     if (this.world.livingAgents().length >= this.cfg.maxAgents) throw new Error(`at most ${this.cfg.maxAgents} living nodes`);
-    const a = this.world.spawnAgent({ name, files: this.cfg.starterFiles });
+    const a = this.world.spawnAgent({ name, edge: opts.edge, files: this.cfg.starterFiles });
     await this.attachSandbox(a.id);
     this.flushEvents();
     this.emitTick();
     return a.id;
+  }
+
+  /** A stranger with starter files walks in while the population is under the floor. */
+  private async maybeArrive(): Promise<void> {
+    const { arrivalFloor, arrivalEveryTicks, maxAgents } = this.cfg;
+    const living = this.world.livingAgents().length;
+    if (arrivalFloor <= 0 || living >= arrivalFloor || living >= maxAgents) return;
+    if (this.world.tick - this.lastArrivalTick < arrivalEveryTicks) return;
+    this.lastArrivalTick = this.world.tick;
+    await this.spawn(undefined, { edge: true });
   }
 
   async reset(seed?: number): Promise<void> {
@@ -257,6 +278,7 @@ export class Engine {
     }
     this.thinking.clear();
     this.world.reset(seed);
+    this.lastArrivalTick = this.world.tick;
     this.events = [];
     this.decisions = [];
     this.history?.clear();
@@ -286,6 +308,7 @@ export class Engine {
       this.world.step();
       // Nodes born by replication need a mind of their own.
       for (const a of this.world.livingAgents()) if (!this.nodes.has(a.id)) await this.attachSandbox(a.id);
+      await this.maybeArrive();
       for (const a of this.world.deadAgents()) {
         const rt = this.nodes.get(a.id);
         if (rt) {
@@ -368,7 +391,14 @@ export class Engine {
     rt.inFlight = true;
     this.pacing.inFlight++;
     const startedAt = Date.now();
+    const body = { tick: this.world.tick, food: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
+    const tally = this.world.drainTally(agentId);
+    delete tally["executed-code"];
+    delete tally["code-error"];
+    const since = rt.lastTurn ? { from: rt.lastTurn, to: body, events: tally } : undefined;
+    rt.lastTurn = body;
     const facts = {
+      since,
       observation: this.world.observe(agentId),
       files: { ...agent.files },
       log: [...agent.log],

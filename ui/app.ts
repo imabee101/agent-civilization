@@ -800,7 +800,7 @@ function renderPacing(): void {
     return;
   }
   const items: [string, string, string, boolean?][] = [
-    ["mode", p.mode, "realtime when fast, queued when slow", p.mode === "realtime"],
+    ["mode", p.mode, "realtime when fast, paced when the world slows for the brain, queued past that", p.mode === "realtime"],
     ["ticks / s", p.tps.toFixed(1), `speed ${p.speed}× · ${p.paused ? "paused" : "running"}`],
     ["avg latency", `${fmtMs(p.avgLatencyMs)} ms`, `last ${fmtMs(p.lastLatencyMs)} ms`],
     ["tokens / s", p.avgTokensPerSec.toFixed(1), "average generation speed"],

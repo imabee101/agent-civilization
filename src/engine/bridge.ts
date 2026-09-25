@@ -9,6 +9,7 @@ import type { World } from "../world/world";
 export function makeBridge(world: World, agentId: string, onLog?: (line: string) => void): HostBridge {
   return {
     observe: () => world.observe(agentId),
+    self: () => world.selfView(agentId),
     move: (dir) => world.intentMove(agentId, dir),
     moveToward: (q, r) => world.intentMoveToward(agentId, q, r),
     gather: (what) => world.intentGather(agentId, what),
