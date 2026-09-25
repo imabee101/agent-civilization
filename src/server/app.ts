@@ -11,6 +11,7 @@ export interface AppOptions {
   engine: Engine;
   port?: number;
   hostname?: string;
+  tls?: { cert: string; key: string };
   /** Bun HTML import (or any Response-able) for `/`. */
   index?: unknown;
   /** Extra static routes, e.g. for tests. */
@@ -174,6 +175,7 @@ export function createApp(opts: AppOptions): App {
     port: opts.port ?? 0,
     hostname: opts.hostname ?? "0.0.0.0",
     development: false,
+    tls: opts.tls ? { cert: Bun.file(opts.tls.cert), key: Bun.file(opts.tls.key) } : undefined,
     routes: routes as never,
     fetch(req, srv) {
       const url = new URL(req.url);

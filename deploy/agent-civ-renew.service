@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew civ.imabee.com from Vault pki_int
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/agent-civ/renew-tls.sh

@@ -299,7 +299,10 @@ agentciv --help
 Everything has a flag and an `AGENTCIV_*` environment variable; flags win.
 Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
 `--concurrency`, `--snapshot-ticks`, `--max-tokens`, `--temperature`,
-`--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`).
+`--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`),
+`--tls-cert`/`--tls-key` (both, or neither: serves HTTPS/WSS in-process).
+
+The LAN deployment at `https://civ.imabee.com` is in [`deploy/`](deploy/README.md).
 
 ## Building a single binary
 

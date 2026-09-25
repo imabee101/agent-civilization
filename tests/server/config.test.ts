@@ -25,6 +25,13 @@ describe("parseArgs", () => {
     expect(c.engine.concurrency).toBe(2);
   });
 
+  test("tls needs both halves", () => {
+    expect(parseArgs([], {}).tls).toBeUndefined();
+    expect(parseArgs(["--tls-cert", "c.pem", "--tls-key", "k.pem"], {}).tls).toEqual({ cert: "c.pem", key: "k.pem" });
+    expect(parseArgs([], { AGENTCIV_TLS_CERT: "c.pem", AGENTCIV_TLS_KEY: "k.pem" }).tls).toEqual({ cert: "c.pem", key: "k.pem" });
+    expect(() => parseArgs(["--tls-cert", "c.pem"], {})).toThrow();
+  });
+
   test("environment fallbacks and CLI precedence", () => {
     const env = { PORT: "4000", AGENTCIV_BRAIN: "ollama", AGENTCIV_MODEL: "envmodel", AGENTCIV_AGENTS: "3", AGENTCIV_DATA: "/tmp/x" };
     const c = parseArgs([], env);

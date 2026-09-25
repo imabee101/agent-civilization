@@ -11,6 +11,8 @@ import type { WorldConfig } from "./world/world";
 export interface AppConfig {
   port: number;
   hostname: string;
+  /** PEM paths; both set means HTTPS/WSS is served in-process. */
+  tls?: { cert: string; key: string };
   dataDir: string;
   fresh: boolean;
   /** Keep every event and decision in data/history.sqlite. */
@@ -28,6 +30,8 @@ usage: agentciv [options]
 
   --port <n>            HTTP port (default 3000, env PORT)
   --host <addr>         bind address (default 0.0.0.0)
+  --tls-cert <file>     PEM chain; with --tls-key serves HTTPS/WSS (env AGENTCIV_TLS_CERT)
+  --tls-key <file>      PEM private key (env AGENTCIV_TLS_KEY)
   --data <dir>          snapshot directory (default ./data, env AGENTCIV_DATA)
   --fresh               ignore any saved snapshot and start a new world
   --no-history          do not keep the SQLite history of events and decisions
@@ -115,9 +119,14 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   if (has("no-stream")) brain.stream = false;
   if (brain.maxTokens === undefined && engine.maxTokens !== undefined) brain.maxTokens = engine.maxTokens;
 
+  const cert = get("tls-cert") ?? env.AGENTCIV_TLS_CERT;
+  const key = get("tls-key") ?? env.AGENTCIV_TLS_KEY;
+  if (Boolean(cert) !== Boolean(key)) throw new Error("--tls-cert and --tls-key must be given together");
+
   return {
     port: num(get("port")) ?? num(env.PORT) ?? 3000,
     hostname: get("host") ?? env.HOST ?? "0.0.0.0",
+    tls: cert && key ? { cert, key } : undefined,
     dataDir: get("data") ?? env.AGENTCIV_DATA ?? "./data",
     fresh: has("fresh"),
     history: !has("no-history") && env.AGENTCIV_HISTORY !== "0",
