@@ -280,8 +280,12 @@ export class World {
   /** Tiles whose structure/items/materials changed since the last drain. */
   private dirtyTiles = new Set<string>();
 
-  constructor(config: Partial<WorldConfig> = {}, opts: { generate?: boolean } = {}) {
+  /** What this world was built with, replayed on reset(). Empty for a restored snapshot: its saved physics are not a choice to keep. */
+  private readonly base: Partial<WorldConfig>;
+
+  constructor(config: Partial<WorldConfig> = {}, opts: { generate?: boolean; restored?: boolean } = {}) {
     this.config = { ...DEFAULT_WORLD_CONFIG, ...config };
+    this.base = opts.restored ? {} : { ...config };
     this.rng = new Rng(this.config.seed);
     if (opts.generate !== false) this.generate();
   }
@@ -594,7 +598,13 @@ export class World {
   }
 
   /** Remove every agent and regenerate the map with an optional new seed. */
-  reset(seed?: number): void {
+  /**
+   * A fresh world under the current physics: config is rebuilt from the
+   * defaults, what this world was built with, and `overrides`; never from a
+   * restored snapshot's saved values. Only restore() keeps a saved world's physics.
+   */
+  reset(seed?: number, overrides: Partial<WorldConfig> = {}): void {
+    Object.assign(this.config, DEFAULT_WORLD_CONFIG, this.base, overrides, { seed: seed ?? overrides.seed ?? this.base.seed ?? this.config.seed });
     this.agents.clear();
     this.tiles.length = 0;
     this.tileIndex.clear();
@@ -603,7 +613,6 @@ export class World {
     this.pendingDeliveries = [];
     this.dirtyTiles.clear();
     this.tallies.clear();
-    if (seed !== undefined) this.config.seed = seed;
     this.rng.setState(this.config.seed);
     this.generate();
     this.emit("world-reset", 3, undefined, `The world was reset (seed ${this.config.seed})`);
@@ -1471,7 +1480,7 @@ export class World {
 
   static restore(snap: WorldSnapshot): World {
     if (snap.version !== 2) throw new WorldError(`unsupported snapshot version ${String(snap.version)}`);
-    const w = new World(snap.config, { generate: false });
+    const w = new World(snap.config, { generate: false, restored: true });
     w.tick = snap.tick;
     w.rng.setState(snap.rngState);
     w.nextAgentIndex = snap.nextAgentIndex;
