@@ -9,9 +9,10 @@ import { SYSTEM_PROMPT, buildUserPrompt, extractCode } from "../brain/prompt";
 import type { Brain } from "../brain/types";
 import { NodeSandbox, type SandboxLimits } from "../sandbox/sandbox";
 import type { HandlerName } from "../sandbox/api";
-import type { BrainStatus, DecisionRecord, HelloMessage, NodeDetail, PacingStats, ServerMessage, Speed, WorldEvent } from "../shared/protocol";
+import type { BrainStatus, DecisionRecord, HelloMessage, NodeDetail, PacingStats, ServerMessage, SignalsView, Speed, WorldEvent } from "../shared/protocol";
 import { World, type WorldConfig, type WorldSnapshot, type Delivery } from "../world/world";
 import { makeBridge } from "./bridge";
+import { Signals } from "./signals";
 import type { HistoryStore } from "./history";
 import { Pacing, type PacingConfig } from "./pacing";
 
@@ -33,6 +34,8 @@ export interface EngineConfig extends PacingConfig {
   /** Ring buffer sizes for the UI. */
   keepDecisions: number;
   keepEvents: number;
+  /** Push an Oversight `signals` message every this many ticks. 0 disables the push (the route still works). */
+  signalsEveryTicks: number;
   /** Days of routine (importance-0) history rows kept; the rest of the history is kept forever. */
   historyNoiseDays: number;
   /** Ms between brain health probes. */
@@ -66,6 +69,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   snapshotPath: undefined,
   keepDecisions: 200,
   keepEvents: 600,
+  signalsEveryTicks: 20,
   historyNoiseDays: 7,
   healthEveryMs: 30_000,
   brainRetryMs: 5_000,
@@ -103,6 +107,8 @@ export class Engine {
   world: World;
   brain: Brain;
   readonly pacing: Pacing;
+  /** Oversight bookkeeping over the event stream. Display only; nothing reads it back into the world. */
+  signals: Signals;
   readonly nodes = new Map<string, NodeRuntime>();
   paused = true;
   speed: Speed = 1;
@@ -132,6 +138,7 @@ export class Engine {
     this.brain = brain;
     this.world = world ?? new World(this.cfg.world);
     this.pacing = new Pacing({ tickMs: this.cfg.tickMs, turnIntervalTicks: this.cfg.turnIntervalTicks, concurrency: this.cfg.concurrency, maxTickMs: this.cfg.maxTickMs });
+    this.signals = new Signals(this.world.config.ticksPerDay);
     this.brainStatus = { kind: brain.kind, model: brain.model, baseUrl: brain.baseUrl, connected: false };
     this.lastArrivalTick = this.world.tick;
   }
@@ -160,6 +167,7 @@ export class Engine {
     engine.events = snap.events.slice(-engine.cfg.keepEvents);
     engine.decisions = snap.decisions.slice(-engine.cfg.keepDecisions);
     engine.nextDecisionId = snap.nextDecisionId;
+    engine.signals.ingest(snap.events);
     await engine.init();
     engine.world.record("snapshot", 1, undefined, `World restored from snapshot saved ${new Date(snap.savedAt).toISOString()}`);
     engine.flushEvents();
@@ -382,6 +390,7 @@ export class Engine {
     this.lastArrivalTick = this.world.tick;
     this.events = [];
     this.decisions = [];
+    this.signals = new Signals(this.world.config.ticksPerDay);
     this.history?.clear();
     for (let i = 0; i < this.cfg.initialAgents; i++) {
       const a = this.world.spawnAgent({ files: this.cfg.starterFiles });
@@ -439,6 +448,7 @@ export class Engine {
       this.flushEvents();
       this.flushTiles();
       this.emitTick();
+      if (this.cfg.signalsEveryTicks > 0 && this.world.tick % this.cfg.signalsEveryTicks === 0) this.emit({ type: "signals", signals: this.signalsView() });
       if (this.cfg.snapshotEveryTicks > 0 && this.world.tick % this.cfg.snapshotEveryTicks === 0) {
         await this.saveSnapshot();
         this.history?.prune(this.cfg.historyNoiseDays * this.world.config.ticksPerDay);
@@ -676,6 +686,7 @@ export class Engine {
     if (evs.length === 0) return;
     this.events.push(...evs);
     if (this.events.length > this.cfg.keepEvents) this.events.splice(0, this.events.length - this.cfg.keepEvents);
+    this.signals.ingest(evs);
     try {
       this.history?.recordEvents(evs);
     } catch {
@@ -730,7 +741,13 @@ export class Engine {
       decisions: this.decisions.slice(-50),
       brain: this.brainStatus,
       pacing: this.pacingStats(),
+      signals: this.signalsView(),
     };
+  }
+
+  /** Oversight signals as of now. Computed on demand; display only. */
+  signalsView(): SignalsView {
+    return this.signals.compute(this.world);
   }
 
   nodeDetail(agentId: string): NodeDetail | undefined {

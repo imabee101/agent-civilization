@@ -327,6 +327,39 @@ export interface WorldState {
 }
 
 /** Sent once on connect: everything needed to draw the world. */
+/** What the Oversight tab shows: counts over the last world-day, lineages of identical code, and thresholded alerts. Display only. */
+export type SignalCriticality = "notice" | "elevated" | "critical";
+
+export interface SignalAlert {
+  id: string;
+  criticality: SignalCriticality;
+  text: string;
+  value: number;
+  threshold: number;
+  /** Tick the alert first became active and stayed so. */
+  firstTick: number;
+}
+
+export interface SignalsView {
+  tick: number;
+  day: number;
+  windowTicks: number;
+  living: number;
+  counts: { cacheWrites: number; cacheRemoves: number; sends: number; says: number; mainRewrites: number; codeErrors: number; executed: number; replications: number; gateCrossings: number };
+  /** Share of code runs in the window that threw. */
+  codeErrorRate: number;
+  /** Living nodes running byte-identical main.js, largest first; `ruin` names a dead node whose main.js is the same file. */
+  lineages: { hash: string; nodeIds: string[]; ruin?: string }[];
+  alerts: SignalAlert[];
+  quarantined: string[];
+  cacheFrozen: boolean;
+}
+
+export interface SignalsMessage {
+  type: "signals";
+  signals: SignalsView;
+}
+
 export interface HelloMessage {
   type: "hello";
   config: WorldConfigView;
@@ -336,6 +369,7 @@ export interface HelloMessage {
   decisions: DecisionRecord[];
   brain: BrainStatus;
   pacing: PacingStats;
+  signals: SignalsView;
 }
 
 export interface TickMessage {
@@ -396,6 +430,7 @@ export type ServerMessage =
   | ThinkingMessage
   | StatsMessage
   | NodeMessage
+  | SignalsMessage
   | ResetMessage;
 
 export type ClientMessage =

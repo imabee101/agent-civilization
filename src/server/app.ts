@@ -132,6 +132,7 @@ export function createApp(opts: AppOptions): App {
     "/api/decisions": () => json(engine.recentDecisions()),
     "/api/brain": () => json(engine.getBrainStatus()),
     "/api/pacing": () => json(engine.pacingStats()),
+    "/api/signals": () => json(engine.signalsView()),
     "/api/agents": () => json(engine.world.stateView().agents),
     "/api/agents/:id": (req: Request & { params: { id: string } }) => {
       const a = engine.world.agents.get(req.params.id);

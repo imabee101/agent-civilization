@@ -456,6 +456,28 @@ describe("Operator controls", () => {
   });
 });
 
+describe("Engine signals", () => {
+  test("hello carries signals; a signals message is pushed on the cadence and reflects events", async () => {
+    const e = await mk(new ScriptedBrain(), { signalsEveryTicks: 2 });
+    expect(e.hello().signals.living).toBe(2);
+    const msgs: ServerMessage[] = [];
+    e.on((m) => msgs.push(m));
+    const [a] = e.world.livingAgents();
+    e.world.tileAt(a!)!.structure = { kind: "cache", entries: {} };
+    e.world.cacheWrite(a!.id, "one");
+    e.world.cacheRemove(a!.id, "one");
+    await e.tick();
+    await e.tick();
+    const sig = msgs.filter((m) => m.type === "signals");
+    expect(sig.length).toBe(1);
+    const v = (sig[0] as Extract<ServerMessage, { type: "signals" }>).signals;
+    expect(v.counts.cacheWrites).toBe(1);
+    expect(v.counts.cacheRemoves).toBe(1);
+    expect(v.lineages.length).toBe(1); // both nodes run the starter main.js
+    expect(e.signalsView().tick).toBe(2);
+  });
+});
+
 describe("Engine snapshots", () => {
   test("snapshot/restore keeps world, files, events, decisions and reinstalls handlers", async () => {
     const brain = new ScriptedBrain([js(`fs.write("main.js", "var c=0; function onTick(){ c++; me.set('ticks', String(c)) }")`)]);

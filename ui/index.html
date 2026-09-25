@@ -186,6 +186,7 @@
         <button data-tab="brain" class="active" role="tab">Brain</button>
         <button data-tab="nodes" role="tab">Nodes</button>
         <button data-tab="pacing" role="tab">Pacing</button>
+        <button data-tab="oversight" role="tab">Oversight</button>
       </div>
       <button class="close" id="nerdClose" aria-label="Close">×</button>
     </div>
@@ -208,6 +209,14 @@
       </div>
       <div class="n-tab" data-tab="pacing" id="tabPacing" hidden>
         <div class="tiles" id="pacingTiles"></div>
+      </div>
+      <div class="n-tab" data-tab="oversight" id="tabOversight" hidden>
+        <div class="ov-controls" id="oversightControls"></div>
+        <div class="tiles" id="signalTiles"></div>
+        <div class="ov-cols">
+          <div class="ov-list" id="alertList"></div>
+          <div class="ov-list" id="lineageList"></div>
+        </div>
       </div>
     </div>
   </section>

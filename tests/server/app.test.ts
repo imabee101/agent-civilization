@@ -141,6 +141,14 @@ describe("REST API", () => {
     expect(ops.length).toBe(3);
   });
 
+  test("signals route", async () => {
+    const { base } = await boot();
+    const v = await (await fetch(`${base}/api/signals`)).json();
+    expect(v.living).toBe(2);
+    expect(Array.isArray(v.alerts)).toBe(true);
+    expect(v.counts.sends).toBe(0);
+  });
+
   test("spawn beyond the cap is a 409", async () => {
     const { base, engine } = await boot();
     engine.cfg.maxAgents = 2;

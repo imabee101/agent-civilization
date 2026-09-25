@@ -813,6 +813,28 @@ pre.raw.plain { border-color: var(--line); }
 #resetDialog .tbtn.danger, #rewindDialog .tbtn.danger { color: var(--danger); border-color: var(--danger); }
 #resetDialog .tbtn:disabled, #rewindDialog .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
 
+/* Oversight tab */
+#tabOversight { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+#tabOversight .tiles { flex: 0 0 auto; overflow: visible; }
+.ov-controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.ov-ctl { display: inline-flex; align-items: center; gap: 8px; }
+.ov-watched { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; }
+.ov-watched .tbtn { height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); font-size: 11px; }
+.ov-cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+.ov-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.alert, .lineage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); font-size: 12px; }
+.alert .crit { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; font-weight: 600; }
+.alert.notice .crit { color: var(--dim); }
+.alert.elevated { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.alert.elevated .crit { color: var(--accent); }
+.alert.critical { border-color: color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.alert.critical .crit { color: var(--danger); }
+.alert.below { opacity: .45; }
+.alert .since, .lineage .since { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.lineage .hash { color: var(--ally); }
+.lineage .txt, .alert .txt { min-width: 0; overflow-wrap: anywhere; }
+#dThought.unwatched .ttext { color: var(--dim); font-style: italic; }
+
 /* Operator controls: a row of small buttons under a node's stats or a tile's rows. */
 .op-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .op-row .tbtn { height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); }
@@ -1004,6 +1026,7 @@ pre.raw.plain { border-color: var(--line); }
   }
   .n-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
   .tiles { grid-template-columns: repeat(2, 1fr); }
+  .ov-cols { grid-template-columns: minmax(0, 1fr); }
   .node-stats { grid-template-columns: repeat(2, 1fr); }
   .tile .big { font-size: 17px; }
 

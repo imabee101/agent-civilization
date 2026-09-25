@@ -8,6 +8,7 @@ import type {
   AgentView,
   BrainStatus,
   ClientMessage,
+  SignalsView,
   DecisionRecord,
   EventKind,
   HelloMessage,
@@ -193,7 +194,27 @@ export function createMockTransport(): Transport {
     events.push(e);
     return e;
   };
-  const hello = (): HelloMessage => ({ type: "hello", config, tiles, state: state(), events: events.slice(-100), decisions: decisions.slice(-30), brain: brain(), pacing: pacing() });
+  const signals = (): SignalsView => {
+    const living = agents.filter((a) => a.alive);
+    const day = Math.floor(tick / config.ticksPerDay) + 1;
+    const writes = 4 + (tick % 37);
+    return {
+      tick,
+      day,
+      windowTicks: config.ticksPerDay,
+      living: living.length,
+      counts: { cacheWrites: writes, cacheRemoves: tick % 11, sends: 12 + (tick % 50), says: 6, mainRewrites: 5 + (tick % 9), codeErrors: 3, executed: 21, replications: tick > 400 ? 1 : 0, gateCrossings: 0 },
+      codeErrorRate: 3 / 24,
+      lineages: living.length >= 3 ? [{ hash: "9c1f2a7e4b3d0011", nodeIds: living.slice(0, 3).map((a) => a.id), ruin: "Elder" }] : [],
+      alerts: [
+        { id: "lineage", criticality: living.length >= 6 ? "critical" : "notice", text: `3 of ${living.length} living nodes run byte-identical main.js (the same as Elder's)`, value: 3, threshold: 3, firstTick: Math.max(0, tick - 140) },
+        ...(writes > 30 ? [{ id: "cache-writes", criticality: "elevated" as const, text: `${(writes / Math.max(1, living.length)).toFixed(1)} cache writes per living node today (threshold 10)`, value: writes, threshold: 10, firstTick: tick - 3 }] : []),
+      ],
+      quarantined: agents.filter((a) => a.quarantined).map((a) => a.id),
+      cacheFrozen: false,
+    };
+  };
+  const hello = (): HelloMessage => ({ type: "hello", config, tiles, state: state(), events: events.slice(-100), decisions: decisions.slice(-30), brain: brain(), pacing: pacing(), signals: signals() });
 
   const emitDecision = (a: AgentView, error?: string) => {
     const code = `me.say(${JSON.stringify(SAYINGS[Math.floor(rnd() * SAYINGS.length)])});\nfor (const t of world.see()) { if (t.food > 0) { me.moveTo(t.q, t.r); break; } }`;
@@ -418,6 +439,7 @@ export function createMockTransport(): Transport {
     if (dirty.length) msgCb({ type: "tiles", tiles: dirty.map((t) => ({ ...t, structure: t.structure ? { ...t.structure } : undefined, items: t.items ? [...t.items] : undefined })) });
     if (batch.length) msgCb({ type: "events", events: batch });
     if (tick % 4 === 0) msgCb({ type: "stats", pacing: pacing(), brain: brain() });
+    if (tick % 10 === 0) msgCb({ type: "signals", signals: signals() });
     if (watched && tick % 6 === 0) {
       const d = nodeDetail(watched);
       if (d) msgCb({ type: "node", detail: d });
