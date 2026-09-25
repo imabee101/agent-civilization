@@ -111,6 +111,9 @@ export class Engine {
   private stopped = false;
   /** Set from the world clock in the constructor so the first newcomer waits a full interval. */
   private lastArrivalTick: number;
+  /** Bumped by reset(): a turn that started in an earlier epoch is discarded when it lands, since its node no longer exists. */
+  private epoch = 0;
+  private readonly turnAborts = new Set<AbortController>();
   /** Optional durable history (SQLite). */
   history: HistoryStore | undefined;
 
@@ -176,6 +179,7 @@ export class Engine {
   async shutdown(): Promise<void> {
     this.stopped = true;
     this.pause();
+    this.abortTurns("shutdown");
     if (this.healthTimer) clearInterval(this.healthTimer);
     for (const [id, n] of this.nodes) {
       n.sandbox.dispose();
@@ -269,9 +273,17 @@ export class Engine {
     await this.spawn(undefined, { edge: true });
   }
 
+  /** Cancel every brain call in flight; their results must not reach the world that replaces this one. */
+  private abortTurns(reason: string): void {
+    this.epoch++;
+    for (const c of this.turnAborts) c.abort(new Error(reason));
+    this.turnAborts.clear();
+  }
+
   async reset(seed?: number): Promise<void> {
     const wasRunning = !this.paused;
     this.pause();
+    this.abortTurns("world reset");
     for (const [id, n] of this.nodes) {
       n.sandbox.dispose();
       this.nodes.delete(id);
@@ -404,6 +416,9 @@ export class Engine {
     rt.inFlight = true;
     const startedAt = Date.now();
     this.pacing.beginDecision(startedAt);
+    const epoch = this.epoch;
+    const abort = new AbortController();
+    this.turnAborts.add(abort);
     const body = { tick: this.world.tick, food: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
     const tally = this.world.drainTally(agentId);
     delete tally["executed-code"];
@@ -430,6 +445,7 @@ export class Engine {
       const result = await this.brain.decide(
         { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, context: { visibleNodeIds } },
         {
+          signal: abort.signal,
           onToken: (chunk) => {
             const text = (this.thinking.get(agentId) ?? "") + chunk;
             this.thinking.set(agentId, text);
@@ -437,6 +453,7 @@ export class Engine {
           },
         },
       );
+      if (epoch !== this.epoch) return undefined;
       this.brainStatus = { ...this.brainStatus, connected: true, lastError: undefined, model: this.brain.model || this.brainStatus.model };
       this.pacing.recordDecision(result.latencyMs, result.tokensPerSec);
       const code = extractCode(result.text);
@@ -482,6 +499,7 @@ export class Engine {
         }
       }
     } catch (e) {
+      if (epoch !== this.epoch) return undefined;
       const message = (e as Error).message ?? String(e);
       this.brainStatus = { ...this.brainStatus, connected: false, lastError: message, lastCheckAt: Date.now() };
       this.brainBlockedUntil = Date.now() + this.cfg.brainRetryMs;
@@ -504,6 +522,7 @@ export class Engine {
     } finally {
       rt.inFlight = false;
       this.pacing.endDecision(startedAt);
+      this.turnAborts.delete(abort);
       this.thinking.delete(agentId);
       this.emitThinking(agentId, record?.output ?? "", true, true);
     }
