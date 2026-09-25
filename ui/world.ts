@@ -2,25 +2,33 @@
  * PixiJS v8 renderer for the hex world. All camera math lives in lib/camera.ts.
  */
 import { Application, Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
-import type { AgentView, RuinView, StructureKind, TileView, WorldState, Phase } from "../src/shared/protocol";
+import type { AgentView, RuinView, Season, StructureKind, TileView, WorldState, Phase } from "../src/shared/protocol";
 import {
   hexToPixel,
   hexCorners,
   pixelToHex,
   worldBounds,
-  fitCamera,
+  coverCamera,
+  clampCamera,
   clampZoom,
+  coverage,
+  inMap,
   zoomAt,
   screenToWorld,
   visibleWorldRect,
   type CameraState,
   type Bounds,
 } from "./lib/camera";
-import { tintFor } from "./lib/phase";
+import { tintForSeason } from "./lib/phase";
 import { ITEM_GLYPH, STRUCTURE_COLOR, STRUCTURE_LABEL, indexTiles, mergeTiles, tileHasInterest, tileKey } from "./lib/structures";
 
 export const HEX_SIZE = 24;
-export const FIT_PADDING = 8;
+/** Zoom range relative to the cover zoom: never below cover (no void), up to 8x. */
+export const MIN_ZOOM_FACTOR = 1;
+export const MAX_ZOOM_FACTOR = 8;
+const BACKDROP_FILL = 0x0c1520;
+const BACKDROP_HEX = 0x10202f;
+const BACKDROP_LINE = 0x172a3d;
 
 export const TERRAIN_COLORS: Record<TileView["terrain"], number> = {
   grass: 0x3f7a4a,
@@ -111,12 +119,14 @@ export class World {
   app = new Application();
   readonly host: HTMLElement;
   private world = new Container();
+  private backdropG = new Graphics();
   private terrainG = new Graphics();
   private foodG = new Graphics();
   private structC = new Container();
   private springG = new Graphics();
   private itemsC = new Container();
   private tileSelG = new Graphics();
+  private lineageG = new Graphics();
   private ruinsG = new Container();
   private agentsC = new Container();
   private overlay = new Graphics();
@@ -140,6 +150,7 @@ export class World {
   private lastFoodDraw = 0;
   private phase: Phase = "day";
   private dayProgress = 0.3;
+  private season: Season = "spring";
   private state: WorldState | null = null;
   private cbs: WorldCallbacks;
   private pointers = new Map<number, { x: number; y: number }>();
@@ -164,7 +175,7 @@ export class World {
     });
     this.host.appendChild(this.app.canvas);
     this.agentsC.sortableChildren = true;
-    this.world.addChild(this.terrainG, this.foodG, this.structC, this.springG, this.itemsC, this.tileSelG, this.ruinsG, this.agentsC);
+    this.world.addChild(this.backdropG, this.terrainG, this.foodG, this.structC, this.springG, this.itemsC, this.tileSelG, this.ruinsG, this.lineageG, this.agentsC);
     this.app.stage.addChild(this.world, this.dim, this.overlay);
     this.app.renderer.on("resize", () => this.onResize());
     window.addEventListener("orientationchange", () => setTimeout(() => this.onResize(), 60));
@@ -189,6 +200,7 @@ export class World {
     this.tileFood = tiles.map((t) => t.food);
     this.bounds = worldBounds(radius, HEX_SIZE);
     this.hoveredKey = null;
+    this.drawBackdrop();
     this.drawTerrain();
     this.drawStructures();
     this.foodDirty = true;
@@ -216,26 +228,45 @@ export class World {
     return i === undefined ? undefined : this.tiles[i];
   }
 
-  /** Fit the whole world to the live viewport (min of both ratios). */
+  /**
+   * Cover the live viewport with the world (max of both ratios): the map fills
+   * the screen in every orientation, so there is never empty space around it.
+   */
   fit(): void {
-    const cam = fitCamera(this.viewportW, this.viewportH, this.bounds, FIT_PADDING);
+    const cam = coverCamera(this.viewportW, this.viewportH, this.bounds);
     this.fitZoomValue = cam.zoom;
-    this.cam = cam;
+    this.cam = clampCamera(cam, this.bounds, this.viewportW, this.viewportH);
     this.userMoved = false;
     this.applyCamera();
+  }
+
+  /** The cover zoom for the current viewport (the minimum zoom allowed). */
+  get coverZoomValue(): number {
+    return this.fitZoomValue;
+  }
+
+  /** Fraction of the viewport that lies inside the map's bounds (1 = fully covered). */
+  coverage(): number {
+    return coverage(this.cam, this.bounds, this.viewportW, this.viewportH);
+  }
+
+  /** Clamp zoom to [cover, cover*8] and keep the visible rect inside the map. */
+  private constrain(cam: CameraState): CameraState {
+    const zoom = clampZoom(cam.zoom, this.fitZoomValue, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR);
+    return clampCamera({ ...cam, zoom }, this.bounds, this.viewportW, this.viewportH);
   }
 
   private onResize(): void {
     if (!this.ready) return;
     const prevFit = this.fitZoomValue;
-    const fitted = fitCamera(this.viewportW, this.viewportH, this.bounds, FIT_PADDING);
-    this.fitZoomValue = fitted.zoom;
+    const covered = coverCamera(this.viewportW, this.viewportH, this.bounds);
+    this.fitZoomValue = covered.zoom;
     if (!this.userMoved) {
-      this.cam = fitted;
+      this.cam = clampCamera(covered, this.bounds, this.viewportW, this.viewportH);
     } else {
-      // keep the user's zoom relative to the fit zoom
+      // keep the user's zoom relative to the cover zoom, never below it
       const factor = prevFit > 0 ? this.cam.zoom / prevFit : 1;
-      this.cam = { cx: this.cam.cx, cy: this.cam.cy, zoom: clampZoom(fitted.zoom * factor, fitted.zoom) };
+      this.cam = this.constrain({ cx: this.cam.cx, cy: this.cam.cy, zoom: covered.zoom * factor });
     }
     this.drawOverlay();
     this.applyCamera();
@@ -252,16 +283,16 @@ export class World {
 
   centerOn(wx: number, wy: number): void {
     this.userMoved = true;
-    this.cam = { ...this.cam, cx: wx, cy: wy };
+    this.cam = this.constrain({ ...this.cam, cx: wx, cy: wy });
     this.applyCamera();
   }
 
-  /** Centre the camera on a hex, zooming in a little if the map is still at fit zoom. */
+  /** Centre the camera on a hex, zooming in a little if the map is still at cover zoom. */
   centerOnHex(q: number, r: number): void {
     const p = hexToPixel(q, r, HEX_SIZE);
-    const zoom = Math.max(this.cam.zoom, clampZoom(this.fitZoomValue * 2.4, this.fitZoomValue));
+    const zoom = Math.max(this.cam.zoom, this.fitZoomValue * 2.4);
     this.userMoved = true;
-    this.cam = { cx: p.x, cy: p.y, zoom };
+    this.cam = this.constrain({ cx: p.x, cy: p.y, zoom });
     this.applyCamera();
   }
 
@@ -270,6 +301,29 @@ export class World {
   }
 
   // ---------- drawing ----------
+
+  /**
+   * Beyond the map edge: a dark-water tone with a faint ghost-hex grid, wide
+   * enough to cover the map's bounding rectangle (and any transient margin
+   * during a resize), so no part of the screen ever reads as dead space.
+   */
+  private drawBackdrop(): void {
+    const g = this.backdropG;
+    g.clear();
+    const b = this.bounds;
+    g.rect(b.minX - b.width * 2, b.minY - b.height * 2, b.width * 5, b.height * 5).fill({ color: BACKDROP_FILL });
+    const R = this.mapRadius;
+    const outer = R + Math.ceil(R * 1.5) + 3;
+    for (let q = -outer; q <= outer; q++) {
+      for (let r = -outer; r <= outer; r++) {
+        if (!inMap(q, r, outer) || inMap(q, r, R)) continue;
+        const c = hexToPixel(q, r, HEX_SIZE);
+        g.poly(hexCorners(c.x, c.y, HEX_SIZE - 0.6).flatMap((p) => [p.x, p.y]));
+        g.fill({ color: BACKDROP_HEX, alpha: 0.55 });
+        g.stroke({ color: BACKDROP_LINE, width: 1, alpha: 0.5 });
+      }
+    }
+  }
 
   private drawTerrain(): void {
     const g = this.terrainG;
@@ -406,7 +460,7 @@ export class World {
   }
 
   private drawOverlay(): void {
-    const t = tintFor(this.phase, this.dayProgress);
+    const t = tintForSeason(this.phase, this.dayProgress, this.season);
     const w = this.viewportW;
     const h = this.viewportH;
     this.overlay.clear();
@@ -415,10 +469,11 @@ export class World {
     this.dim.rect(0, 0, w, h).fill({ color: 0x000000, alpha: (1 - t.brightness) * 0.75 });
   }
 
-  setPhase(phase: Phase, dayProgress: number): void {
-    if (phase === this.phase && Math.abs(dayProgress - this.dayProgress) < 0.002) return;
+  setPhase(phase: Phase, dayProgress: number, season: Season = this.season): void {
+    if (phase === this.phase && season === this.season && Math.abs(dayProgress - this.dayProgress) < 0.002) return;
     this.phase = phase;
     this.dayProgress = dayProgress;
+    this.season = season;
     this.drawOverlay();
   }
 
@@ -508,7 +563,7 @@ export class World {
 
   update(state: WorldState): void {
     this.state = state;
-    this.setPhase(state.phase, state.dayProgress);
+    this.setPhase(state.phase, state.dayProgress, state.season);
     const seen = new Set<string>();
     const now = performance.now();
     for (const a of state.agents) {
@@ -617,11 +672,37 @@ export class World {
         else if (age > 5) s.bubble.alpha = Math.max(0, 1 - (age - 5) / 1.5);
       }
     }
+    this.drawLineage();
     // ruin labels keep screen size
     const ls = Math.min(1 / Math.max(0.25, this.cam.zoom), 3.2);
     for (const c of this.ruinsG.children) {
       const lbl = (c as Container).children[1];
       if (lbl && lbl.scale.x !== ls) lbl.scale.set(ls);
+    }
+  }
+
+  /** Faint child→parent lines while the selected node is a parent or a child. */
+  private drawLineage(): void {
+    const g = this.lineageG;
+    g.clear();
+    const sel = this.selectedId;
+    if (!sel || !this.state) return;
+    const pos = (id: string): { x: number; y: number } | null => {
+      const s = this.sprites.get(id);
+      if (s) return { x: s.root.x, y: s.root.y };
+      const r = this.state!.ruins.find((x) => x.id === id);
+      return r ? hexToPixel(r.q, r.r, HEX_SIZE) : null;
+    };
+    const pairs: [string, string][] = [];
+    for (const a of this.state.agents) {
+      if (a.parentId && (a.id === sel || a.parentId === sel)) pairs.push([a.id, a.parentId]);
+    }
+    for (const [child, parent] of pairs) {
+      const c = pos(child);
+      const p = pos(parent);
+      if (!c || !p) continue;
+      g.moveTo(c.x, c.y).lineTo(p.x, p.y).stroke({ color: 0xffcf6b, width: 1.2, alpha: 0.35 });
+      g.circle(p.x, p.y, HEX_SIZE * 0.5).stroke({ color: 0xffcf6b, width: 1, alpha: 0.25 });
     }
   }
 
@@ -631,6 +712,7 @@ export class World {
     const el = this.host;
     el.addEventListener("pointerdown", (e) => {
       el.setPointerCapture(e.pointerId);
+      this.setHovered(null);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.pointers.size === 1) {
         this.dragStart = { x: e.clientX, y: e.clientY, cx: this.cam.cx, cy: this.cam.cy, moved: false };
@@ -651,9 +733,9 @@ export class World {
         const [a, b] = [...this.pointers.values()];
         const dist = Math.hypot(a!.x - b!.x, a!.y - b!.y);
         const mid = { x: (a!.x + b!.x) / 2, y: (a!.y + b!.y) / 2 };
-        const z = clampZoom((this.pinchStart.zoom * dist) / Math.max(1, this.pinchStart.dist), this.fitZoomValue);
+        const z = clampZoom((this.pinchStart.zoom * dist) / Math.max(1, this.pinchStart.dist), this.fitZoomValue, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR);
         this.userMoved = true;
-        this.cam = zoomAt(this.cam, z, mid, this.viewportW, this.viewportH);
+        this.cam = this.constrain(zoomAt(this.cam, z, mid, this.viewportW, this.viewportH));
         this.applyCamera();
         return;
       }
@@ -666,7 +748,7 @@ export class World {
         }
         if (this.dragStart.moved) {
           this.userMoved = true;
-          this.cam = { ...this.cam, cx: this.dragStart.cx - dx / this.cam.zoom, cy: this.dragStart.cy - dy / this.cam.zoom };
+          this.cam = this.constrain({ ...this.cam, cx: this.dragStart.cx - dx / this.cam.zoom, cy: this.dragStart.cy - dy / this.cam.zoom });
           this.applyCamera();
         }
       }
@@ -688,9 +770,9 @@ export class World {
       (e) => {
         e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.0015);
-        const z = clampZoom(this.cam.zoom * factor, this.fitZoomValue);
+        const z = clampZoom(this.cam.zoom * factor, this.fitZoomValue, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR);
         this.userMoved = true;
-        this.cam = zoomAt(this.cam, z, { x: e.clientX, y: e.clientY }, this.viewportW, this.viewportH);
+        this.cam = this.constrain(zoomAt(this.cam, z, { x: e.clientX, y: e.clientY }, this.viewportW, this.viewportH));
         this.applyCamera();
       },
       { passive: false },

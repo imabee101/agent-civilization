@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
   <meta name="theme-color" content="#0a0d14" />
-  <title>LLM War</title>
+  <title>Agent Civilization</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Cinzel:wght@600;700&display=swap" rel="stylesheet" />
@@ -19,7 +19,7 @@
   <header id="topbar" class="glass">
     <div class="brand">
       <span class="sigil" aria-hidden="true"></span>
-      <span class="wordmark">LLM War</span>
+      <span class="wordmark"><span class="wm-a">Agent </span>Civilization</span>
     </div>
     <span class="vdiv" aria-hidden="true"></span>
 
@@ -30,7 +30,10 @@
         <circle id="sun" cx="12" cy="8" r="2.6" fill="var(--accent)" />
       </svg>
       <span id="dayNum" class="mono">Day 1</span>
+      <span class="sep" aria-hidden="true">·</span>
       <span id="phaseName" class="phase">dawn</span>
+      <span class="sep season-sep" aria-hidden="true">·</span>
+      <span id="seasonName" class="phase season lbl">spring</span>
     </div>
 
     <div class="playback">
@@ -46,10 +49,10 @@
     </div>
 
     <div class="stats">
-      <div class="stat"><span class="lbl">alive</span><span id="stAlive" class="mono">0</span></div>
-      <div class="stat"><span class="lbl">groups</span><span id="stGroups" class="mono">0</span></div>
+      <div class="stat" title="Living nodes / population cap"><span class="lbl">alive</span><span id="stAlive" class="mono">0</span></div>
+      <div class="stat minor"><span class="lbl">groups</span><span id="stGroups" class="mono">0</span></div>
       <div class="stat hot"><span class="lbl">thinking</span><span id="stThinking" class="mono">0</span></div>
-      <div class="stat"><span class="lbl">avg ms</span><span id="stLatency" class="mono">–</span></div>
+      <div class="stat minor"><span class="lbl">avg ms</span><span id="stLatency" class="mono">–</span></div>
     </div>
 
     <div id="brainBadge" class="badge" title="Brain backend">
@@ -63,7 +66,7 @@
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor"/><path d="M11 5.5a3 3 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
         <span class="txt">narrate</span>
       </button>
-      <button id="btnNerd" class="tbtn" title="Under the hood" aria-pressed="false">
+      <button id="btnNerd" class="tbtn" title="Under the hood" aria-label="Under the hood" aria-pressed="false">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 4 L2 8 L5 12 M11 4 L14 8 L11 12 M9.5 3 L6.5 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <span class="txt">under the hood</span>
       </button>

@@ -1,5 +1,5 @@
 /**
- * LLM War — browser UI entry.
+ * Agent Civilization — browser UI entry.
  * Talks to the server over WebSocket (or the dev mock with ?mock=1), renders
  * the hex world with PixiJS and drives every floating panel.
  */
@@ -28,7 +28,8 @@ import { utteranceFor } from "./lib/narration";
 import { sunElevation } from "./lib/phase";
 import { hexToPixel } from "./lib/camera";
 import { HEX_SIZE } from "./world";
-import { ITEM_GLYPH, formatCacheEntry, indexTiles, listFeatures, mergeTiles, structureCss, tileDossier } from "./lib/structures";
+import { ITEM_GLYPH, formatCacheEntry, indexTiles, listFeatures, mergeTiles, structureCss, tileDossier, tileKey } from "./lib/structures";
+import { guardOverflow, refreshGuards } from "./overflow-guard";
 
 // ---------- tiny DOM helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -196,6 +197,8 @@ function renderClock(): void {
   if (!st) return;
   $("dayNum").textContent = `Day ${st.day}`;
   $("phaseName").textContent = st.phase;
+  $("seasonName").textContent = st.season ?? "";
+  $("seasonName").title = `${st.season ?? ""} · ${Math.round((st.seasonProgress ?? 0) * 100)}% through the season`;
   const elev = sunElevation(st.phase, st.dayProgress);
   const span = 0.15 + 0.45; // dawn start -> dusk end
   const x = st.phase === "night" ? 12 : 3 + Math.max(0, Math.min(1, st.dayProgress / span)) * 18;
@@ -208,7 +211,7 @@ function renderStats(): void {
   const st = S.state;
   if (!st) return;
   const alive = st.agents.filter((a) => a.alive);
-  $("stAlive").textContent = String(alive.length);
+  $("stAlive").textContent = S.config ? `${alive.length}/${S.config.maxPopulation}` : String(alive.length);
   const groups = deriveGroups(st.agents, st.ruins).filter((g) => !g.unaffiliated && !g.collapsed);
   $("stGroups").textContent = String(groups.length);
   $("stThinking").textContent = String(alive.filter((a) => a.thinking).length);
@@ -458,6 +461,8 @@ function renderDossierLive(): void {
   const rows: [string, string, boolean?][] = [];
   if (a.profile.status) rows.push(["status", a.profile.status]);
   rows.push(["position", `${a.q}, ${a.r}`]);
+  if (a.parentId) rows.push(["parent", nameOf(a.parentId)]);
+  rows.push(["children", String(S.state?.agents.filter((x) => x.parentId === a.id).length ?? 0)]);
   rows.push(["files", `${a.fileCount} · ${fmtBytes(a.fsBytes)}`]);
   rows.push(["turns", String(a.turns)]);
   rows.push(["born", `tick ${a.bornTick}`]);
@@ -575,6 +580,11 @@ function renderTileDossier(t: TileView): void {
     );
   }
 }
+/** Resolve a node id to its name (living, dead or ruin); falls back to the id. */
+function nameOf(id: string): string {
+  const st = S.state;
+  return st?.agents.find((x) => x.id === id)?.name ?? st?.ruins.find((x) => x.id === id)?.name ?? id;
+}
 function renderThought(): void {
   const box = $("dThought");
   const t = S.selectedId ? S.thoughts.get(S.selectedId) : undefined;
@@ -616,6 +626,7 @@ function openNerd(open: boolean): void {
   $("btnNerd").setAttribute("aria-pressed", String(open));
   if (isMobile()) setMobileTab(open ? "hood" : "world", false);
   if (open) renderNerd();
+  refreshGuards();
 }
 function setNerdTab(tab: typeof S.nerdTab): void {
   S.nerdTab = tab;
@@ -693,7 +704,11 @@ function renderNodeList(): void {
   if (!st) return;
   const nodes = [...st.agents].sort((a, b) => Number(b.alive) - Number(a.alive) || a.name.localeCompare(b.name));
   const ruinsOnly = st.ruins.filter((r) => !st.agents.some((a) => a.id === r.id));
+  const popHead = el("div", "dl-sec");
+  const alive = st.agents.filter((a) => a.alive).length;
+  popHead.append(el("span", "lbl", "nodes"), el("span", "mono", S.config ? `alive ${alive} / ${S.config.maxPopulation}` : `alive ${alive}`));
   list.replaceChildren(
+    popHead,
     ...nodes.map((a) => {
       const b = el("button", `drow${a.id === S.nerdNodeId ? " active" : ""}${a.lastError ? " err" : ""}`);
       const sw = el("span", "sw");
@@ -717,7 +732,7 @@ function renderNodeList(): void {
       return b;
     }),
   );
-  if (!nodes.length && !ruinsOnly.length) list.replaceChildren(el("div", "empty-note", "No nodes yet."));
+  if (!nodes.length && !ruinsOnly.length) list.appendChild(el("div", "empty-note", "No nodes yet."));
   renderWorldList(list);
 }
 /** "World" section of the Nodes tab: every structure, cache first, click to fly there. */
@@ -871,6 +886,16 @@ function setMobileTab(tab: typeof S.mobileTab, syncNerd = true): void {
     $("btnNerd").setAttribute("aria-pressed", String(open));
     if (open) renderNerd();
   }
+  refreshGuards();
+}
+/** Close every overlay: dossier, drawer, mobile tabs back to the world. */
+function closeAll(): void {
+  if (document.body.classList.contains("nerd-open")) openNerd(false);
+  if (isMobile()) setMobileTab("world");
+  S.selectedTile = null;
+  world.setSelectedTile(null);
+  selectAgent(null);
+  renderDossier();
 }
 for (const b of $("tabbar").querySelectorAll<HTMLButtonElement>("button")) b.addEventListener("click", () => setMobileTab(b.dataset.tab as typeof S.mobileTab));
 window.matchMedia(MOBILE_MQ).addEventListener("change", (e) => {
@@ -887,19 +912,25 @@ function toast(text: string): void {
   toastTimer = setTimeout(() => (t.hidden = true), 2200);
 }
 
-// ---------- expose a little for dev checks ----------
+// ---------- stable dev API for automated checks (window.__llmwar) ----------
 declare global {
   interface Window {
     __llmwar?: {
       world: World;
-      state: () => WorldState | null;
-      tiles: () => TileView[];
+      /** Latest WorldState (live getter). */
+      readonly state: WorldState | null;
+      /** Current TileView[] (live getter; updated on `tiles` messages). */
+      readonly tiles: TileView[];
       selectAgent: (id: string | null) => void;
-      selectTile: (key: string | null) => void;
-      goToTile: (key: string) => void;
+      selectTile: (q: number, r: number) => void;
+      goToTile: (q: number, r: number) => void;
+      openTab: (t: "world" | "groups" | "chronicle" | "hood") => void;
+      openHoodTab: (t: "brain" | "nodes" | "pacing") => void;
+      coverage: () => number;
+      closeAll: () => void;
       setMobileTab: (t: "world" | "groups" | "chronicle" | "hood") => void;
       agentScreenPos: (id: string) => { x: number; y: number } | null;
-      tileScreenPos: (key: string) => { x: number; y: number } | null;
+      tileScreenPos: (q: number, r: number) => { x: number; y: number } | null;
     };
   }
 }
@@ -907,6 +938,7 @@ declare global {
 // ---------- boot ----------
 async function boot(): Promise<void> {
   await world.init();
+  for (const id of ["railLeft", "railRight", "dossier", "nerd"]) guardOverflow($(id));
   const mock = new URLSearchParams(location.search).get("mock");
   if (mock) {
     const { createMockTransport } = await import("./dev-mock");
@@ -927,14 +959,29 @@ async function boot(): Promise<void> {
   };
   window.__llmwar = {
     world,
-    state: () => S.state,
-    tiles: () => S.tiles,
+    get state() {
+      return S.state;
+    },
+    get tiles() {
+      return S.tiles;
+    },
     selectAgent,
-    selectTile,
-    goToTile,
+    selectTile: (q, r) => selectTile(tileKey(q, r)),
+    goToTile: (q, r) => goToTile(tileKey(q, r)),
+    openTab: (t) => {
+      if (isMobile()) setMobileTab(t);
+      else if (t === "hood") openNerd(true);
+      else openNerd(false);
+    },
+    openHoodTab: (t) => {
+      if (!document.body.classList.contains("nerd-open")) openNerd(true);
+      setNerdTab(t);
+    },
+    coverage: () => world.coverage(),
+    closeAll,
     setMobileTab,
-    tileScreenPos: (key) => {
-      const t = world.tileAt(key);
+    tileScreenPos: (q, r) => {
+      const t = world.tileAt(tileKey(q, r));
       return t ? screenPos(t.q, t.r) : null;
     },
     agentScreenPos: (id) => {

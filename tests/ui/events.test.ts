@@ -31,6 +31,8 @@ const ALL_KINDS: Record<EventKind, true> = {
   exhausted: true,
   died: true,
   "ruin-read": true,
+  replicated: true,
+  "season-changed": true,
   built: true,
   demolished: true,
   posted: true,
@@ -74,6 +76,15 @@ describe("categoryOf / iconOf / colorOf", () => {
     expect(categoryOf("moved")).toBe("motion");
     expect(categoryOf("world-reset")).toBe("system");
   });
+  test("replicated is a life event in gold; season-changed is system", () => {
+    expect(categoryOf("replicated")).toBe("life");
+    expect(colorOf("replicated")).toBe("var(--accent)");
+    expect(categoryOf("season-changed")).toBe("system");
+    expect(colorOf("season-changed")).toBe("var(--dim)");
+    expect(ribbonKicker("replicated")).toBe("a new node");
+    expect(ribbonKicker("season-changed")).toBe("a season turns");
+    expect(hasQuote({ kind: "replicated", quote: "x" })).toBe(false);
+  });
   test("structure / item kinds map to build, comms and items", () => {
     expect(categoryOf("built")).toBe("build");
     expect(categoryOf("demolished")).toBe("build");
@@ -91,7 +102,7 @@ describe("categoryOf / iconOf / colorOf", () => {
     for (const k of ["took-item", "dropped-item", "found"] as const) expect(colorOf(k)).toBe("var(--ally)");
   });
   test("new kinds have distinct icons from each other", () => {
-    const icons = ["built", "demolished", "planted", "vault-opened", "posted", "cached", "took-item", "dropped-item", "found"].map((k) => iconOf(k as EventKind));
+    const icons = ["built", "demolished", "planted", "vault-opened", "posted", "cached", "took-item", "dropped-item", "found", "replicated", "season-changed", "spawned", "died"].map((k) => iconOf(k as EventKind));
     expect(new Set(icons).size).toBe(icons.length);
   });
   test("ribbon kicker for the vault and build kinds is literal, not social", () => {

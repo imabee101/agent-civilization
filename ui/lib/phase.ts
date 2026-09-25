@@ -3,7 +3,7 @@
  * The overlay colour is drawn over the whole screen with the given alpha;
  * `brightness` (0..1) can additionally dim the world layer.
  */
-import type { Phase } from "../../src/shared/protocol";
+import type { Phase, Season } from "../../src/shared/protocol";
 
 export interface Tint {
   /** Hex colour string, e.g. "#0b1030". */
@@ -83,6 +83,44 @@ export function tintFor(phase: Phase, dayProgress: number): Tint {
       return { color: rgbToHex(NIGHT), alpha: lerp(0.5, 0.58, depth), brightness: lerp(0.62, 0.55, depth) };
     }
   }
+}
+
+/** Subtle seasonal cast layered under the day/night tint. */
+export interface SeasonTint {
+  /** Hex colour of the seasonal wash. */
+  color: string;
+  /** 0..1 alpha of the wash (kept small: a cast, not a filter). */
+  alpha: number;
+  /** Multiplier on the day/night brightness (winter a little dimmer, summer a touch brighter). */
+  brightness: number;
+}
+
+const SEASON_TINTS: Record<Season, SeasonTint> = {
+  spring: { color: "#a8ff9c", alpha: 0.035, brightness: 1 },
+  summer: { color: "#ffe28a", alpha: 0.04, brightness: 1.03 },
+  autumn: { color: "#ff9a4a", alpha: 0.06, brightness: 0.98 },
+  winter: { color: "#9ec4ff", alpha: 0.08, brightness: 0.94 },
+};
+
+/** Pure: the seasonal cast for a season. Unknown input falls back to spring (neutral). */
+export function seasonTint(season: Season): SeasonTint {
+  return SEASON_TINTS[season] ?? SEASON_TINTS.spring;
+}
+
+/** Day/night tint combined with the seasonal cast: colour mixed by alpha weight, brightness multiplied. */
+export function tintForSeason(phase: Phase, dayProgress: number, season: Season): Tint {
+  const base = tintFor(phase, dayProgress);
+  const s = seasonTint(season);
+  const wSum = base.alpha + s.alpha;
+  const k = wSum > 0 ? s.alpha / wSum : 0;
+  const color = rgbToHex(mix(hexToRgb(base.color), hexToRgb(s.color), k));
+  return { color, alpha: clamp01(base.alpha + s.alpha * (1 - base.alpha)), brightness: clamp01(base.brightness * s.brightness) };
+}
+
+function hexToRgb(h: string): { r: number; g: number; b: number } {
+  const n = parseInt(h.replace("#", ""), 16);
+  if (!Number.isFinite(n)) return { r: 0, g: 0, b: 0 };
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
 /** Sun elevation 0..1 (0 = horizon/below, 1 = zenith) for the sun-arc clock. */

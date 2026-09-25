@@ -1,5 +1,5 @@
 /* ==========================================================================
-   LLM War — UI styles
+   Agent Civilization — UI styles
    Dark, glassy, full-bleed hex world with floating panels.
    ========================================================================== */
 
@@ -132,7 +132,12 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); ou
   padding: 0 12px;
   overflow: hidden;
   white-space: nowrap;
+  min-width: 0;
 }
+/* Nothing in the bar may push past its edge: fixed groups never shrink, the stat cluster and badge give way first. */
+.brand, .clock, .playback, .actions, .vdiv { flex: 0 0 auto; }
+.stats { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.badge { flex: 0 1 auto; min-width: 0; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .sigil {
   width: 16px;
@@ -156,6 +161,8 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); ou
 .clock { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .sunarc { color: var(--text); flex: 0 0 auto; }
 .clock .phase { color: var(--dim); text-transform: capitalize; }
+.clock .sep { color: var(--dim); opacity: 0.6; }
+.clock .season { color: var(--accent); letter-spacing: 0.14em; text-transform: uppercase; font-size: 10px; }
 
 .playback { display: flex; align-items: center; gap: 8px; }
 .ibtn {
@@ -250,17 +257,17 @@ body.paused .ibtn .ic-pause { display: none; }
   left: var(--inset);
   top: 72px;
   width: var(--rail-w);
-  max-height: calc(100vh - 220px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  max-height: calc(100vh - 246px); /* stays clear of the minimap */
+  overflow: hidden;
   z-index: 10;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding-right: 2px;
 }
-.rail-title { padding: 0 4px; }
-.cards { display: flex; flex-direction: column; gap: 8px; }
+.rail-title { padding: 0 4px; flex: 0 0 auto; }
+.cards { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 2px 2px 0; }
+.empty { flex: 0 0 auto; }
 .empty {
   padding: 10px 12px;
   border-radius: 10px;
@@ -698,10 +705,11 @@ body.nerd-open #nerd { bottom: 0; visibility: visible; transition: bottom 0.45s 
 }
 .pills button:hover { color: var(--text); }
 .pills button.active { background: rgba(255, 207, 107, 0.14); color: var(--accent); }
-.n-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 14px; }
-.n-tab { min-height: 0; }
-.n-cols { display: grid; grid-template-columns: 300px 1fr; gap: 12px; min-height: 0; }
-.dlist { display: flex; flex-direction: column; gap: 4px; max-height: calc(62vh - 90px); overflow-y: auto; }
+/* The drawer body never scrolls as a whole: the list, the detail column and the tiles scroll independently and fill the drawer. */
+.n-body { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; }
+.n-tab { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.n-cols { display: grid; grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 12px; flex: 1 1 auto; min-height: 0; }
+.dlist { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; padding-right: 2px; }
 .drow {
   width: 100%;
   text-align: left;
@@ -727,7 +735,8 @@ body.nerd-open #nerd { bottom: 0; visibility: visible; transition: bottom 0.45s 
 .drow .sw.glyph { width: auto; height: auto; border-radius: 0; font-size: 13px; line-height: 1; }
 .dl-sec { display: flex; justify-content: space-between; align-items: center; padding: 10px 4px 2px; color: var(--dim); font-size: 10px; }
 .dl-sec .mono { font-size: 10px; }
-.ddetail { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ddetail { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.ddetail > * { flex: 0 0 auto; }
 .empty-note { color: var(--dim); font-size: 12px; padding: 8px; }
 .pre-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .pre-wrap .lbl { display: flex; justify-content: space-between; }
@@ -752,7 +761,7 @@ pre.raw.plain { border-color: var(--line); }
 .dmeta .mono { color: var(--text); }
 .node-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .node-stats .tile { padding: 8px 10px; }
-.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; align-content: start; min-height: 0; overflow-y: auto; padding-right: 2px; }
 .tile {
   padding: 12px 14px;
   border-radius: 10px;
@@ -790,13 +799,24 @@ pre.raw.plain { border-color: var(--line); }
 }
 
 /* ==========================================================================
-   Tablet tweaks (≤1180px): the top bar gets crowded, drop button labels.
+   Top bar degradation. ≤1350px: icons only, short wordmark. ≤1150px: drop the
+   minor stat tiles and the pacing word. The bar itself can never overflow
+   (fixed groups do not shrink; the stat cluster is the flex "give").
    ========================================================================== */
-@media (max-width: 1180px) {
+@media (max-width: 1350px) {
   .tbtn .txt { display: none; }
   .tbtn { padding: 0 7px; }
+  .wm-a { display: none; }
+  #topbar { gap: 10px; }
+  .stats { gap: 12px; }
+}
+@media (max-width: 1150px) {
   .badge .pacing { display: none; }
+  .stat.minor { display: none; }
   .stats { gap: 10px; }
+  .badge { max-width: 170px; }
+}
+@media (max-width: 1180px) {
   .tiles { grid-template-columns: repeat(2, 1fr); }
   #dossier { width: min(560px, calc(100vw - var(--rail-w) - var(--chron-w) - 4 * var(--inset))); }
 }
@@ -814,7 +834,7 @@ pre.raw.plain { border-color: var(--line); }
   :root { --topbar-h: 42px; --inset: 8px; }
 
   #topbar { gap: 8px; padding: 0 8px; }
-  .wordmark, .clock .phase, .stats, #brainBadge, .vdiv { display: none; }
+  .wordmark, .clock .phase, .clock .sep, .clock .season, .stats, #brainBadge, .vdiv { display: none; }
   .tbtn .txt { display: none; }
   .tbtn { padding: 0 7px; height: 26px; }
   .ibtn { width: 26px; height: 26px; }
@@ -844,7 +864,9 @@ pre.raw.plain { border-color: var(--line); }
     border: 1px solid var(--line);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     padding: 10px;
+    overflow: hidden;
   }
+  .cards { padding-right: 2px; }
   body.tab-groups .rail-left { display: flex; }
   body.tab-chronicle .rail-right { display: flex; }
   body.tab-hood #nerd {
@@ -862,8 +884,7 @@ pre.raw.plain { border-color: var(--line); }
     border-bottom: 1px solid var(--line);
     transition: none;
   }
-  .n-cols { grid-template-columns: 1fr; }
-  .dlist { max-height: 34vh; }
+  .n-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .node-stats { grid-template-columns: repeat(2, 1fr); }
   .tile .big { font-size: 17px; }

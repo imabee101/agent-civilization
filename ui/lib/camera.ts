@@ -159,9 +159,48 @@ export function fitCamera(
   };
 }
 
-/** Clamp a zoom between min/max factors relative to the fit zoom. */
+/**
+ * Camera centred on the world with the COVER zoom: the map fills the whole
+ * viewport in both dimensions, so there is never empty space around it
+ * (parts of the map may be off-screen; panning reveals them).
+ */
+export function coverCamera(viewportW: number, viewportH: number, bounds: Bounds): CameraState {
+  return {
+    cx: (bounds.minX + bounds.maxX) / 2,
+    cy: (bounds.minY + bounds.maxY) / 2,
+    zoom: coverZoom(viewportW, viewportH, bounds.width, bounds.height),
+  };
+}
+
+/** Clamp a zoom between min/max factors relative to a reference zoom. */
 export function clampZoom(zoom: number, fit: number, minFactor = 0.5, maxFactor = 8): number {
   return Math.min(fit * maxFactor, Math.max(fit * minFactor, zoom));
+}
+
+/**
+ * Clamp the camera centre so the visible rectangle stays inside `bounds`.
+ * If the viewport is larger than the world in a dimension (zoom below cover),
+ * the world is centred in that dimension instead.
+ */
+export function clampCamera(cam: CameraState, bounds: Bounds, viewportW: number, viewportH: number): CameraState {
+  const halfW = viewportW / cam.zoom / 2;
+  const halfH = viewportH / cam.zoom / 2;
+  const cx = halfW * 2 >= bounds.width ? (bounds.minX + bounds.maxX) / 2 : Math.min(bounds.maxX - halfW, Math.max(bounds.minX + halfW, cam.cx));
+  const cy = halfH * 2 >= bounds.height ? (bounds.minY + bounds.maxY) / 2 : Math.min(bounds.maxY - halfH, Math.max(bounds.minY + halfH, cam.cy));
+  return { cx, cy, zoom: cam.zoom };
+}
+
+/**
+ * Fraction (0..1) of the viewport rectangle that lies inside the world
+ * bounds for this camera. 1 means the map covers the whole screen.
+ */
+export function coverage(cam: CameraState, bounds: Bounds, viewportW: number, viewportH: number): number {
+  const v = visibleWorldRect(cam, viewportW, viewportH);
+  const area = v.width * v.height;
+  if (!(area > 0) || !Number.isFinite(area)) return 0;
+  const ix = Math.max(0, Math.min(v.maxX, bounds.maxX) - Math.max(v.minX, bounds.minX));
+  const iy = Math.max(0, Math.min(v.maxY, bounds.maxY) - Math.max(v.minY, bounds.minY));
+  return Math.max(0, Math.min(1, (ix * iy) / area));
 }
 
 /** World -> screen. */

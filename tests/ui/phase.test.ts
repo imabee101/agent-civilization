@@ -1,8 +1,51 @@
 import { describe, expect, test } from "bun:test";
 import type { Phase } from "../../src/shared/protocol";
-import { tintFor, phaseProgress, sunElevation, rgbToHex, PHASE_WINDOWS } from "../../ui/lib/phase";
+import type { Season } from "../../src/shared/protocol";
+import { tintFor, tintForSeason, seasonTint, phaseProgress, sunElevation, rgbToHex, PHASE_WINDOWS } from "../../ui/lib/phase";
 
 const PHASES: Phase[] = ["dawn", "day", "dusk", "night"];
+const SEASONS: Season[] = ["spring", "summer", "autumn", "winter"];
+
+describe("seasonTint / tintForSeason", () => {
+  test("every season has a valid, subtle cast", () => {
+    for (const s of SEASONS) {
+      const t = seasonTint(s);
+      expect(t.color).toMatch(/^#[0-9a-f]{6}$/);
+      expect(t.alpha).toBeGreaterThan(0);
+      expect(t.alpha).toBeLessThanOrEqual(0.1);
+      expect(t.brightness).toBeGreaterThan(0.9);
+      expect(t.brightness).toBeLessThanOrEqual(1.05);
+    }
+    expect(seasonTint("nope" as Season)).toEqual(seasonTint("spring"));
+  });
+  test("winter cools and dims, autumn warms", () => {
+    const w = seasonTint("winter");
+    const a = seasonTint("autumn");
+    const wr = parseInt(w.color.slice(1, 3), 16), wb = parseInt(w.color.slice(5, 7), 16);
+    const ar = parseInt(a.color.slice(1, 3), 16), ab = parseInt(a.color.slice(5, 7), 16);
+    expect(wb).toBeGreaterThan(wr);
+    expect(ar).toBeGreaterThan(ab);
+    expect(w.brightness).toBeLessThan(seasonTint("summer").brightness);
+  });
+  test("combined tint stays bounded and only nudges the day/night tint", () => {
+    for (const phase of PHASES) {
+      for (const s of SEASONS) {
+        for (let p = 0; p <= 1.0001; p += 0.1) {
+          const base = tintFor(phase, p);
+          const t = tintForSeason(phase, p, s);
+          expect(t.color).toMatch(/^#[0-9a-f]{6}$/);
+          expect(t.alpha).toBeGreaterThanOrEqual(base.alpha);
+          expect(t.alpha).toBeLessThanOrEqual(0.7);
+          expect(Math.abs(t.brightness - base.brightness)).toBeLessThan(0.08);
+          expect(t.brightness).toBeGreaterThan(0.4);
+        }
+      }
+    }
+    // winter nights are darker than summer nights; day tint is barely changed by season
+    expect(tintForSeason("night", 0.87, "winter").brightness).toBeLessThan(tintForSeason("night", 0.87, "summer").brightness);
+    expect(tintForSeason("day", 0.4, "winter").alpha).toBeLessThan(0.15);
+  });
+});
 
 describe("tintFor", () => {
   test("returns valid hex colour and bounded alpha/brightness for every phase and progress", () => {

@@ -14,8 +14,75 @@ import {
   worldToScreen,
   clampZoom,
   visibleWorldRect,
+  coverZoom,
+  coverCamera,
+  clampCamera,
+  coverage,
   SQRT3,
 } from "../../ui/lib/camera";
+
+describe("coverZoom / coverCamera / clampCamera / coverage", () => {
+  const b = worldBounds(12, 24);
+  test("cover uses the larger ratio so the world fills both dimensions", () => {
+    for (const [vw, vh] of [
+      [390, 844],
+      [844, 390],
+      [1440, 900],
+      [360, 740],
+      [768, 1024],
+    ] as const) {
+      const z = coverZoom(vw, vh, b.width, b.height);
+      expect(z).toBeCloseTo(Math.max(vw / b.width, vh / b.height), 8);
+      expect(b.width * z).toBeGreaterThanOrEqual(vw - 1e-6);
+      expect(b.height * z).toBeGreaterThanOrEqual(vh - 1e-6);
+      const cam = coverCamera(vw, vh, b);
+      expect(cam.zoom).toBeCloseTo(z, 8);
+      expect(cam.cx).toBeCloseTo(0, 8);
+      expect(cam.cy).toBeCloseTo(0, 8);
+      expect(coverage(cam, b, vw, vh)).toBeCloseTo(1, 6);
+    }
+  });
+  test("coverage drops below 1 when zoomed out past cover, and is 0 far away", () => {
+    const cam = coverCamera(390, 844, b);
+    expect(coverage({ ...cam, zoom: cam.zoom / 2 }, b, 390, 844)).toBeLessThan(1);
+    expect(coverage({ ...cam, zoom: cam.zoom / 2 }, b, 390, 844)).toBeGreaterThan(0);
+    expect(coverage({ cx: b.maxX + b.width, cy: 0, zoom: cam.zoom }, b, 390, 844)).toBe(0);
+    expect(coverage({ cx: 0, cy: 0, zoom: 0 }, b, 390, 844)).toBe(0);
+  });
+  test("clampCamera keeps the visible rect inside the world when zoomed at or above cover", () => {
+    const cam = coverCamera(844, 390, b);
+    const z2 = { ...cam, zoom: cam.zoom * 2 };
+    for (const [dx, dy] of [
+      [1e6, 1e6],
+      [-1e6, -1e6],
+      [0, 1e6],
+      [b.width, 0],
+      [3, -7],
+    ] as const) {
+      const c = clampCamera({ cx: cam.cx + dx, cy: cam.cy + dy, zoom: z2.zoom }, b, 844, 390);
+      expect(coverage(c, b, 844, 390)).toBeCloseTo(1, 6);
+      const v = visibleWorldRect(c, 844, 390);
+      expect(v.minX).toBeGreaterThanOrEqual(b.minX - 1e-6);
+      expect(v.maxX).toBeLessThanOrEqual(b.maxX + 1e-6);
+      expect(v.minY).toBeGreaterThanOrEqual(b.minY - 1e-6);
+      expect(v.maxY).toBeLessThanOrEqual(b.maxY + 1e-6);
+    }
+    // a small in-bounds pan is left alone
+    const small = clampCamera({ cx: 3, cy: -7, zoom: z2.zoom }, b, 844, 390);
+    expect(small.cx).toBeCloseTo(3, 8);
+    expect(small.cy).toBeCloseTo(-7, 8);
+  });
+  test("clampCamera centres the world in a dimension the viewport is larger than", () => {
+    const c = clampCamera({ cx: 500, cy: 500, zoom: 0.01 }, b, 844, 390);
+    expect(c.cx).toBeCloseTo(0, 8);
+    expect(c.cy).toBeCloseTo(0, 8);
+  });
+  test("clampZoom with minFactor 1 never goes below the cover zoom", () => {
+    expect(clampZoom(0.001, 0.5, 1, 8)).toBeCloseTo(0.5, 8);
+    expect(clampZoom(100, 0.5, 1, 8)).toBeCloseTo(4, 8);
+    expect(clampZoom(1, 0.5, 1, 8)).toBeCloseTo(1, 8);
+  });
+});
 
 describe("fitZoom", () => {
   test("landscape viewport, landscape world: limited by height", () => {

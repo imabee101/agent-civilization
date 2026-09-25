@@ -14,6 +14,7 @@ export const CATEGORIES: readonly EventCategory[] = ["life", "comms", "code", "s
 const CATEGORY_OF: Record<EventKind, EventCategory> = {
   spawned: "life",
   died: "life",
+  replicated: "life",
   spoke: "comms",
   "sent-message": "comms",
   "executed-code": "code",
@@ -39,6 +40,7 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
   "dropped-item": "items",
   found: "items",
   snapshot: "system",
+  "season-changed": "system",
   "world-reset": "system",
   "brain-status": "system",
 };
@@ -46,6 +48,7 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
 const ICON_OF: Record<EventKind, string> = {
   spawned: "✦",
   died: "✝",
+  replicated: "✦✦",
   spoke: "❝",
   "sent-message": "✉",
   "executed-code": "{}",
@@ -71,6 +74,7 @@ const ICON_OF: Record<EventKind, string> = {
   "dropped-item": "↓",
   found: "✧",
   snapshot: "◈",
+  "season-changed": "❄",
   "world-reset": "↻",
   "brain-status": "◍",
 };
@@ -151,6 +155,8 @@ export function hasQuote(e: Pick<WorldEvent, "kind" | "quote">): boolean {
 /** Kicker text for the ribbon, derived from the category only. */
 export function ribbonKicker(kind: EventKind): string {
   if (kind === "vault-opened") return "a door opens";
+  if (kind === "replicated") return "a new node";
+  if (kind === "season-changed") return "a season turns";
   const cat = categoryOf(kind);
   switch (cat) {
     case "life":

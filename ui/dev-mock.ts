@@ -16,6 +16,7 @@ import type {
   PacingStats,
   Phase,
   RuinView,
+  Season,
   ServerMessage,
   StructureKind,
   Terrain,
@@ -65,6 +66,8 @@ export function createMockTransport(): Transport {
   const config: WorldConfigView = {
     mapRadius: radius,
     ticksPerDay: 120,
+    seasonDays: 3,
+    maxPopulation: 24,
     visionRadius: 3,
     hearRadius: 3,
     sendRadius: 6,
@@ -158,9 +161,13 @@ export function createMockTransport(): Transport {
   let statusCb: (c: boolean) => void = () => {};
 
   const phaseOf = (p: number): Phase => (p < 0.15 ? "dawn" : p < 0.6 ? "day" : p < 0.75 ? "dusk" : "night");
+  const SEASONS: Season[] = ["spring", "summer", "autumn", "winter"];
+  const seasonOf = (day: number): Season => SEASONS[Math.floor((day - 1) / config.seasonDays) % 4]!;
   const state = (): WorldState => {
     const dp = (tick % config.ticksPerDay) / config.ticksPerDay;
-    return { tick, day: Math.floor(tick / config.ticksPerDay) + 1, phase: phaseOf(dp), dayProgress: dp, agents: agents.map((a) => ({ ...a, profile: { ...a.profile } })), ruins: [...ruins] };
+    const day = Math.floor(tick / config.ticksPerDay) + 1;
+    const ticksPerSeason = config.seasonDays * config.ticksPerDay;
+    return { tick, day, phase: phaseOf(dp), season: seasonOf(day), seasonProgress: (tick % ticksPerSeason) / ticksPerSeason, dayProgress: dp, agents: agents.map((a) => ({ ...a, profile: { ...a.profile }, inventory: { ...a.inventory, items: [...a.inventory.items] } })), ruins: [...ruins] };
   };
   const brain = (): BrainStatus => ({ kind: "openai-compatible", model: "tiny-3b-instruct", baseUrl: "http://localhost:11434", connected: tick % 200 < 170, detail: "mock" });
   const pacing = (): PacingStats => ({
@@ -304,6 +311,17 @@ export function createMockTransport(): Transport {
       const a = agents[4]!;
       a.food = 0;
       a.health = 2;
+    }
+    if (tick === 48) {
+      const parent = agents[1]!;
+      const child: AgentView = { ...parent, id: `n${agents.length + 1}`, name: "Brook-2", color: "#9ae6b4", q: parent.q + 1, r: parent.r, bornTick: tick, parentId: parent.id, food: 60, energy: 80, health: 100, inventory: { food: 0, wood: 0, stone: 0, items: [] }, profile: { ...parent.profile }, lastSaid: undefined, thinking: false, turns: 0 };
+      agents.push(child);
+      batch.push(push("replicated", 2, `${parent.name} replicated: ${child.name} appeared at ${child.q},${child.r} with a copy of ${parent.name}'s files`, parent, { targetId: child.id, targetName: child.name }));
+      batch.push(push("spawned", 1, `${child.name} spawned`, child));
+    }
+    if (tick > 0 && tick % (config.seasonDays * config.ticksPerDay) === 0) {
+      const day = Math.floor(tick / config.ticksPerDay) + 1;
+      batch.push(push("season-changed", 2, `${seasonOf(day)} has come (day ${day})`));
     }
     if (tick === 25) {
       const a = agents[5]!;
