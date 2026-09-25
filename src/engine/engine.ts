@@ -475,7 +475,14 @@ export class Engine {
       };
       agent.turns++;
       if (agent.alive && !rt.sandbox.poisoned) {
-        if (code) {
+        if (result.truncated) {
+          // Half a program is a syntax error at best and a different program at worst. Say exactly what happened.
+          record.error = `reply cut off at the ${this.cfg.maxTokens}-token limit; nothing ran`;
+          rt.lastResult = undefined;
+          agent.lastError = `your reply was cut off at the ${this.cfg.maxTokens}-token limit, so none of it ran`;
+          this.world.addLog(agentId, `turn reply cut off at ${this.cfg.maxTokens} tokens; nothing ran`);
+          this.world.record("code-error", 1, agentId, `${agent.name}'s reply was cut off at the token limit`, { data: { error: record.error } });
+        } else if (code) {
           const r = rt.sandbox.eval(code, `turn${agent.turns}.js`);
           this.pacing.sandboxCalls++;
           if (r.ok) {

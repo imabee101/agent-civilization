@@ -34,6 +34,16 @@ function fakeFetch(reply: string[] | object | ((url: string) => Response), captu
 const req = { system: "SYS", user: "USER" };
 
 describe("OpenAICompatibleBrain", () => {
+  test("reports a reply that stopped at the token limit as truncated", async () => {
+    const stream = fakeFetch(['data: {"choices":[{"delta":{"content":"gather("}}]}\n\n', 'data: {"choices":[{"delta":{"content":""},"finish_reason":"length"}],"usage":{"completion_tokens":2}}\n\n', "data: [DONE]\n\n"]);
+    const b = new OpenAICompatibleBrain({ kind: "openai", baseUrl: "http://x/v1", fetch: stream.fetch, stream: true });
+    const r = await b.decide({ system: "s", user: "u" });
+    expect(r.truncated).toBe(true);
+    const whole = fakeFetch({ choices: [{ message: { content: "rest()" }, finish_reason: "stop" }] });
+    const b2 = new OpenAICompatibleBrain({ kind: "openai", baseUrl: "http://x/v1", fetch: whole.fetch, stream: false });
+    expect((await b2.decide({ system: "s", user: "u" })).truncated).toBe(false);
+  });
+
   test("streams SSE deltas, reports usage, sends the right request", async () => {
     const { fetch, captured } = fakeFetch([
       'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n\n',

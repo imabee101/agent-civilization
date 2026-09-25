@@ -56,26 +56,30 @@ export class OpenAICompatibleBrain implements Brain {
     const res = await postJson(joinUrl(this.baseUrl, "chat/completions"), body, this.http(opts.signal));
     let text = "";
     let tokens: number | undefined;
+    let truncated = false;
     if (this.stream) {
       for await (const raw of readSse(res.body)) {
         const chunk = raw as ChatChunk;
-        const delta = chunk.choices?.[0]?.delta?.content;
+        const choice = chunk.choices?.[0];
+        const delta = choice?.delta?.content;
         if (delta) {
           text += delta;
           opts.onToken?.(delta);
         }
+        if (choice?.finish_reason === "length") truncated = true;
         if (typeof chunk.usage?.completion_tokens === "number") tokens = chunk.usage.completion_tokens;
       }
     } else {
       const json = (await res.json()) as ChatChunk;
       text = json.choices?.[0]?.message?.content ?? "";
+      truncated = json.choices?.[0]?.finish_reason === "length";
       if (typeof json.usage?.completion_tokens === "number") tokens = json.usage.completion_tokens;
       if (text) opts.onToken?.(text);
     }
     const latencyMs = performance.now() - t0;
     const estimated = tokens === undefined;
     const n = tokens ?? estimateTokens(text);
-    return { text, latencyMs, tokens: n, tokensPerSec: latencyMs > 0 ? (n * 1000) / latencyMs : 0, estimated };
+    return { text, latencyMs, tokens: n, tokensPerSec: latencyMs > 0 ? (n * 1000) / latencyMs : 0, estimated, truncated };
   }
 
   async health(): Promise<{ ok: boolean; detail?: string; models?: string[] }> {

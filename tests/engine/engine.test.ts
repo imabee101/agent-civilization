@@ -187,6 +187,23 @@ describe("Engine turns", () => {
     expect(brain.requests[1]!.user).toContain("rested x3");
   });
 
+  test("a reply cut off at the token limit runs nothing and says so", async () => {
+    class Cut extends ScriptedBrain {
+      override async decide(req: DecisionRequest, opts: DecideOptions = {}) {
+        return { ...(await super.decide(req, opts)), truncated: true };
+      }
+    }
+    const brain = new Cut([js("me.set('status', 'half')"), js("1")], 0);
+    const e = await mk(brain, { maxTokens: 50 });
+    const [a] = e.world.livingAgents();
+    const r = (await e.runTurn(a!.id))!;
+    expect(r.error).toContain("cut off at the 50-token limit");
+    expect(a!.profile.status).toBeUndefined();
+    expect(e.recentEvents().some((ev) => ev.kind === "code-error" && /cut off/.test(ev.text))).toBe(true);
+    await e.runTurn(a!.id);
+    expect(brain.requests[1]!.user).toContain("LAST ERROR: your reply was cut off at the 50-token limit");
+  });
+
   test("an output with no code is recorded as such", async () => {
     const e = await mk(new ScriptedBrain(["   "]));
     const [a] = e.world.livingAgents();
