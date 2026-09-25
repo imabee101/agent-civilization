@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EventKind, WorldEvent } from "../../src/shared/protocol";
 import {
+  isStory,
   categoryOf,
   iconOf,
   colorOf,
@@ -142,5 +143,12 @@ describe("formatEventMeta / ribbon / quotes", () => {
     expect(hasQuote({ kind: "moved", quote: "hi" })).toBe(false);
     expect(hasQuote({ kind: "found", quote: "hi" })).toBe(false);
     expect(hasQuote({ kind: "vault-opened", quote: "hi" })).toBe(false);
+  });
+});
+
+describe("isStory", () => {
+  test("keeps what a viewer follows, drops upkeep and code runs", () => {
+    for (const k of ["spawned", "died", "spoke", "sent-message", "built", "dropped", "profile-changed", "starving"] as EventKind[]) expect(isStory({ kind: k })).toBe(true);
+    for (const k of ["moved", "gathered", "ate", "rested", "executed-code", "code-error", "snapshot", "brain-status"] as EventKind[]) expect(isStory({ kind: k })).toBe(false);
   });
 });

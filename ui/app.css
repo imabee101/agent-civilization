@@ -14,7 +14,7 @@
   --accent: #ffcf6b;
   --danger: #ff5c5c;
   --ally: #4fd1c5;
-  --font: 'Inter', system-ui, sans-serif;
+  --font: 'IBM Plex Sans', system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --display: 'Cinzel', serif;
   --rail-w: 232px;
@@ -112,7 +112,7 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); ou
   inset: 0;
   z-index: 2;
   pointer-events: none;
-  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.3);
   transition: box-shadow 0.6s ease;
 }
 #vignette.hot { box-shadow: inset 0 0 220px rgba(0, 0, 0, 0.85), inset 0 0 90px rgba(255, 92, 92, 0.12); }
@@ -203,6 +203,8 @@ body.paused .ibtn .ic-pause { display: none; }
 .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
 .stat .mono { font-size: 13px; }
 .stat.hot .mono { color: var(--accent); }
+.spark { color: var(--accent); opacity: 0.85; flex: 0 0 auto; }
+.badge .pacing { display: none; }
 
 .badge {
   display: inline-flex;
@@ -834,11 +836,88 @@ pre.raw.plain { border-color: var(--line); }
    Mobile (≤820px wide, or ≤500px tall e.g. a phone in landscape):
    full-bleed map, tab bar, one overlay at a time.
    ========================================================================== */
+/* ---------- explainer ---------- */
+#explainer {
+  position: fixed;
+  top: calc(var(--inset) + var(--topbar-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(65ch, calc(100vw - 2 * var(--inset)));
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+#explainer[hidden] { display: none; }
+#explainer .tbtn { flex: 0 0 auto; color: var(--accent); }
+
+/* ---------- mind cam ---------- */
+#mindcam {
+  position: fixed;
+  left: 50%;
+  bottom: var(--inset);
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - var(--rail-w) - var(--chron-w) - 4 * var(--inset)));
+  z-index: 14;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border-left: 3px solid var(--pc, var(--accent));
+  cursor: pointer;
+}
+#mindcam[hidden] { display: none; }
+.mc-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mc-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pc, var(--accent)); flex: 0 0 auto; }
+#mindcam.live .mc-dot { animation: mc-pulse 1s ease-in-out infinite; }
+.mc-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-state { color: var(--accent); }
+#mindcam:not(.live) .mc-state { color: var(--dim); }
+.mc-others { margin-left: auto; color: var(--dim); }
+.mc-code {
+  margin: 0;
+  max-height: 12.5em;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.92;
+}
+.mc-code:empty::before { content: "…"; color: var(--dim); }
+.mc-result { font-size: 12px; color: var(--ally); min-height: 1.4em; }
+.mc-result:empty { display: none; }
+.mc-result.err { color: var(--danger); }
+@keyframes mc-pulse { 50% { opacity: 0.35; } }
+
+@media (max-width: 1150px) {
+  #mindcam { width: min(480px, calc(100vw - var(--rail-w) - 200px - 3 * var(--inset))); left: calc(var(--rail-w) + 2 * var(--inset)); transform: none; }
+}
+
 @media (max-width: 820px), (max-height: 500px) {
   :root { --topbar-h: 42px; --inset: 8px; }
 
   #topbar { gap: 8px; padding: 0 8px; }
-  .wordmark, .clock .phase, .clock .sep, .clock .season, .stats, #brainBadge, .vdiv { display: none; }
+  .wordmark, .clock .phase, .clock .sep, .clock .season, .stat.minor, .spark, #brainBadge, .vdiv, #btnNarrate, #btnNerd { display: none; }
+  .stats { margin-left: 0; }
+  #explainer { font-size: 12px; padding: 8px 8px 8px 12px; gap: 8px; left: var(--inset); right: var(--inset); transform: none; max-width: none; }
+  #mindcam {
+    left: calc(var(--inset) + 108px + 8px);
+    right: var(--inset);
+    width: auto;
+    transform: none;
+    bottom: calc(var(--inset) + var(--tabbar-h) + 8px);
+    padding: 8px 12px;
+    gap: 4px;
+  }
+  .mc-code { max-height: 5.8em; font-size: 11px; }
+  body:not(.tab-world) #mindcam, body:not(.tab-world) #explainer { display: none; }
   .tbtn .txt { display: none; }
   .tbtn { padding: 0 7px; height: 26px; }
   .ibtn { width: 26px; height: 26px; }

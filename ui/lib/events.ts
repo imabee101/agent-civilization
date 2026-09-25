@@ -178,3 +178,21 @@ export function ribbonKicker(kind: EventKind): string {
       return "the world";
   }
 }
+
+/**
+ * Kinds a viewer follows as the story: arrivals and deaths, what nodes say and
+ * send, what they build, share and find, what they declare about themselves.
+ * Routine upkeep (gather, eat, rest, move) and code runs are left to the map
+ * glyphs and the mind cam.
+ */
+const STORY: ReadonlySet<EventKind> = new Set<EventKind>([
+  "spawned", "died", "replicated",
+  "spoke", "sent-message", "posted", "cached",
+  "built", "demolished", "planted", "vault-opened",
+  "dropped", "took-item", "dropped-item", "found", "ruin-read",
+  "profile-changed", "starving", "season-changed", "world-reset",
+]);
+
+export function isStory(e: Pick<WorldEvent, "kind">): boolean {
+  return STORY.has(e.kind);
+}

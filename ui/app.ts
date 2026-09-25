@@ -23,7 +23,8 @@ import { World } from "./world";
 import { Minimap } from "./minimap";
 import { createWebSocketTransport, type Transport } from "./transport";
 import { deriveGroups, groupOf, tagChips, safeColor, type GroupCard } from "./lib/groups";
-import { categoryOf, colorOf, iconOf, formatEventMeta, isRibbonWorthy, hasQuote, ribbonKicker } from "./lib/events";
+import { categoryOf, colorOf, iconOf, formatEventMeta, isRibbonWorthy, isStory, hasQuote, ribbonKicker } from "./lib/events";
+import { census, populationSeries, sparkPoints } from "./lib/census";
 import { utteranceFor } from "./lib/narration";
 import { sunElevation } from "./lib/phase";
 import { hexToPixel } from "./lib/camera";
@@ -73,7 +74,10 @@ const S = {
   narrate: false,
   mobileTab: "world" as "world" | "groups" | "chronicle" | "hood",
   groupsKey: "",
+  /** Mind cam: whose turn is on screen, and when it went up (a finished turn stays at least MIND_HOLD_MS). */
+  mind: null as { agentId: string; shownAt: number } | null,
 };
+const MIND_HOLD_MS = 4000;
 const MAX_EVENTS = 300;
 const MAX_ROWS = 200;
 const MAX_DECISIONS = 120;
@@ -117,6 +121,7 @@ function onMessage(m: ServerMessage): void {
       renderStats();
       renderGroups();
       renderDossierLive();
+      renderMindCam();
       if (S.nerdTab === "nodes" && document.body.classList.contains("nerd-open")) renderNodeList();
       break;
     case "tiles":
@@ -124,15 +129,18 @@ function onMessage(m: ServerMessage): void {
       break;
     case "events":
       for (const e of m.events) addEvent(e);
+      world.pushEvents(m.events);
       break;
     case "decision":
       S.decisions.push(m.decision);
       if (S.decisions.length > MAX_DECISIONS) S.decisions.splice(0, S.decisions.length - MAX_DECISIONS);
       if (document.body.classList.contains("nerd-open") && S.nerdTab === "brain") renderBrain();
+      if (m.decision.agentId === S.mind?.agentId) renderMindCam();
       break;
     case "thinking":
       S.thoughts.set(m.agentId, { text: m.text, done: m.done });
       if (m.agentId === S.selectedId) renderThought();
+      followMind(m.agentId, m.done);
       break;
     case "stats":
       S.pacing = m.pacing;
@@ -210,12 +218,11 @@ function renderClock(): void {
 function renderStats(): void {
   const st = S.state;
   if (!st) return;
-  const alive = st.agents.filter((a) => a.alive);
-  $("stAlive").textContent = S.config ? `${alive.length}/${S.config.maxPopulation}` : String(alive.length);
-  const groups = deriveGroups(st.agents, st.ruins).filter((g) => !g.unaffiliated && !g.collapsed);
-  $("stGroups").textContent = String(groups.length);
-  $("stThinking").textContent = String(alive.filter((a) => a.thinking).length);
-  $("stLatency").textContent = S.pacing ? fmtMs(S.pacing.avgLatencyMs) : "–";
+  const c = census(st.agents);
+  $("stAlive").textContent = String(c.alive);
+  $("stBorn").textContent = String(c.born);
+  $("stDied").textContent = String(c.died);
+  $("popLine").setAttribute("points", sparkPoints(populationSeries(st.agents, st.tick), 64, 20));
 }
 
 function renderBadge(): void {
@@ -223,8 +230,9 @@ function renderBadge(): void {
   const dot = $("brainDot");
   const on = !!b?.connected && S.connected;
   dot.classList.toggle("on", on);
-  $("brainName").textContent = b ? `${b.kind} · ${b.model}` : S.connected ? "no brain" : "offline";
-  $("brainBadge").title = b?.lastError ? `last error: ${b.lastError}` : b?.detail ?? "brain backend";
+  const thinking = S.state?.agents.filter((a) => a.alive && a.thinking).length ?? 0;
+  $("brainName").textContent = !on ? (S.connected ? "brain down · world holds" : "offline") : thinking ? `${thinking} thinking` : "minds idle";
+  $("brainBadge").title = b?.lastError ? `last error: ${b.lastError}` : b ? `${b.kind} · ${b.model}` : "brain backend";
   $("pacingMode").textContent = S.pacing?.mode ?? "idle";
 }
 
@@ -240,7 +248,7 @@ function renderPlayback(): void {
 function renderGroups(): void {
   const st = S.state;
   if (!st) return;
-  const cards = deriveGroups(st.agents, st.ruins);
+  const cards = deriveGroups(st.agents, st.ruins).filter((c) => c.alive > 0 && !c.unaffiliated);
   const key = JSON.stringify(cards.map((c) => [c.key, c.alive, c.dead, Math.round(c.avgFood), Math.round(c.avgHealth), c.statuses, c.color, c.emblem]));
   if (key === S.groupsKey) return;
   S.groupsKey = key;
@@ -315,14 +323,14 @@ function eventRow(e: WorldEvent): HTMLElement {
   return row;
 }
 function rebuildChronicle(): void {
-  const rows = S.events.filter((e) => S.showAll || e.importance >= 1).slice(-MAX_ROWS).reverse().map(eventRow);
+  const rows = S.events.filter((e) => S.showAll || isStory(e)).slice(-MAX_ROWS).reverse().map(eventRow);
   for (const r of rows) r.style.animation = "none";
   evList.replaceChildren(...rows);
 }
 function addEvent(e: WorldEvent): void {
   S.events.push(e);
   if (S.events.length > MAX_EVENTS) S.events.splice(0, S.events.length - MAX_EVENTS);
-  if (S.showAll || e.importance >= 1) {
+  if (S.showAll || isStory(e)) {
     evList.prepend(eventRow(e));
     while (evList.children.length > MAX_ROWS) evList.lastElementChild?.remove();
   }
@@ -365,6 +373,73 @@ function narrate(e: WorldEvent): void {
   synth.speak(u);
 }
 
+// ---------- mind cam ----------
+const mindcam = $("mindcam");
+/** A turn starting takes the cam unless the one on screen is still streaming or went up under MIND_HOLD_MS ago. */
+function followMind(agentId: string, done: boolean): void {
+  const cur = S.mind;
+  const curStreaming = cur ? S.thoughts.get(cur.agentId)?.done === false : false;
+  if (!done && cur?.agentId !== agentId && (!cur || (!curStreaming && Date.now() - cur.shownAt >= MIND_HOLD_MS))) {
+    S.mind = { agentId, shownAt: Date.now() };
+  }
+  if (S.mind?.agentId === agentId || !cur) renderMindCam();
+}
+/** The streamed reply without its ``` fences, last lines only. */
+function mindCode(text: string): string {
+  const body = text.replace(/^\s*```(?:js|javascript)?[ \t]*\n?/i, "").replace(/\n?```[\s\S]*$/, "");
+  return body.split("\n").slice(-12).join("\n");
+}
+const lines = (n: number) => `${n} line${n === 1 ? "" : "s"}`;
+function renderMindCam(): void {
+  const m = S.mind;
+  const a = m ? S.state?.agents.find((x) => x.id === m.agentId) : undefined;
+  mindcam.hidden = !a || !dossier.hidden;
+  if (!a || !m) return;
+  const t = S.thoughts.get(a.id);
+  const streaming = t?.done === false;
+  mindcam.style.setProperty("--pc", safeColor(a.profile.color) ?? a.color);
+  $("mcName").textContent = a.alive ? a.name : `${a.name} (died)`;
+  $("mcState").textContent = streaming ? "writing code" : "last turn";
+  mindcam.classList.toggle("live", streaming);
+  const others = (S.state?.agents ?? []).filter((x) => x.alive && x.thinking && x.id !== a.id).length;
+  $("mcOthers").textContent = others ? `+${others} thinking` : "";
+  const code = mindCode(t?.text ?? "");
+  const pre = $("mcCode");
+  if (pre.textContent !== code) {
+    pre.textContent = code;
+    pre.scrollTop = pre.scrollHeight;
+  }
+  const res = $("mcResult");
+  const d = streaming ? undefined : [...S.decisions].reverse().find((x) => x.agentId === a.id);
+  res.className = `mc-result${d?.error ? " err" : ""}`;
+  res.textContent = streaming || !d ? "" : d.error ? `threw: ${truncate(d.error, 140)}` : `ran ${lines(d.code ? d.code.split("\n").length : 0)}${d.result && d.result !== "undefined" ? ` → ${truncate(d.result, 60)}` : ""}`;
+}
+mindcam.addEventListener("click", () => {
+  if (S.mind) selectAgent(S.mind.agentId);
+});
+
+// ---------- explainer ----------
+const EXPLAINER_KEY = "agentciv.explainer.dismissed";
+function initExplainer(): void {
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(EXPLAINER_KEY) === "1";
+  } catch {
+    // storage unavailable: show it every visit
+  }
+  const box = $("explainer");
+  box.hidden = dismissed;
+  $("explainerClose").addEventListener("click", () => {
+    box.hidden = true;
+    try {
+      localStorage.setItem(EXPLAINER_KEY, "1");
+    } catch {
+      // nothing to remember it in
+    }
+  });
+}
+initExplainer();
+
 // ---------- dossier ----------
 const dossier = $("dossier");
 function selectAgent(id: string | null): void {
@@ -406,6 +481,7 @@ function selectedAgent(): AgentView | undefined {
 function showDossier(mode: "agent" | "tile"): void {
   const wasHidden = dossier.hidden;
   dossier.hidden = false;
+  mindcam.hidden = true;
   dossier.dataset.mode = mode;
   for (const n of dossier.querySelectorAll<HTMLElement>(".d-agent")) n.hidden = mode !== "agent";
   $("dTile").hidden = mode !== "tile";
@@ -421,6 +497,7 @@ function renderDossier(): void {
     const t = selectedTile();
     if (t) renderTileDossier(t);
     else dossier.hidden = true;
+    renderMindCam();
     return;
   }
   showDossier("agent");

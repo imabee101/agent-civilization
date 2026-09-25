@@ -1,14 +1,14 @@
 [Unit]
-Description=Agent Civilization brain: llama-server, Qwen3-1.7B abliterated, loopback only
+Description=Agent Civilization brain: llama-server, Qwen3-4B-Instruct-2507 abliterated, loopback only
 After=network.target
 
 [Service]
-# Thinking off: the game wants one code block, and a <think> preamble would
-# spend the 400-token turn budget before any code is written.
+# Instruct-2507 has no thinking mode. Three slots: CPU decoding is bandwidth
+# bound, so three turns in parallel give ~1.9x the aggregate tokens of one.
 ExecStart=/opt/agent-civ/llama.cpp/bin/llama-server \
-  -m /opt/agent-civ/models/mlabonne_Qwen3-1.7B-abliterated-Q4_0.gguf \
-  --host 127.0.0.1 --port 8080 -c 8192 -np 1 -t 8 -tb 16 \
-  --jinja --reasoning-budget 0 --alias qwen3-1.7b-abliterated
+  -m /opt/agent-civ/models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_0.gguf \
+  --host 127.0.0.1 --port 8080 -c 18432 -np 3 -t 8 -tb 16 \
+  --jinja --alias qwen3-4b-2507-abliterated
 DynamicUser=yes
 Restart=on-failure
 RestartSec=3

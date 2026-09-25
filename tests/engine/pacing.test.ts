@@ -70,4 +70,16 @@ describe("Pacing", () => {
     expect(p.mode(64, 1)).toBe("queued");
     expect(p.tickMsAt(1, 0)).toBe(500);
   });
+
+  test("a call still in flight paces the clock by its elapsed time before any average exists", () => {
+    const p = new Pacing({ tickMs: 500, turnIntervalTicks: 16, concurrency: 1, maxTickMs: 5000 });
+    expect(p.tickMsAt(1, 6, 1000)).toBe(500);
+    p.beginDecision(1000);
+    expect(p.inFlight).toBe(1);
+    // 40 s in: plan as if latency were 40 s -> 40000 * 6 / 16 = 15 s, capped at 5 s
+    expect(p.tickMsAt(1, 6, 41_000)).toBe(5000);
+    p.endDecision(1000);
+    expect(p.inFlight).toBe(0);
+    expect(p.tickMsAt(1, 6, 41_000)).toBe(500);
+  });
 });

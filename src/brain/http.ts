@@ -64,10 +64,16 @@ export interface HttpOptions {
   signal?: AbortSignal;
 }
 
-/** POST JSON with a timeout; throws BrainError on non-2xx. */
+/**
+ * POST JSON; throws BrainError on non-2xx. `timeoutMs` is an idle timeout: it
+ * covers the wait for the response and then each gap between body chunks, so a
+ * slow model that keeps streaming is never cut off mid-turn while a stalled
+ * one still is.
+ */
 export async function postJson(url: string, body: unknown, opts: HttpOptions): Promise<Response> {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(new Error(`timeout after ${opts.timeoutMs}ms`)), opts.timeoutMs);
+  const expire = () => setTimeout(() => ctl.abort(new Error(`no data for ${opts.timeoutMs}ms`)), opts.timeoutMs);
+  let timer = expire();
   const onOuterAbort = () => ctl.abort(opts.signal?.reason);
   opts.signal?.addEventListener("abort", onOuterAbort, { once: true });
   let res: Response;
@@ -89,7 +95,7 @@ export async function postJson(url: string, body: unknown, opts: HttpOptions): P
     const text = await res.text().catch(() => "");
     throw new BrainError(`${url} responded ${res.status}: ${text.slice(0, 300)}`, res.status);
   }
-  // Keep the timeout alive while the body streams; clear it when the body closes.
+  // Re-arm the idle timeout on every chunk; clear it when the body closes.
   const cleanup = () => {
     clearTimeout(timer);
     opts.signal?.removeEventListener("abort", onOuterAbort);
@@ -104,7 +110,8 @@ export async function postJson(url: string, body: unknown, opts: HttpOptions): P
     try {
       const r = b.getReader();
       while (!(await r.read()).done) {
-        /* drain */
+        clearTimeout(timer);
+        timer = expire();
       }
     } catch {
       /* ignore */

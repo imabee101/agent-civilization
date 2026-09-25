@@ -2,7 +2,7 @@
  * PixiJS v8 renderer for the hex world. All camera math lives in lib/camera.ts.
  */
 import { Application, Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
-import type { AgentView, RuinView, Season, StructureKind, TileView, WorldState, Phase } from "../src/shared/protocol";
+import type { AgentView, RuinView, Season, StructureKind, TileView, WorldEvent, WorldState, Phase } from "../src/shared/protocol";
 import {
   hexToPixel,
   hexCorners,
@@ -21,8 +21,35 @@ import {
 } from "./lib/camera";
 import { tintForSeason } from "./lib/phase";
 import { ITEM_GLYPH, STRUCTURE_COLOR, STRUCTURE_LABEL, indexTiles, mergeTiles, tileHasInterest, tileKey } from "./lib/structures";
+import { TERRAIN_COLORS, TERRAIN_EDGE, foodShade, tileFill } from "./lib/terrain";
+import { LABEL_PRIORITY, visibleLabels, type LabelBox } from "./lib/labels";
+import {
+  ARC_MS,
+  GLYPH_MS,
+  HUNGER_COLOR,
+  MAX_EFFECTS,
+  arcControl,
+  fadeAlpha,
+  hungerFraction,
+  hungerLevel,
+  planEffects,
+  quadPoint,
+  type GlyphKind,
+} from "./lib/effects";
+
+export { TERRAIN_COLORS };
 
 export const HEX_SIZE = 24;
+const INK = 0x0a0d14;
+/** Node body radius, hunger-ring radius and thinking-ring radius (world units). */
+const NODE_R = HEX_SIZE * 0.36;
+const HUNGER_R = NODE_R + 3.4;
+const THINK_R = HUNGER_R + 6;
+/** Name label offset below the node centre, clear of the hunger and health rings. */
+const LABEL_DY = HUNGER_R + 5;
+/** Action-glyph badge radius in screen pixels. */
+const GLYPH_R = 8;
+const MESSAGE_COLOR = 0x9fd8ff;
 /** Zoom range relative to the cover zoom: never below cover (no void), up to 8x. */
 export const MIN_ZOOM_FACTOR = 1;
 export const MAX_ZOOM_FACTOR = 8;
@@ -30,20 +57,6 @@ const BACKDROP_FILL = 0x0c1520;
 const BACKDROP_HEX = 0x10202f;
 const BACKDROP_LINE = 0x172a3d;
 
-export const TERRAIN_COLORS: Record<TileView["terrain"], number> = {
-  grass: 0x3f7a4a,
-  forest: 0x2b5a3a,
-  water: 0x1f4f7a,
-  rock: 0x59606e,
-  sand: 0xa8925c,
-};
-const TERRAIN_EDGE: Record<TileView["terrain"], number> = {
-  grass: 0x2c5a36,
-  forest: 0x1e4229,
-  water: 0x173c5e,
-  rock: 0x3f454f,
-  sand: 0x7d6b42,
-};
 
 function hexNum(c: string): number {
   const s = c.replace("#", "");
@@ -56,6 +69,8 @@ interface AgentSprite {
   root: Container;
   body: Graphics;
   ring: Graphics;
+  /** Red halo pulsed while the node is starving (food 0). */
+  pulse: Graphics;
   label: Text;
   bubble: Container | null;
   bubbleText: Text | null;
@@ -66,6 +81,25 @@ interface AgentSprite {
   color: number;
   alive: boolean;
   thinking: boolean;
+  starving: boolean;
+  /** False while the name label would collide with a higher-priority label. */
+  labelShown: boolean;
+}
+
+/** A pooled action glyph: a small badge beside a node, reused across events. */
+interface GlyphFx {
+  root: Container;
+  g: Graphics;
+  agentId: string;
+  born: number;
+  active: boolean;
+}
+
+/** A message arc between two nodes, redrawn each frame into one shared Graphics. */
+interface ArcFx {
+  from: string;
+  to: string;
+  born: number;
 }
 
 export interface WorldCallbacks {
@@ -85,14 +119,14 @@ interface TileMarker {
 }
 
 const LABEL_STYLE: TextStyleOptions = {
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: "IBM Plex Sans, system-ui, sans-serif",
   fontSize: 11,
   fontWeight: "600",
   fill: 0xe6e9ef,
   stroke: { color: 0x0a0d14, width: 3 },
 };
 const TILE_LABEL_STYLE: TextStyleOptions = {
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: "IBM Plex Sans, system-ui, sans-serif",
   fontSize: 9,
   fontWeight: "600",
   fill: 0xe6e9ef,
@@ -100,14 +134,14 @@ const TILE_LABEL_STYLE: TextStyleOptions = {
   letterSpacing: 0.6,
 };
 const ITEM_STYLE: TextStyleOptions = {
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: "IBM Plex Sans, system-ui, sans-serif",
   fontSize: 10,
   fontWeight: "700",
   fill: 0xffffff,
   stroke: { color: 0x0a0d14, width: 2 },
 };
 const BUBBLE_STYLE: TextStyleOptions = {
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: "IBM Plex Sans, system-ui, sans-serif",
   fontSize: 11,
   fill: 0x0a0d14,
   wordWrap: true,
@@ -121,12 +155,18 @@ export class World {
   private world = new Container();
   private backdropG = new Graphics();
   private terrainG = new Graphics();
-  private foodG = new Graphics();
   private structC = new Container();
   private springG = new Graphics();
   private itemsC = new Container();
   private tileSelG = new Graphics();
   private lineageG = new Graphics();
+  private arcG = new Graphics();
+  private glyphC = new Container();
+  /** Name labels and speech bubbles live above every node so a neighbour never covers them. */
+  private labelsC = new Container();
+  private bubblesC = new Container();
+  private glyphs: GlyphFx[] = [];
+  private arcs: ArcFx[] = [];
   private ruinsG = new Container();
   private agentsC = new Container();
   private overlay = new Graphics();
@@ -148,6 +188,7 @@ export class World {
   private userMoved = false;
   private foodDirty = false;
   private lastFoodDraw = 0;
+  private lastDeclutter = 0;
   private phase: Phase = "day";
   private dayProgress = 0.3;
   private season: Season = "spring";
@@ -175,7 +216,7 @@ export class World {
     });
     this.host.appendChild(this.app.canvas);
     this.agentsC.sortableChildren = true;
-    this.world.addChild(this.backdropG, this.terrainG, this.foodG, this.structC, this.springG, this.itemsC, this.tileSelG, this.ruinsG, this.lineageG, this.agentsC);
+    this.world.addChild(this.backdropG, this.terrainG, this.structC, this.springG, this.itemsC, this.tileSelG, this.ruinsG, this.lineageG, this.arcG, this.agentsC, this.labelsC, this.glyphC, this.bubblesC);
     this.app.stage.addChild(this.world, this.dim, this.overlay);
     this.app.renderer.on("resize", () => this.onResize());
     window.addEventListener("orientationchange", () => setTimeout(() => this.onResize(), 60));
@@ -203,7 +244,7 @@ export class World {
     this.drawBackdrop();
     this.drawTerrain();
     this.drawStructures();
-    this.foodDirty = true;
+    this.foodDirty = false;
     this.userMoved = false;
     this.fit();
   }
@@ -325,38 +366,17 @@ export class World {
     }
   }
 
+  /** Tiles, with food shown as shading within each terrain's colour. Redrawn only when food changes. */
   private drawTerrain(): void {
     const g = this.terrainG;
     g.clear();
-    for (const t of this.tiles) {
+    for (let i = 0; i < this.tiles.length; i++) {
+      const t = this.tiles[i]!;
       const c = hexToPixel(t.q, t.r, HEX_SIZE);
       const pts = hexCorners(c.x, c.y, HEX_SIZE - 0.6);
       g.poly(pts.flatMap((p) => [p.x, p.y]));
-      g.fill({ color: TERRAIN_COLORS[t.terrain] });
+      g.fill({ color: tileFill(t.terrain, this.tileFood[i] ?? t.food, t.foodCap) });
       g.stroke({ color: TERRAIN_EDGE[t.terrain], width: 1, alpha: 0.9 });
-    }
-  }
-
-  private drawFood(): void {
-    const g = this.foodG;
-    g.clear();
-    for (let i = 0; i < this.tiles.length; i++) {
-      const t = this.tiles[i]!;
-      const food = this.tileFood[i] ?? 0;
-      if (food <= 0 || t.terrain === "water") continue;
-      const cap = Math.max(1, t.foodCap);
-      const ratio = Math.min(1, food / cap);
-      const c = hexToPixel(t.q, t.r, HEX_SIZE);
-      // brightness wash proportional to food
-      g.poly(hexCorners(c.x, c.y, HEX_SIZE - 3).flatMap((p) => [p.x, p.y]));
-      g.fill({ color: 0xffe9a3, alpha: 0.05 + ratio * 0.14 });
-      // dots: 1..3
-      const dots = ratio > 0.66 ? 3 : ratio > 0.33 ? 2 : 1;
-      for (let d = 0; d < dots; d++) {
-        const ang = -Math.PI / 2 + (d * 2 * Math.PI) / 3;
-        g.circle(c.x + Math.cos(ang) * 6, c.y + Math.sin(ang) * 6 + 2, 2.2);
-        g.fill({ color: 0xffd97a, alpha: 0.55 + ratio * 0.45 });
-      }
     }
   }
 
@@ -487,18 +507,23 @@ export class World {
   private makeSprite(a: AgentView): AgentSprite {
     const root = new Container();
     const ring = new Graphics();
+    const pulse = new Graphics();
+    pulse.circle(0, 0, HUNGER_R).stroke({ color: HUNGER_COLOR.starving, width: 3 });
+    pulse.visible = false;
     const body = new Graphics();
     const label = new Text({ text: a.name, style: LABEL_STYLE, resolution: 2 });
     label.anchor.set(0.5, 0);
-    label.position.set(0, HEX_SIZE * 0.42);
-    root.addChild(ring, body, label);
+    root.addChild(ring, pulse, body);
     this.agentsC.addChild(root);
+    this.labelsC.addChild(label);
     const p = hexToPixel(a.q, a.r, HEX_SIZE);
     root.position.set(p.x, p.y);
+    label.position.set(p.x, p.y + LABEL_DY);
     const s: AgentSprite = {
       root,
       body,
       ring,
+      pulse,
       label,
       bubble: null,
       bubbleText: null,
@@ -509,6 +534,8 @@ export class World {
       color: hexNum(a.color),
       alive: a.alive,
       thinking: a.thinking,
+      starving: false,
+      labelShown: true,
     };
     this.drawBody(s, a);
     this.counterScale(s);
@@ -518,23 +545,30 @@ export class World {
   private drawBody(s: AgentSprite, a: AgentView): void {
     const g = s.body;
     g.clear();
-    const r = HEX_SIZE * 0.36;
+    const r = NODE_R;
     const selected = this.selectedId === a.id;
     if (a.alive) {
       g.circle(0, 0, r + 2).fill({ color: 0x0a0d14, alpha: 0.55 });
       g.circle(0, 0, r).fill({ color: s.color });
       g.circle(0, 0, r).stroke({ color: selected ? 0xffcf6b : 0xffffff, width: selected ? 2.5 : 1.2, alpha: selected ? 1 : 0.6 });
-      // small health pip arc
+      // hunger ring: dark track, then food 0..100 clockwise from the top
+      const level = hungerLevel(a.food);
+      const fed = hungerFraction(a.food);
+      g.circle(0, 0, HUNGER_R).stroke({ color: INK, width: 3.6, alpha: 0.7 });
+      if (fed > 0) {
+        g.moveTo(0, -HUNGER_R).arc(0, 0, HUNGER_R, -Math.PI / 2, -Math.PI / 2 + fed * Math.PI * 2);
+        g.stroke({ color: HUNGER_COLOR[level], width: 2.2, alpha: 1, cap: "round" });
+      }
+      // thin health arc just outside, only once hurt
       const hp = Math.max(0, Math.min(1, a.health / 100));
       if (hp < 1) {
-        g.arc(0, 0, r + 4, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2);
-        g.stroke({ color: hp < 0.35 ? 0xff5c5c : 0xffcf6b, width: 1.5, alpha: 0.9 });
+        g.moveTo(0, -(HUNGER_R + 3.4)).arc(0, 0, HUNGER_R + 3.4, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2);
+        g.stroke({ color: hp < 0.35 ? 0xff5c5c : 0xe6e9ef, width: 1.2, alpha: 0.8 });
       }
     } else {
       g.circle(0, 0, r).fill({ color: 0x59606e, alpha: 0.5 });
       g.circle(0, 0, r).stroke({ color: 0x8b93a5, width: 1, alpha: 0.5 });
     }
-    s.label.alpha = a.alive ? 1 : 0.5;
   }
 
   private ensureBubble(s: AgentSprite, text: string): void {
@@ -543,7 +577,8 @@ export class World {
       const bg = new Graphics();
       const t = new Text({ text, style: BUBBLE_STYLE, resolution: 2 });
       c.addChild(bg, t);
-      s.root.addChild(c);
+      c.position.set(s.root.x, s.root.y);
+      this.bubblesC.addChild(c);
       s.bubble = c;
       s.bubbleText = t;
     }
@@ -580,6 +615,8 @@ export class World {
       s.alive = a.alive;
       this.drawBody(s, a); // health arc / selection ring may change every tick
       s.thinking = a.thinking && a.alive;
+      s.starving = a.alive && hungerLevel(a.food) === "starving";
+      if (!s.starving) s.pulse.visible = false;
       if (!s.thinking) s.ring.clear();
       if (s.label.text !== a.name) s.label.text = a.name;
       if (a.lastSaid && a.lastSaid.tick !== s.bubbleTick && a.alive) {
@@ -592,6 +629,8 @@ export class World {
     for (const [id, s] of this.sprites) {
       if (!seen.has(id)) {
         s.root.destroy({ children: true });
+        s.label.destroy();
+        s.bubble?.destroy({ children: true });
         this.sprites.delete(id);
       }
     }
@@ -624,18 +663,90 @@ export class World {
   }
 
   setTileFood(food: number[]): void {
-    if (food.length === this.tileFood.length) {
-      let changed = false;
-      for (let i = 0; i < food.length; i++) {
-        if (food[i] !== this.tileFood[i]) {
-          changed = true;
-          break;
-        }
-      }
-      if (!changed) return;
+    let visible = food.length !== this.tileFood.length;
+    for (let i = 0; !visible && i < food.length; i++) {
+      if (food[i] === this.tileFood[i]) continue;
+      const cap = this.tiles[i]?.foodCap ?? 0;
+      visible = foodShade(food[i]!, cap) !== foodShade(this.tileFood[i] ?? 0, cap);
     }
     this.tileFood = food;
-    this.foodDirty = true;
+    if (visible) this.foodDirty = true;
+  }
+
+  /** Feed newly arrived world events (same objects the chronicle receives). Drives transient map effects. */
+  pushEvents(events: readonly WorldEvent[]): void {
+    if (!events.length || !this.state) return;
+    const living = new Set<string>();
+    for (const a of this.state.agents) if (a.alive && this.sprites.has(a.id)) living.add(a.id);
+    const plan = planEffects(events, living, this.state.tick);
+    const now = performance.now();
+    for (const req of plan.glyphs) this.showGlyph(req.agentId, req.glyph, now);
+    for (const req of plan.arcs) {
+      if (this.arcs.length >= MAX_EFFECTS) this.arcs.shift();
+      this.arcs.push({ from: req.from, to: req.to, born: now });
+    }
+  }
+
+  /** One glyph per node: reuse that node's badge, else a free one, else the oldest. Pool never exceeds MAX_EFFECTS. */
+  private showGlyph(agentId: string, kind: GlyphKind, now: number): void {
+    let fx = this.glyphs.find((f) => f.active && f.agentId === agentId) ?? this.glyphs.find((f) => !f.active);
+    if (!fx && this.glyphs.length < MAX_EFFECTS) {
+      const root = new Container();
+      const g = new Graphics();
+      root.addChild(g);
+      this.glyphC.addChild(root);
+      fx = { root, g, agentId, born: now, active: false };
+      this.glyphs.push(fx);
+    }
+    if (!fx) fx = this.glyphs.reduce((a, b) => (b.born < a.born ? b : a));
+    fx.agentId = agentId;
+    fx.born = now;
+    fx.active = true;
+    fx.g.clear();
+    drawGlyph(fx.g, kind);
+    fx.root.visible = true;
+  }
+
+  private drawEffects(now: number): void {
+    const k = Math.min(1 / Math.max(0.25, this.cam.zoom), 3.2);
+    for (const fx of this.glyphs) {
+      if (!fx.active) continue;
+      const s = this.sprites.get(fx.agentId);
+      const age = now - fx.born;
+      const alpha = s && s.alive ? fadeAlpha(age, GLYPH_MS) : 0;
+      if (alpha <= 0) {
+        fx.active = false;
+        fx.root.visible = false;
+        continue;
+      }
+      // upper-right of the node, clear of the name label below; drifts up a little as it fades
+      const off = HUNGER_R + GLYPH_R * k;
+      fx.root.position.set(s!.root.x + off * 0.8, s!.root.y - off * 0.8 - (age / GLYPH_MS) * 6 * k);
+      fx.root.scale.set(k);
+      fx.root.alpha = alpha;
+    }
+
+    const g = this.arcG;
+    g.clear();
+    if (!this.arcs.length) return;
+    const w = 1.6 * k;
+    this.arcs = this.arcs.filter((arc) => {
+      const a = this.sprites.get(arc.from);
+      const b = this.sprites.get(arc.to);
+      const age = now - arc.born;
+      const alpha = a && b && a.alive && b.alive ? fadeAlpha(age, ARC_MS, 0.5) : 0;
+      if (alpha <= 0) return false;
+      const p0 = { x: a!.root.x, y: a!.root.y };
+      const p1 = { x: b!.root.x, y: b!.root.y };
+      const c = arcControl(p0, p1, HEX_SIZE * 3);
+      g.moveTo(p0.x, p0.y).quadraticCurveTo(c.x, c.y, p1.x, p1.y).stroke({ color: MESSAGE_COLOR, width: w, alpha: alpha * 0.55 });
+      // a dot travels sender -> target over the first 60% of the arc's life
+      const t = Math.min(1, age / (ARC_MS * 0.6));
+      const d = quadPoint(p0, c, p1, t);
+      g.circle(d.x, d.y, 3.2 * k).fill({ color: MESSAGE_COLOR, alpha });
+      g.circle(d.x, d.y, 3.2 * k).stroke({ color: INK, width: k, alpha: alpha * 0.8 });
+      return true;
+    });
   }
 
   setSelected(id: string | null): void {
@@ -651,20 +762,36 @@ export class World {
     const dt = Math.min(0.1, this.app.ticker.deltaMS / 1000);
     this.drawSprings(now);
     if (this.foodDirty && now - this.lastFoodDraw > 200) {
-      this.drawFood();
+      this.drawTerrain();
       this.foodDirty = false;
       this.lastFoodDraw = now;
     }
+    if (now - this.lastDeclutter > 120) {
+      this.declutterLabels();
+      this.lastDeclutter = now;
+    }
+    const fade = Math.min(1, dt * 10);
     for (const s of this.sprites.values()) {
+      const target = s.labelShown ? (s.alive ? 1 : 0.5) : 0;
+      if (s.label.alpha !== target) s.label.alpha = Math.abs(target - s.label.alpha) < 0.02 ? target : s.label.alpha + (target - s.label.alpha) * fade;
       const k = 1 - Math.pow(0.001, dt);
       s.root.x += (s.tx - s.root.x) * k;
       s.root.y += (s.ty - s.root.y) * k;
+      s.label.position.set(s.root.x, s.root.y + LABEL_DY);
+      if (s.bubble?.visible) s.bubble.position.set(s.root.x, s.root.y);
       if (s.thinking) {
         const t = (now % 1400) / 1400;
-        const r = HEX_SIZE * 0.42 + t * HEX_SIZE * 0.5;
+        const r = THINK_R + t * HEX_SIZE * 0.45;
         s.ring.clear();
         s.ring.circle(0, 0, r).stroke({ color: 0x7ff3ff, width: 2, alpha: (1 - t) * 0.9 });
-        s.ring.circle(0, 0, HEX_SIZE * 0.42).stroke({ color: 0x7ff3ff, width: 1.5, alpha: 0.6 });
+        s.ring.circle(0, 0, THINK_R).stroke({ color: 0x7ff3ff, width: 1.5, alpha: 0.6 });
+      }
+      if (s.starving) {
+        // gentle red breathing halo, ~1.6 s period
+        const w = 0.5 + 0.5 * Math.sin((now / 1600) * Math.PI * 2);
+        s.pulse.visible = true;
+        s.pulse.alpha = 0.2 + w * 0.5;
+        s.pulse.scale.set(1 + w * 0.18);
       }
       if (s.bubble && s.bubble.visible) {
         const age = (now - s.bubbleShownAt) / 1000;
@@ -673,12 +800,27 @@ export class World {
       }
     }
     this.drawLineage();
+    this.drawEffects(now);
     // ruin labels keep screen size
     const ls = Math.min(1 / Math.max(0.25, this.cam.zoom), 3.2);
     for (const c of this.ruinsG.children) {
       const lbl = (c as Container).children[1];
       if (lbl && lbl.scale.x !== ls) lbl.scale.set(ls);
     }
+  }
+
+  /** Hide name labels that would overlap a higher-priority one; selected and thinking nodes always keep theirs. */
+  private declutterLabels(): void {
+    const boxes: LabelBox[] = [];
+    for (const [id, s] of this.sprites) {
+      const l = s.label;
+      const priority =
+        id === this.selectedId ? LABEL_PRIORITY.selected : s.thinking ? LABEL_PRIORITY.thinking : s.alive ? LABEL_PRIORITY.alive : LABEL_PRIORITY.dead;
+      // world units: the label is counter-scaled, so width/height already include its scale
+      boxes.push({ id, x: l.x - l.width / 2, y: l.y, w: l.width, h: l.height, priority });
+    }
+    const shown = visibleLabels(boxes, 2 / Math.max(0.25, this.cam.zoom));
+    for (const [id, s] of this.sprites) s.labelShown = shown.has(id);
   }
 
   /** Faint child→parent lines while the selected node is a parent or a child. */
@@ -811,7 +953,6 @@ export class World {
 
 // ---------- marker drawing (pure PixiJS geometry, keyed on StructureKind) ----------
 
-const INK = 0x0a0d14;
 
 function drawStructure(g: Graphics, kind: StructureKind, locked: boolean): void {
   const col = STRUCTURE_COLOR[kind];
@@ -891,6 +1032,60 @@ function drawStructure(g: Graphics, kind: StructureKind, locked: boolean): void 
     }
   }
 }
+
+/** Action badge (screen-pixel units, centred on 0,0): dark disc, coloured rim, a simple vector symbol. */
+function drawGlyph(g: Graphics, kind: GlyphKind): void {
+  const R = GLYPH_R;
+  const col = GLYPH_COLOR[kind];
+  g.circle(0, 0, R).fill({ color: INK, alpha: 0.88 });
+  g.circle(0, 0, R).stroke({ color: col, width: 1.2, alpha: 0.95 });
+  const line = { color: col, width: 1.6, cap: "round" as const, join: "round" as const };
+  switch (kind) {
+    case "gathered": // arrow up into a basket
+      g.moveTo(0, 1).lineTo(0, -4.5).moveTo(-2.5, -2).lineTo(0, -4.5).lineTo(2.5, -2).stroke(line);
+      g.moveTo(-4, 1.5).lineTo(-3, 4.5).lineTo(3, 4.5).lineTo(4, 1.5).stroke(line);
+      break;
+    case "ate": // round morsel with a bite taken out
+      g.circle(0, 0, 4).fill({ color: col });
+      g.circle(3.6, -2.6, 2.2).fill({ color: INK });
+      break;
+    case "rested": // z
+      g.moveTo(-3.5, -3.5).lineTo(3.5, -3.5).lineTo(-3.5, 3.5).lineTo(3.5, 3.5).stroke(line);
+      break;
+    case "built": // house
+      g.poly([-4.5, -0.5, 0, -4.8, 4.5, -0.5]).stroke(line);
+      g.rect(-3.2, -0.5, 6.4, 4.8).stroke(line);
+      break;
+    case "planted": // sprout
+      g.moveTo(0, 4.5).lineTo(0, -1).stroke(line);
+      g.ellipse(-2.4, -2.2, 2.4, 1.3).fill({ color: col });
+      g.ellipse(2.4, -3.2, 2.4, 1.3).fill({ color: col });
+      break;
+    case "dropped": // arrow down onto the ground
+      g.moveTo(0, -4.5).lineTo(0, 2).moveTo(-2.5, -0.5).lineTo(0, 2).lineTo(2.5, -0.5).stroke(line);
+      g.moveTo(-4, 4.5).lineTo(4, 4.5).stroke(line);
+      break;
+    case "replicated": // two overlapping nodes
+      g.circle(-1.8, 0, 3).stroke(line);
+      g.circle(1.8, 0, 3).fill({ color: col });
+      break;
+    case "took-item": // hand-held square with an up arrow
+      g.rect(-3, 0, 6, 4.5).fill({ color: col });
+      g.moveTo(0, -1.5).lineTo(0, -5).moveTo(-2, -3).lineTo(0, -5).lineTo(2, -3).stroke(line);
+      break;
+  }
+}
+
+const GLYPH_COLOR: Record<GlyphKind, number> = {
+  gathered: 0x5fd08a,
+  ate: 0xffcf6b,
+  rested: 0x9fd8ff,
+  built: 0xe0b872,
+  planted: 0x8fe39a,
+  dropped: 0xc9ced8,
+  replicated: 0x7ff3ff,
+  "took-item": 0xe6e9ef,
+};
 
 function drawItemCluster(g: Graphics, x: number, y: number): void {
   const S = HEX_SIZE;

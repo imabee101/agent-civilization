@@ -282,13 +282,20 @@ Two more things keep a long run honest, both built on Bun 1.4 primitives:
 
 `bun run e2e` re-takes these at seven viewports and fails on any overflow, scroll, or uncovered map area (see `docs/acceptance.md`).
 
-Full-bleed PixiJS hex map under floating frosted-glass panels: top bar with
-day/phase clock, speed switcher and brain badge; left rail of self-declared
-group cards; right rail chronicle of literal events; a dossier for the
-selected node with live streaming thought; a minimap; a cinematic ribbon for
-deaths and other major moments; and an "under the hood" drawer with every
-raw prompt and output, each node's live files and log, and pacing stats.
-Optional browser narration reads literal event text and literal quotes only.
+Full-bleed PixiJS hex map under floating frosted-glass panels. On the map:
+food as tile shading, a hunger ring around every living node, a glyph when
+a node gathers, eats, rests, builds or drops, an arc for every message sent,
+speech bubbles, and a night that is a mood rather than a blackout. Around
+it: a top bar with day/phase clock, speed switcher, alive/born/died and a
+population sparkline; a mind cam showing the node whose turn is being
+written and what its code did; a left rail of self-declared group cards
+(living groups only); a right rail chronicle of the story (arrivals, deaths,
+speech, messages, builds, sharing, declarations; upkeep and code runs behind
+"all"); a dossier for the selected node with live streaming thought; a
+minimap; a cinematic ribbon for deaths and other major moments; and an
+"under the hood" drawer with every raw prompt and output, each node's live
+files and log, and pacing stats. Optional browser narration reads literal
+event text and literal quotes only.
 
 On phones the map still fills the whole screen; panels become full overlays
 behind a bottom tab bar.

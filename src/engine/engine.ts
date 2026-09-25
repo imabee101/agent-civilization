@@ -293,8 +293,21 @@ export class Engine {
 
   // ------------------------------------------------------------------ tick
 
-  /** Advance one tick: deliver, run handlers, step the world, schedule turns. */
+  /**
+   * True while the last brain call failed and no call or health probe has
+   * succeeded since. Nodes cannot act then, so the world holds instead of
+   * starving them for an infrastructure fault. The random baseline never fails.
+   */
+  brainOutage(): boolean {
+    return !this.brainStatus.connected && this.brain.kind !== "random";
+  }
+
+  /** Advance one tick: deliver, run handlers, step the world, schedule turns. While the brain is down, only retry turns. */
   async tick(): Promise<void> {
+    if (this.brainOutage()) {
+      this.pumpTurns();
+      return;
+    }
     if (this.ticking) return;
     this.ticking = true;
     const t0 = performance.now();
@@ -389,8 +402,8 @@ export class Engine {
     const agent = this.world.agents.get(agentId);
     if (!rt || !agent || !agent.alive || rt.inFlight) return undefined;
     rt.inFlight = true;
-    this.pacing.inFlight++;
     const startedAt = Date.now();
+    this.pacing.beginDecision(startedAt);
     const body = { tick: this.world.tick, food: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
     const tally = this.world.drainTally(agentId);
     delete tally["executed-code"];
@@ -490,7 +503,7 @@ export class Engine {
       };
     } finally {
       rt.inFlight = false;
-      this.pacing.inFlight = Math.max(0, this.pacing.inFlight - 1);
+      this.pacing.endDecision(startedAt);
       this.thinking.delete(agentId);
       this.emitThinking(agentId, record?.output ?? "", true, true);
     }
