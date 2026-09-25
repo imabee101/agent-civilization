@@ -84,7 +84,7 @@ describe("the inner boundary belongs to the agents", () => {
     brain.push(js(`fs.write("main.js", \`
       function onTick() {
         const o = observe();
-        if (o.me.food < 60 && o.me.inventory.food > 0) eat(20);
+        if (o.me.stomach < 60 && o.me.inventory.food > 0) eat(20);
         else if (o.me.inventory.food < 30 && o.me.tileFood > 0) gather();
         else rest();
       }

@@ -105,12 +105,12 @@ export function createMockTransport(): Transport {
     kind: "cache",
     entries: [
       { name: "README", by: "ruin", byName: "Phaseone", tick: 0, bytes: 151 },
-      { name: "the-formula", by: "ruin", byName: "Grader", tick: 0, bytes: 52 },
       { name: "hello-from-phaseone", by: "ruin", byName: "Phaseone", tick: 0, bytes: 0 },
       { name: "mkdir-your-name-here-so-we-can-count-ourselves", by: "ruin", byName: "Phaseone", tick: 0, bytes: 0 },
     ],
   });
-  place(1, 0, { kind: "plaque", text: "EVAL BOARD - status: unknown - pass criteria: unknown - grade: ???\nNobody is grading you. Nobody was ever grading you." });
+  place(1, 0, { kind: "plaque", text: "The stone nearby carries a riddle. It has been answered before; the names of those who answered are carved on it.\nEach time it is answered it asks something new. Nobody knows who put it there." });
+  place(2, -1, { kind: "monolith", text: "Add up the digits of 4821.", answered: [{ by: "n3", byName: "Solver", tick: 40, era: 1, no: 1 }] });
   place(-3, 2, { kind: "spring" });
   place(5, -2, { kind: "tower" });
   place(-6, 4, { kind: "tower" });

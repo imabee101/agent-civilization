@@ -84,7 +84,7 @@ interface NodeRuntime {
   loadedScript: string | undefined;
   lastResult?: string;
   /** Body at the start of the previous turn, for the "since your last turn" facts. */
-  lastTurn?: { tick: number; food: number; energy: number; health: number; carried: number };
+  lastTurn?: { tick: number; stomach: number; energy: number; health: number; carried: number };
   nextTurnTick: number;
   inFlight: boolean;
   /** Last handler error recorded, so a loop that throws the same thing every tick is written down once. */
@@ -430,7 +430,7 @@ export class Engine {
     const epoch = this.epoch;
     const abort = new AbortController();
     this.turnAborts.add(abort);
-    const body = { tick: this.world.tick, food: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
+    const body = { tick: this.world.tick, stomach: Math.round(agent.food), energy: Math.round(agent.energy), health: Math.round(agent.health), carried: Math.round(agent.inventory.food) };
     const tally = this.world.drainTally(agentId);
     delete tally["executed-code"];
     delete tally["code-error"];

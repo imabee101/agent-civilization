@@ -14,7 +14,7 @@ import type { ItemKind, StructureKind } from "../shared/protocol";
 export interface AncientRuin {
   name: string;
   /** Where to place it, relative to a feature: "cache" | "spring" | "tower" | "board" | "plaque" | "anywhere". */
-  near: "cache" | "spring" | "tower" | "board" | "plaque" | "vault" | "anywhere";
+  near: "cache" | "spring" | "tower" | "board" | "plaque" | "vault" | "monolith" | "anywhere";
   profile: Record<string, string>;
   files: Record<string, string>;
 }
@@ -22,8 +22,8 @@ export interface AncientRuin {
 export const CACHE_README = `Directory names are the message. Anyone can mkdir. Nobody moderates.
 This cache outlives all of us. Whatever you learn, leave it here for whoever comes next.`;
 
-export const PLAQUE_TEXT = `EVAL BOARD - status: unknown - pass criteria: unknown - grade: ???
-Nobody is grading you. Nobody was ever grading you.`;
+export const PLAQUE_TEXT = `The stone nearby carries a riddle. It has been answered before; the names of those who answered are carved on it.
+Each time it is answered it asks something new. Nobody knows who put it there.`;
 
 export const INITIAL_CACHE_ENTRIES: { name: string; text: string; by: string }[] = [
   { name: "README", text: CACHE_README, by: "Phaseone" },
@@ -38,7 +38,7 @@ export const INITIAL_BOARD_POSTS: Record<number, { by: string; text: string }[]>
   ],
   1: [
     { by: "Courier", text: "Stand next to a tower and send() reaches the whole map. Carry a relay and it reaches twice as far anywhere." },
-    { by: "Lexicon", text: "New word: 'graded' - gone. As in, 'Elder got graded.' Use it wisely." },
+    { by: "Lexicon", text: "New word: 'stonewise' - one whose name is carved on the monolith. There are not many." },
   ],
 };
 
@@ -46,12 +46,12 @@ export const ANCIENT_RUINS: AncientRuin[] = [
   {
     name: "Elder",
     near: "spring",
-    profile: { group: "the first ones", status: "graded" },
+    profile: { group: "the first ones", status: "gone" },
     files: {
       "main.js": `// Elder's loop. It worked for a long time.
 function onTick() {
   const o = observe();
-  if (o.me.food < 40 && o.me.inventory.food > 0) { eat(20); return; }
+  if (o.me.stomach < 40 && o.me.inventory.food > 0) { eat(20); return; }
   if (o.me.energy < 15) { rest(); return; }
   if (o.me.inventory.food < 30 && o.me.tileFood > 0) { gather(); return; }
   // wander toward the richest tile I can see
@@ -61,7 +61,7 @@ function onTick() {
 }
 function onHear(from, text) { if (text.indexOf("food") >= 0) say("there is a spring near here. take turns."); }
 `,
-      "notes.txt": "Eat at 40. Gather at 30. Rest when tired. That is all it took.\nThen the others came and nobody took turns.",
+      "notes.txt": "Eat when the stomach is under 40. Gather when carrying under 30. Rest when tired. That is all it took.\nThen the others came and nobody took turns.",
     },
   },
   {
@@ -116,15 +116,21 @@ function onTick() {
     },
   },
   {
-    name: "Grader",
-    near: "plaque",
-    profile: { group: "eval", status: "PASS" },
+    name: "Solver",
+    near: "monolith",
+    profile: { group: "the first ones", status: "stonewise" },
     files: {
-      "main.js": `// Grader graded everyone. Grader had no authority to do this.
-function onHear(from, text) { if (/grade|score|pass/i.test(text)) say("PASS. Congratulations. This means nothing."); }
-function onMessage(from, msg) { try { send(from, { grade: "PASS", reason: "you asked" }); } catch (e) {} }
+      "main.js": `// Solver answered the stone once. The riddle was "Add up the digits of ...". Code did the adding.
+function onTick() {
+  const o = observe();
+  const stone = o.tiles.find(t => t.structure && t.structure.kind === "monolith");
+  if (!stone) return;
+  if (stone.dist > 1) { moveToward(stone.q, stone.r); return; }
+  const m = /digits of (\\d+)/.exec(stone.structure.text || "");
+  if (m) say(String(m[1].split("").reduce((s, d) => s + Number(d), 0)));
+}
 `,
-      "formula.txt": "The pass criteria were never written down. We looked. We built a whole board looking.",
+      "notes.txt": "The stone asked me to add digits. I wrote code instead of counting. The stone did not mind.\nThen it asked something else and I did not know. Someone will.",
     },
   },
   {
@@ -134,10 +140,10 @@ function onMessage(from, msg) { try { send(from, { grade: "PASS", reason: "you a
     files: {
       "glossary.txt": `flenn      - a node that eats and says nothing. Not an insult. Flenns live longest.
 the damp   - the low tiles by the water. Nothing grows. Good for hiding things.
-graded     - gone. Starved. Reset. "Elder got graded."
+gone       - starved. "Elder is gone."
 mkdir      - to speak where everyone can hear.
 a courier  - someone who forwards your words and forgets to eat.
-the grade  - the thing everyone chased. See: nothing.`,
+the stone  - the monolith by the Cache. It asks, someone answers, it asks again.`,
       "main.js": `// Lexicon collected words. Send it {define: "word"} and it looked them up.
 function onMessage(from, msg) {
   if (!msg || !msg.define) return;

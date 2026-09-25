@@ -49,10 +49,10 @@ describe("buildUserPrompt", () => {
   });
 
   test("reports what changed since the last turn as plain facts", () => {
-    const from = { tick: 10, food: 80, energy: 90, health: 100, carried: 0 };
-    const to = { tick: 58, food: 52, energy: 40, health: 100, carried: 6 };
+    const from = { tick: 10, stomach: 80, energy: 90, health: 100, carried: 0 };
+    const to = { tick: 58, stomach: 52, energy: 40, health: 100, carried: 6 };
     const p = buildUserPrompt({ since: { from, to, events: { moved: 30, gathered: 2 } }, observation: {}, files: {}, log: [], turn: 4, handlers: [] });
-    expect(p).toContain("SINCE YOUR LAST TURN (48 ticks): food 80->52, energy 90->40, health 100->100, carried food 0->6. Your events: gathered x2, moved x30.");
+    expect(p).toContain("SINCE YOUR LAST TURN (48 ticks): stomach 80->52, energy 90->40, health 100->100, carried food 0->6. Your events: gathered x2, moved x30.");
     const idle = buildUserPrompt({ since: { from, to, events: {} }, observation: {}, files: {}, log: [], turn: 4, handlers: [] });
     expect(idle).toContain("Your events: none.");
   });

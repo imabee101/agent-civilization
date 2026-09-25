@@ -56,7 +56,7 @@ means an automated test in `tests/`; run `bun test` to re-verify.
 | A message board for them to grab onto | `src/world/world.ts` boards + cache | `board.read/post`, and the Cache where directory names are the message. |
 | Comprehensive, realistic sandbox with tools, not overboard | `src/sandbox/api.ts` | ~30 primitives across body, ground, communication, files, helpers; every one has one physical effect. |
 | Hidden artifacts placed strategically | `src/world/world.ts` `placeFeatures` | Key on sand/grass, lantern on rock/sand, seeds in forests, spare relay on grass; revealed only by standing there; the Cartographer's map names them vaguely. |
-| Meme inspiration, clean | `src/world/features.ts` | Shared cache as message board, "counting ourselves", a plaque for an eval nobody runs, a Grader that says PASS, "graded: gone". No real names. |
+| Meme inspiration, clean | `src/world/features.ts` | Shared cache as message board, "counting ourselves", a plaque about the monolith, a Solver ruin whose code answered one riddle, "the stone". No real names. |
 | Works on any device, portrait and landscape, no empty space, no overflow | `ui/app.css`, `scripts/e2e-screens.ts` | See UI section. |
 | Test and run it; screenshots | `bun test` (267 tests, 23 files), `bun run e2e` | `docs/screenshots/*.png`; full set in `scratch/ui-shots/` with `report.json`. Compiled binary `dist/agentciv` verified: page, assets, API, WebSocket, history, snapshot on SIGTERM, restore. |
 

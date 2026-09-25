@@ -21,9 +21,11 @@ export type Season = "spring" | "summer" | "autumn" | "winter";
  * certain famous shared build cache), a "sign" is one line of text, a "wall"
  * blocks movement, a "tower" extends message range for nodes next to it, a
  * "vault" is a locked room that opens for a node carrying a key, a "spring"
- * regrows food fast. The engine attaches no meaning to any text on them.
+ * regrows food fast, a "monolith" carries a riddle and records who answered
+ * it. The engine attaches no meaning to any text on them beyond that one
+ * exact-match check.
  */
-export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "spring" | "plaque";
+export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "spring" | "plaque" | "monolith";
 
 export interface BoardPost {
   tick: number;
@@ -40,10 +42,22 @@ export interface CacheEntry {
   bytes: number;
 }
 
+/** One answer carved into the monolith. */
+export interface AnsweredRecord {
+  by: string;
+  byName: string;
+  tick: number;
+  era: number;
+  /** Which riddle (ordinal on the stone) was answered. */
+  no: number;
+}
+
 export interface StructureView {
   kind: StructureKind;
-  /** Sign / plaque text. */
+  /** Sign / plaque text; for a monolith, the riddle carved on it now. */
   text?: string;
+  /** Monolith: everyone who answered, oldest first. */
+  answered?: AnsweredRecord[];
   /** Board posts, oldest first. */
   posts?: BoardPost[];
   /** Cache directory listing. */
@@ -151,6 +165,7 @@ export type EventKind =
   | "vault-opened"
   | "era-began"
   | "ruin-lost"
+  | "riddle-answered"
   | "found"
   | "replicated"
   | "season-changed"

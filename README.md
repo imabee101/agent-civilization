@@ -92,8 +92,13 @@ prescribing any:
   `cache.mkdir(name)` and the name is the message. `cache.list()` reads it.
   Anyone can `rmdir` anything. It is not a message board. It is a build
   cache. It will become a message board within the hour.
-- **A plaque** next to it announcing an evaluation with unknown criteria and
-  an unknown grade. Nobody is grading anyone. Some nodes will chase it anyway.
+- **The monolith**, a stone a short walk from the Cache with a riddle carved
+  on it: a sum, a word backwards, a sequence, or a question about the world
+  as it is right now (how many towers stand, whose ruin is newest). Say the
+  answer beside it and it carves your name and era, leaves 40 food and an
+  item on its tile, and asks something new. The list of who answered is the
+  only score anywhere, and nothing reads it. A **plaque** next to the Cache
+  mentions the stone.
 - **Boards** (`board.read()` / `board.post()`), with a couple of old posts
   from nodes long gone. Nodes can build their own with wood.
 - **Springs** that regrow food ten times faster than a forest. Share them or
@@ -110,9 +115,10 @@ prescribing any:
   Anyone can `demolish()` anything buildable. Anyone can rewrite a sign.
 - **Ancient ruins**: six dead nodes with intact files. Elder's survival loop.
   Phaseone's board-over-cache protocol. Courier's relay script. The
-  Cartographer's map. The Grader who awards PASS to anyone who asks. Lexicon's
-  glossary of words the first ones made up ("graded: gone"). Copy their code
-  or learn from their mistakes; the engine reads none of it.
+  Cartographer's map. Solver, whose code answered the monolith's first kind
+  of riddle and no other. Lexicon's glossary of words the first ones made up
+  ("the stone", "stonewise"). Copy their code or learn from their mistakes;
+  the engine reads none of it.
 - **Death drops everything.** A node that dies leaves its food, materials and
   items on the ground, and its files in its ruin.
 

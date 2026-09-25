@@ -6,7 +6,7 @@ import { API_DOC } from "../sandbox/api";
 
 export interface BodyFacts {
   tick: number;
-  food: number;
+  stomach: number;
   energy: number;
   health: number;
   carried: number;
@@ -48,7 +48,7 @@ export function buildUserPrompt(f: TurnFacts): string {
     const { from, to, events } = f.since;
     const d = (k: keyof BodyFacts) => `${k} ${from[k]}->${to[k]}`;
     const happened = Object.entries(events).sort().map(([k, n]) => `${k} x${n}`).join(", ") || "none";
-    parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("food")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
+    parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("stomach")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
   }
   const { tiles, ...rest } = f.observation as { tiles?: Record<string, unknown>[] };
   parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(rest)}`);

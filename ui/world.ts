@@ -996,6 +996,14 @@ function drawStructure(g: Graphics, kind: StructureKind, locked: boolean): void 
       }
       break;
     }
+    case "monolith": {
+      // tall standing stone, lit edge; the carved riddle is read in the dossier
+      g.poly([0, -S * 0.7, -S * 0.26, -S * 0.45, -S * 0.22, S * 0.42, S * 0.22, S * 0.42, S * 0.26, -S * 0.45]).fill({ color: 0x3a3428 });
+      g.poly([0, -S * 0.7, -S * 0.26, -S * 0.45, -S * 0.22, S * 0.42, S * 0.22, S * 0.42, S * 0.26, -S * 0.45]).stroke({ color: col, width: 1.6, alpha: 0.95 });
+      for (let i = 0; i < 3; i++) g.moveTo(-S * 0.1, -S * 0.2 + i * S * 0.16).lineTo(S * 0.1, -S * 0.2 + i * S * 0.16);
+      g.stroke({ color: col, width: 1, alpha: 0.7 });
+      break;
+    }
     case "plaque": {
       // stone tablet with engraved lines
       g.roundRect(-S * 0.3, -S * 0.4, S * 0.6, S * 0.74, 4).fill({ color: col });
