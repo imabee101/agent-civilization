@@ -110,7 +110,7 @@ export function createMockTransport(): Transport {
     ],
   });
   place(1, 0, { kind: "plaque", text: "The stone nearby carries a riddle. It has been answered before; the names of those who answered are carved on it.\nEach time it is answered it asks something new. Nobody knows who put it there." });
-  place(2, -1, { kind: "monolith", text: "Add up the digits of 4821.", answered: [{ by: "n3", byName: "Solver", tick: 40, era: 1, no: 1 }] });
+  place(2, -1, { kind: "monolith", text: "Add up the digits of 4821.", answered: [{ by: "n3", byName: "Solver", tick: 40, era: 1, no: 1, with: ["Courier"] }], voices: [{ by: "n1", byName: "Ash", tick: 300 }], voicesNeeded: 2 });
   place(-3, 2, { kind: "spring" });
   place(5, -2, { kind: "tower" });
   place(-6, 4, { kind: "tower" });

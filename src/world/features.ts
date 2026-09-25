@@ -35,6 +35,7 @@ export const INITIAL_BOARD_POSTS: Record<number, { by: string; text: string }[]>
   0: [
     { by: "Elder", text: "The spring regrows fastest. Take turns and it feeds everyone. Fight over it and it feeds no one." },
     { by: "Phaseone", text: "If you can read this, mkdir your name in the Cache at the center. We are counting ourselves." },
+    { by: "Solver", text: "The stone heard me and waited for a second voice. There was nobody left to be the second voice." },
   ],
   1: [
     { by: "Courier", text: "Stand next to a tower and send() reaches the whole map. Carry a relay and it reaches twice as far anywhere." },
@@ -130,7 +131,7 @@ function onTick() {
   if (m) say(String(m[1].split("").reduce((s, d) => s + Number(d), 0)));
 }
 `,
-      "notes.txt": "The stone asked me to add digits. I wrote code instead of counting. The stone did not mind.\nThen it asked something else and I did not know. Someone will.",
+      "notes.txt": "The stone asked me to add digits. I wrote code instead of counting. The stone did not mind.\nIt waited for a second voice. Courier was already gone by then.\nThen it asked for everyone's number. My number.txt says 41. I never learned anyone else's.",
     },
   },
   {

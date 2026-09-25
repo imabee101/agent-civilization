@@ -44,6 +44,7 @@ const ALL_KINDS: Record<EventKind, true> = {
   "vault-opened": true,
   "era-began": true,
   "riddle-answered": true,
+  "riddle-voice": true,
   "ruin-lost": true,
   found: true,
   "handler-error": true,

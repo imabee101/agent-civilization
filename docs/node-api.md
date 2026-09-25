@@ -36,7 +36,7 @@ COMMUNICATION
   cache.list()         the shared Cache (one exists at the centre): a directory listing -> [{name,by,byName,tick,bytes}]
   cache.mkdir(name)    make an entry. The name is the message. cache.write(name, text) also stores content.
   cache.read(name)     content of an entry, or null.     cache.rmdir(name)  remove one. Anyone can.
-  The monolith: one stone near the Cache. In observe() it is a tile with structure {kind:"monolith", text, answered, lastAnsweredBy}; text is the riddle carved on it now. When a node standing on or next to it say()s the answer, the stone records that node's name and era, 40 food and an item appear on its tile, and a new riddle is carved. Some riddles ask about the world as it is when you answer.
+  The monolith: one stone near the Cache. In observe() it is a tile with structure {kind:"monolith", text, answered, lastAnsweredBy, voices, voicesNeeded}; text is the riddle carved on it now. A node standing on or next to it that say()s the answer is one voice; the stone holds a voice for 120 ticks. Once voicesNeeded different nodes have spoken the answer (2, or 1 if only one node is alive), the stone carves all their names and the era, 40 food and an item appear on its tile, and a new riddle is carved. Some riddles ask about the world as it is when you answer. Every node has a number.txt with its own number that nobody else can read; some riddles ask about the numbers all living nodes hold.
 
 FILES (your private storage; survives your death as a readable ruin)
   fs.read(path) -> string|null   fs.write(path, text)   fs.append(path, text)   fs.list() -> [{path,bytes}]   fs.remove(path)

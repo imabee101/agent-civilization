@@ -6,7 +6,7 @@ import { API_DOC } from "../../src/sandbox/api";
 import * as lore from "../../src/world/features";
 import { hexDistance } from "../../src/world/hex";
 
-const facts: RiddleFacts = { towers: 2, population: 5, cacheEntries: 3, newestRuin: "Zei" };
+const facts: RiddleFacts = { towers: 2, population: 5, cacheEntries: 3, newestRuin: "Zei", numbers: [7, 41, 12] };
 
 describe("riddles", () => {
   test("deterministic per seed, fixed kinds first, never the same kind twice in a row", () => {
@@ -51,6 +51,14 @@ describe("riddles", () => {
     expect(answerOf(live, { ...facts, population: 1 })).toBe("1");
     expect(answerOf({ ...live, kind: "newest-ruin" }, facts)).toBe("Zei");
     expect(answerOf({ ...live, kind: "newest-ruin" }, { ...facts, newestRuin: undefined })).toBeUndefined();
+    expect(answerOf({ ...live, kind: "sum-of-numbers" }, facts)).toBe("60");
+    expect(answerOf({ ...live, kind: "largest-number" }, facts)).toBe("41");
+    expect(answerOf({ ...live, kind: "sum-of-numbers" }, { ...facts, numbers: [] })).toBeUndefined();
+    const kinds = new Set<string>();
+    const r2 = new Rng(4);
+    for (let no = 1; no <= 30; no++) kinds.add(makeRiddle(r2, no, 0, facts).kind);
+    expect(kinds.has("sum-of-numbers") || kinds.has("largest-number")).toBe(true);
+    expect(makeRiddle(new Rng(4), 3, 0, facts).kind).toMatch(/number/);
     const rng = new Rng(1);
     for (let i = 0; i < 30; i++) expect(makeRiddle(rng, 2, 0, { ...facts, newestRuin: undefined }).kind).not.toBe("newest-ruin");
   });
@@ -98,7 +106,7 @@ describe("the monolith in the world", () => {
     expect(ev.importance).toBe(3);
     expect(ev.agentId).toBe(a.id);
     expect(ev.text).toContain(first.text);
-    expect(stone.structure!.answered).toEqual([{ by: a.id, byName: a.name, tick: w.tick, era: 1, no: 1 }]);
+    expect(stone.structure!.answered).toEqual([{ by: a.id, byName: a.name, tick: w.tick, era: 1, no: 1, with: [] }]);
     expect(stone.food).toBeCloseTo(foodBefore + w.config.monolithFood, 3);
     expect(stone.items.length).toBe(1);
     expect(stone.structure!.riddle!.no).toBe(2);
@@ -106,7 +114,68 @@ describe("the monolith in the world", () => {
     expect(a.log.at(-1)).toContain("the monolith accepted");
     const v = w.observe(a.id) as unknown as { tiles: { structure?: { kind: string; answered?: number; lastAnsweredBy?: string; text?: string } }[] };
     const seen = v.tiles.find((t) => t.structure?.kind === "monolith")!.structure!;
-    expect(seen).toMatchObject({ answered: 1, lastAnsweredBy: a.name, text: stone.structure!.riddle!.text });
+    expect(seen).toMatchObject({ answered: 1, lastAnsweredBy: a.name, text: stone.structure!.riddle!.text, voicesNeeded: 1, voices: [] });
+  });
+
+  test("with two or more alive, the stone waits for a second node to speak the answer, then carves both", () => {
+    const w = mk();
+    const stone = stoneOf(w);
+    const first = stone.structure!.riddle!;
+    const a = w.spawnAgent({ at: stone });
+    const b = w.spawnAgent({ at: w.tiles.find((t) => t.terrain !== "water" && !t.structure && hexDistance(t, stone) === 1)! });
+    w.drainEvents();
+    w.intentSay(a.id, first.answer!);
+    w.step();
+    let evs = w.drainEvents();
+    expect(evs.some((e) => e.kind === "riddle-answered")).toBe(false);
+    expect(evs.find((e) => e.kind === "riddle-voice")!.text).toContain("waits for 1 more voice");
+    expect(a.log.at(-1)).toContain("waits for 1 more voice");
+    expect(stone.structure!.riddle!.no).toBe(1);
+    expect(w.tileView(stone).structure).toMatchObject({ voicesNeeded: 2, voices: [{ by: a.id, byName: a.name, tick: w.tick }] });
+    // the same node again is still one voice
+    w.intentSay(a.id, first.answer!);
+    w.step();
+    expect(w.drainEvents().some((e) => e.kind === "riddle-answered")).toBe(false);
+    expect(stone.structure!.voices!.length).toBe(1);
+    // b hears the answer said next to it and repeats it
+    expect(b.heard.at(-1)!.text).toBe(first.answer!);
+    w.intentSay(b.id, `${first.answer}`);
+    w.step();
+    evs = w.drainEvents();
+    const done = evs.find((e) => e.kind === "riddle-answered")!;
+    expect(done.text).toContain(`${b.name} and ${a.name}`);
+    expect(stone.structure!.answered).toEqual([{ by: b.id, byName: b.name, tick: w.tick, era: 1, no: 1, with: [a.name] }]);
+    expect(stone.structure!.voices).toEqual([]);
+    expect(stone.structure!.riddle!.no).toBe(2);
+    expect(a.log.at(-1)).toContain(`once ${b.name} spoke it too`);
+  });
+
+  test("a voice fades after monolithVoiceTicks", () => {
+    const w = new World({ seed: 5, mapRadius: 8, features: true, hearRadius: 3, monolithVoiceTicks: 5 });
+    const stone = stoneOf(w);
+    const a = w.spawnAgent({ at: stone });
+    const b = w.spawnAgent({ at: w.tiles.find((t) => t.terrain !== "water" && !t.structure && hexDistance(t, stone) === 1)! });
+    w.intentSay(a.id, stone.structure!.riddle!.answer!);
+    w.step();
+    for (let i = 0; i < 6; i++) w.step();
+    expect(w.tileView(stone).structure!.voices).toEqual([]);
+    w.intentSay(b.id, stone.structure!.riddle!.answer!);
+    w.step();
+    expect(stone.structure!.answered ?? []).toEqual([]);
+    expect(stone.structure!.voices!.map((v) => v.by)).toEqual([b.id]);
+  });
+
+  test("every node is born with its own number.txt, not its parent's", () => {
+    const w = mk();
+    const a = w.spawnAgent({ at: stoneOf(w) });
+    expect(a.files["number.txt"]).toBe(String(a.number));
+    expect(a.number).toBeGreaterThanOrEqual(1);
+    const child = w.spawnAgent({ files: { ...a.files }, parentId: a.id });
+    expect(child.files["number.txt"]).toBe(String(child.number));
+    const snap = w.snapshot();
+    for (const s of snap.agents) delete (s as { number?: number }).number;
+    const r = World.restore(snap);
+    for (const x of r.livingAgents()) expect(x.files["number.txt"]).toBeDefined();
   });
 
   test("only words spoken on or next to the stone count", () => {
