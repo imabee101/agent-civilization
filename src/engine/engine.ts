@@ -289,7 +289,7 @@ export class Engine {
       this.nodes.delete(id);
     }
     this.thinking.clear();
-    this.world.reset(seed);
+    this.world.reset(seed, this.cfg.world);
     this.lastArrivalTick = this.world.tick;
     this.events = [];
     this.decisions = [];

@@ -473,4 +473,16 @@ describe("no engine-authored social rules", () => {
     w.intentSend(a.id, b.id, "2");
     expect(() => w.intentSend(a.id, b.id, "3")).toThrow(/at most 2/);
   });
+
+  test("reset rebuilds the physics from the defaults plus overrides; restore keeps a snapshot's", () => {
+    const w = mk({ regrowthPerTick: 0.5 });
+    const r = World.restore(w.snapshot());
+    expect(r.config.regrowthPerTick).toBe(0.5);
+    r.reset(9, { mapRadius: 6, features: false });
+    expect(r.config.regrowthPerTick).toBe(0.0008);
+    expect(r.config.mapRadius).toBe(6);
+    expect(r.config.seed).toBe(9);
+    r.reset();
+    expect(r.config.seed).toBe(9);
+  });
 });
