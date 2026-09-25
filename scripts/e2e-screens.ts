@@ -117,15 +117,25 @@ const AUDIT_JS = `(() => {
   const cr = canvas ? canvas.getBoundingClientRect() : null;
   const offenders = [];
   const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const clips = (el) => { const cs = getComputedStyle(el); return cs.overflowX !== 'visible' || cs.overflowY !== 'visible' || cs.clipPath !== 'none' || cs.contain.includes('paint'); };
+  const intersect = (a, b) => ({ left: Math.max(a.left, b.left), top: Math.max(a.top, b.top), right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom) });
   for (const el of document.querySelectorAll('body *')) {
     if (!visible(el)) continue;
     if (el.closest('[aria-hidden="true"]')) continue;
-    const r = el.getBoundingClientRect();
-    if (r.right < 0 || r.bottom < 0 || r.left > vw || r.top > vh) continue;
+    let r = el.getBoundingClientRect();
+    r = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    // Anything clipped by a scrolling/clipping ancestor (other than html/body) is only as big as that ancestor shows.
+    for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+      if (clips(p)) r = intersect(r, p.getBoundingClientRect());
+    }
+    if (r.right <= r.left || r.bottom <= r.top) continue; // fully clipped away
+    if (r.right < 0 || r.bottom < 0 || r.left > vw || r.top > vh) continue; // parked off-screen on purpose
     if (r.left < -1 || r.top < -1 || r.right > vw + 1 || r.bottom > vh + 1) {
       offenders.push({ tag: el.tagName.toLowerCase(), id: el.id, cls: String(el.className).slice(0, 40), rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)] });
     }
   }
+  const w = window.__llmwar || {};
+  const rect = (sel) => { const el = document.querySelector(sel); if (!el || !visible(el)) return null; const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)]; };
   return {
     vw, vh, dpr: devicePixelRatio,
     scrollWidth: se.scrollWidth, scrollHeight: se.scrollHeight,
@@ -133,8 +143,10 @@ const AUDIT_JS = `(() => {
     canvas: cr ? [Math.round(cr.left), Math.round(cr.top), Math.round(cr.width), Math.round(cr.height)] : null,
     offenders: offenders.slice(0, 12),
     offenderCount: offenders.length,
-    agents: (window.__llmwar && window.__llmwar.state && window.__llmwar.state.agents) ? window.__llmwar.state.agents.length : -1,
-    connected: !!(window.__llmwar && window.__llmwar.state),
+    agents: (w.state && w.state.agents) ? w.state.agents.length : -1,
+    connected: !!w.state,
+    coverage: typeof w.coverage === 'function' ? w.coverage() : null,
+    panels: { topbar: rect('#topbar'), tabbar: rect('#tabbar'), groups: rect('.rail-left'), chronicle: rect('.rail-right'), hood: rect('#nerd'), dossier: rect('#dossier') },
   };
 })()`;
 
@@ -151,18 +163,22 @@ interface StateSpec {
   name: string;
   enter: string;
   mobileOnly?: boolean;
+  /** Key in facts.panels that must be visible in this state. */
+  panel?: string;
+  /** On mobile, the panel must fill the free area between top bar and tab bar. */
+  fills?: boolean;
 }
 
 const STATES: StateSpec[] = [
   { name: "world", enter: "true" },
-  { name: "dossier-agent", enter: `(() => { const w = window.__llmwar; if (w && w.state && w.state.agents.length && typeof w.selectAgent === 'function') { const a = w.state.agents.find(x => x.alive) || w.state.agents[0]; w.selectAgent(a.id); return true; } return false; })()` },
-  { name: "dossier-tile", enter: `(() => { const w = window.__llmwar; if (w && typeof w.selectTile === 'function' && w.tiles) { const ts = Array.isArray(w.tiles) ? w.tiles : [...w.tiles.values()]; const t = ts.find(x => x.structure && x.structure.kind === 'cache') || ts.find(x => x.structure); if (t) { w.selectTile(t.q, t.r); return true; } } return false; })()` },
-  { name: "groups", enter: clickJs("groups", "#tabbar"), mobileOnly: true },
-  { name: "chronicle", enter: clickJs("chronicle", "#tabbar"), mobileOnly: true },
-  { name: "hood-brain", enter: `${clickJs("hood", "#tabbar")} || ${clickJs("hood", "#topbar")} || ${clickJs("under the hood")}` },
-  { name: "hood-nodes", enter: clickJs("nodes", "#nerd") },
-  { name: "hood-pacing", enter: clickJs("pacing", "#nerd") },
-  { name: "back-to-world", enter: `${clickJs("world", "#tabbar")} || (document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), true)` },
+  { name: "dossier-agent", enter: `(() => { const w = window.__llmwar; if (w && w.state && w.state.agents && w.state.agents.length && typeof w.selectAgent === 'function') { const a = w.state.agents.find(x => x.alive) || w.state.agents[0]; w.selectAgent(a.id); return true; } return false; })()`, panel: "dossier" },
+  { name: "dossier-tile", enter: `(() => { const w = window.__llmwar; if (w && typeof w.selectTile === 'function' && w.tiles) { const ts = Array.isArray(w.tiles) ? w.tiles : [...w.tiles.values()]; const t = ts.find(x => x.structure && x.structure.kind === 'cache') || ts.find(x => x.structure); if (t) { w.selectTile(t.q, t.r); return true; } } return false; })()`, panel: "dossier" },
+  { name: "groups", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('groups'), true) : ${clickJs("groups", "#tabbar")}`, mobileOnly: true, panel: "groups", fills: true },
+  { name: "chronicle", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('chronicle'), true) : ${clickJs("chronicle", "#tabbar")}`, mobileOnly: true, panel: "chronicle", fills: true },
+  { name: "hood-brain", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('hood'), (window.__llmwar.openHoodTab && window.__llmwar.openHoodTab('brain')), true) : (${clickJs("hood", "#tabbar")} || ${clickJs("hood", "#topbar")} || ${clickJs("under the hood")})`, panel: "hood", fills: true },
+  { name: "hood-nodes", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('nodes'), true) : ${clickJs("nodes", "#nerd")}`, panel: "hood", fills: true },
+  { name: "hood-pacing", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('pacing'), true) : ${clickJs("pacing", "#nerd")}`, panel: "hood", fills: true },
+  { name: "back-to-world", enter: `(window.__llmwar && window.__llmwar.closeAll) ? (window.__llmwar.closeAll(), true) : (${clickJs("world", "#tabbar")} || (document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), true))` },
 ];
 
 interface Check {
@@ -196,7 +212,7 @@ async function main(): Promise<void> {
     const browser = new Cdp();
     await browser.connect(version.webSocketDebuggerUrl);
     for (const vp of VIEWPORTS) {
-      const { targetId } = await browser.send<{ targetId: string }>("Target.createTarget", { url: "about:blank", width: vp.width, height: vp.height });
+      const { targetId } = await browser.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" });
       const page = new Cdp();
       const targets = (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()) as { id: string; webSocketDebuggerUrl: string }[];
       await page.connect(targets.find((t) => t.id === targetId)!.webSocketDebuggerUrl);
@@ -225,6 +241,22 @@ async function main(): Promise<void> {
         else if (Math.abs(c[0]!) > 1 || Math.abs(c[1]!) > 1 || Math.abs(c[2]! - vp.width) > 1 || Math.abs(c[3]! - vp.height) > 1) problems.push(`canvas does not cover viewport: ${c.join(",")}`);
         if ((facts.offenderCount as number) > 0) problems.push(`${facts.offenderCount} element(s) outside viewport: ${JSON.stringify(facts.offenders)}`);
         if (facts.bodyOverflow !== "hidden" && facts.htmlOverflow !== "hidden") problems.push("html/body overflow is not hidden");
+        // No empty space: the map must cover the whole viewport whenever it is the backdrop.
+        if (typeof facts.coverage === "number" && facts.coverage < 0.985) problems.push(`map covers only ${Math.round((facts.coverage as number) * 100)}% of the viewport`);
+        if (facts.coverage === null) problems.push("no __llmwar.coverage() available");
+        const panels = facts.panels as Record<string, number[] | null>;
+        if (st.panel) {
+          const pr = panels[st.panel];
+          if (!pr) problems.push(`panel ${st.panel} is not visible`);
+          else if (st.fills && isMobile(vp)) {
+            const top = panels.topbar ? panels.topbar[3]! : 0;
+            const bottom = panels.tabbar ? panels.tabbar[1]! : vp.height;
+            const free = bottom - top;
+            const h = pr[3]! - pr[1]!;
+            const wdt = pr[2]! - pr[0]!;
+            if (h < free - 40 || wdt < vp.width - 40) problems.push(`panel ${st.panel} leaves empty space: ${wdt}x${h} of free ${vp.width}x${free}`);
+          }
+        }
         const shot = await page.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
         const file = `${OUT}/real-${vp.name}-${st.name}.png`;
         await Bun.write(file, Buffer.from(shot.data, "base64"));
