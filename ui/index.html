@@ -7,7 +7,7 @@
   <title>Agent Civilization</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Cinzel:wght@600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Cinzel:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body class="tab-world">
@@ -49,10 +49,10 @@
     </div>
 
     <div class="stats">
-      <div class="stat" title="Living nodes / population cap"><span class="lbl">alive</span><span id="stAlive" class="mono">0</span></div>
-      <div class="stat minor"><span class="lbl">groups</span><span id="stGroups" class="mono">0</span></div>
-      <div class="stat hot"><span class="lbl">thinking</span><span id="stThinking" class="mono">0</span></div>
-      <div class="stat minor"><span class="lbl">avg ms</span><span id="stLatency" class="mono">–</span></div>
+      <div class="stat" title="Living nodes"><span class="lbl">alive</span><span id="stAlive" class="mono">0</span></div>
+      <div class="stat minor" title="Nodes that arrived or were born after the founders"><span class="lbl">born</span><span id="stBorn" class="mono">0</span></div>
+      <div class="stat minor" title="Nodes that have died"><span class="lbl">died</span><span id="stDied" class="mono">0</span></div>
+      <svg id="popSpark" class="spark" viewBox="0 0 64 20" width="64" height="20" aria-label="Population over time"><polyline id="popLine" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" points="" /></svg>
     </div>
 
     <div id="brainBadge" class="badge" title="Brain backend">
@@ -81,11 +81,29 @@
     </div>
   </header>
 
+  <!-- First-visit explainer: what the viewer is looking at. Dismissal is remembered per browser. -->
+  <div id="explainer" class="glass" role="note" hidden>
+    <span>Each figure is a small AI that writes its own JavaScript to stay alive. Nothing tells it what to do: watch what it chooses.</span>
+    <button id="explainerClose" class="tbtn">got it</button>
+  </div>
+
+  <!-- Mind cam: the node whose turn is being written right now, then what its code did. Agent text is literal. -->
+  <section id="mindcam" class="glass" aria-label="Mind cam" aria-live="off" hidden>
+    <div class="mc-head">
+      <span class="mc-dot" id="mcDot"></span>
+      <span class="mc-name" id="mcName">—</span>
+      <span class="mc-state lbl" id="mcState">writing code</span>
+      <span class="mc-others lbl" id="mcOthers"></span>
+    </div>
+    <pre class="mc-code mono" id="mcCode"></pre>
+    <div class="mc-result" id="mcResult"></div>
+  </section>
+
   <!-- Left rail: groups derived from agents' own profiles -->
   <aside class="rail-left" id="railLeft" aria-label="Groups">
     <div class="rail-title lbl">groups</div>
     <div id="groupList" class="cards"></div>
-    <div id="groupEmpty" class="empty glass">No groups yet — nodes have not declared any.</div>
+    <div id="groupEmpty" class="empty glass">No groups yet: none of the living nodes has declared one.</div>
   </aside>
 
   <!-- Right rail: chronicle -->

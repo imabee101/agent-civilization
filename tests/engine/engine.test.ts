@@ -208,6 +208,25 @@ describe("Engine turns", () => {
     expect(e.pacingStats().inFlight).toBe(0);
   });
 
+  test("while the brain is down the world holds; it resumes once a call succeeds", async () => {
+    const brain = new ScriptedBrain([new Error("connection refused"), js("1")]);
+    const e = await mk(brain, { brainRetryMs: 0, turnIntervalTicks: 1 });
+    const [a] = e.world.livingAgents();
+    await e.runTurn(a!.id);
+    expect(e.brainOutage()).toBe(true);
+    const tick = e.world.tick;
+    const food = a!.food;
+    e.paused = false;
+    await e.tick();
+    expect(e.world.tick).toBe(tick);
+    expect(a!.food).toBe(food);
+    // the retry that tick() started succeeds
+    await new Promise((r) => setTimeout(r, 20));
+    expect(e.brainOutage()).toBe(false);
+    await e.tick();
+    expect(e.world.tick).toBe(tick + 1);
+  });
+
   test("pumpTurns honours concurrency and the turn interval", async () => {
     const brain = new ScriptedBrain([], 30);
     const e = await mk(brain, { concurrency: 1, turnIntervalTicks: 5, initialAgents: 3 });

@@ -293,8 +293,21 @@ export class Engine {
 
   // ------------------------------------------------------------------ tick
 
-  /** Advance one tick: deliver, run handlers, step the world, schedule turns. */
+  /**
+   * True while the last brain call failed and no call or health probe has
+   * succeeded since. Nodes cannot act then, so the world holds instead of
+   * starving them for an infrastructure fault. The random baseline never fails.
+   */
+  brainOutage(): boolean {
+    return !this.brainStatus.connected && this.brain.kind !== "random";
+  }
+
+  /** Advance one tick: deliver, run handlers, step the world, schedule turns. While the brain is down, only retry turns. */
   async tick(): Promise<void> {
+    if (this.brainOutage()) {
+      this.pumpTurns();
+      return;
+    }
     if (this.ticking) return;
     this.ticking = true;
     const t0 = performance.now();

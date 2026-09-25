@@ -81,6 +81,24 @@ describe("postJson", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 
+  test("the timeout is idle time: a body that keeps streaming outlives it, a stalled one does not", async () => {
+    const enc = new TextEncoder();
+    const drip = (gaps: number[]) =>
+      new ReadableStream<Uint8Array>({
+        async start(c) {
+          for (const g of gaps) {
+            await new Promise((r) => setTimeout(r, g));
+            c.enqueue(enc.encode("x"));
+          }
+          c.close();
+        },
+      });
+    const steady = await postJson("http://x", {}, { fetch: async () => new Response(drip([30, 30, 30, 30])), timeoutMs: 60 });
+    expect(await steady.text()).toBe("xxxx");
+    const stalled = await postJson("http://x", {}, { fetch: async (_u, init) => new Response(drip([10, 200]).pipeThrough(new TransformStream(), { signal: init?.signal ?? undefined })), timeoutMs: 60 });
+    await expect(stalled.text()).rejects.toBeDefined();
+  });
+
   test("honours an external abort signal", async () => {
     const fakeFetch = (_u: unknown, init?: RequestInit) =>
       new Promise<Response>((_res, rej) => {

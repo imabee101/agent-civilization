@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LLAMA=${LLAMA_DIR:-/home/imma/projects/llm/.opt/llama.cpp}
-MODEL=${MODEL:-/home/imma/projects/llm/models/mlabonne_Qwen3-1.7B-abliterated-Q4_0.gguf}
+MODEL=${MODEL:-/home/imma/projects/llm/models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_0.gguf}
 
 [[ $EUID -eq 0 ]] || { echo "install: run as root" >&2; exit 1; }
 [[ -x dist/agentciv ]] || { echo "install: dist/agentciv missing; run bun run build" >&2; exit 1; }
