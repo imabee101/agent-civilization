@@ -274,6 +274,17 @@ run this against one local GPU. None of this changes what a node may do; it
 only changes when its model is consulted. Handlers in `main.js` keep running
 every tick regardless.
 
+**What a turn costs, and what a cut reply does.** The prompt tells the node
+its reply budget in tokens and asks for under forty lines with no comments.
+The changing half of the prompt shrinks to `--prompt-chars` (default 12000):
+old log lines go first, then far tiles, then older messages, then the shown
+files are cut shorter. Message payloads are clipped to 240 characters and the
+nearest twelve nodes are listed. A reply that still runs past `--max-tokens`
+is not thrown away: the longest prefix that parses runs, the node is told how
+many lines made it, and the decision is marked. Top-level `const` and `let`
+in turn code and `main.js` are declared as `var`, so what a node declares
+persists between turns and can be declared again instead of throwing.
+
 Within that interval, turns go where something happened. A node is **hot**
 when it was sent something, heard something, hit a new error, crossed a
 body line (starving, exhausted), found an item, was heard by the stone, was
@@ -386,7 +397,7 @@ agentciv --help
 
 Everything has a flag and an `AGENTCIV_*` environment variable; flags win.
 Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
-`--concurrency`, `--snapshot-ticks`, `--max-tokens`, `--temperature`,
+`--concurrency`, `--snapshot-ticks`, `--max-tokens`, `--prompt-chars`, `--temperature`,
 `--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`),
 `--tls-cert`/`--tls-key` (both, or neither: serves HTTPS/WSS in-process).
 

@@ -5,7 +5,7 @@
  * It contains no rules about what nodes may do to each other. It moves
  * bytes and time forward. That's it.
  */
-import { SYSTEM_PROMPT, buildUserPrompt, extractCode } from "../brain/prompt";
+import { SYSTEM_PROMPT, buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations } from "../brain/prompt";
 import type { Brain } from "../brain/types";
 import { NodeSandbox, type SandboxLimits } from "../sandbox/sandbox";
 import type { HandlerName } from "../sandbox/api";
@@ -26,6 +26,8 @@ export interface EngineConfig extends PacingConfig {
   arrivalEveryTicks: number;
   maxTokens: number;
   temperature: number;
+  /** Character budget for the changing part of a turn prompt; sections shrink until it fits. 0 = no limit. */
+  promptMaxChars: number;
   /** Backend slots to pin nodes to, one node per slot while it lives (0 = let the backend choose). */
   slots: number;
   /** Ticks between automatic snapshots (0 disables). */
@@ -64,6 +66,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   arrivalEveryTicks: 60,
   maxTokens: 400,
   temperature: 0.7,
+  promptMaxChars: 12_000,
   slots: 0,
   snapshotEveryTicks: 120,
   snapshotPath: undefined,
@@ -263,7 +266,7 @@ export class Engine {
     const agent = this.world.agents.get(agentId);
     const src = agent?.alive && !agent.quarantined ? agent.files["turn.js"] : undefined;
     if (!agent || src === undefined || rt.sandbox.poisoned) return;
-    const r = rt.sandbox.eval(src, "turn.js");
+    const r = rt.sandbox.eval(relaxTopLevelDeclarations(src), "turn.js");
     this.pacing.sandboxCalls++;
     if (r.ok) {
       const handlers = rt.sandbox.handlers();
@@ -282,7 +285,7 @@ export class Engine {
     if (src === rt.loadedScript) return;
     rt.loadedScript = src;
     if (src === undefined) return;
-    const r = rt.sandbox.loadScript(src);
+    const r = rt.sandbox.loadScript(relaxTopLevelDeclarations(src));
     this.pacing.sandboxCalls++;
     if (!r.ok) {
       agent.lastError = `main.js: ${r.error}`;
@@ -594,6 +597,8 @@ export class Engine {
     const tileNow = this.world.tileAt(agent);
     rt.lastTurn = { ...body, inboxTick: agent.inbox.at(-1)?.tick, heardTick: agent.heard.at(-1)?.tick, lastError: agent.lastError, structureKey: tileNow?.structure ? `${tileNow.q},${tileNow.r}` : undefined };
     const facts = {
+      maxTokens: this.cfg.maxTokens,
+      maxChars: this.cfg.promptMaxChars > 0 ? this.cfg.promptMaxChars : undefined,
       since,
       observation: this.world.observe(agentId),
       files: { ...agent.files },
@@ -643,22 +648,42 @@ export class Engine {
       };
       agent.turns++;
       if (agent.alive && !rt.sandbox.poisoned) {
+        let toRun = code ? relaxTopLevelDeclarations(code) : "";
+        let cut: string | undefined;
         if (result.truncated) {
-          // Half a program is a syntax error at best and a different program at worst. Say exactly what happened.
-          record.error = `reply cut off at the ${this.cfg.maxTokens}-token limit; nothing ran`;
-          rt.lastResult = undefined;
-          agent.lastError = `your reply was cut off at the ${this.cfg.maxTokens}-token limit, so none of it ran`;
-          this.world.addLog(agentId, `turn reply cut off at ${this.cfg.maxTokens} tokens; nothing ran`);
-          this.world.record("code-error", 1, agentId, `${agent.name}'s reply was cut off at the token limit`, { data: { error: record.error } });
-        } else if (code) {
-          const r = rt.sandbox.eval(code, `turn${agent.turns}.js`);
+          // Half a program is a different program. Run only the complete lines before the cut, and say so.
+          // Parse-only check inside the node's own sandbox: nothing runs until a prefix parses whole.
+          const parses = (c: string) => {
+            const r = rt.sandbox.eval(`(function(s){ try { new Function(s); return "ok"; } catch (e) { return "no"; } })(${JSON.stringify(c)})`);
+            return r.ok && r.value === "ok";
+          };
+          const prefix = toRun ? longestParsingPrefix(toRun, parses) : undefined;
+          const total = toRun.split("\n").length;
+          const kept = prefix ? prefix.split("\n").length : 0;
+          cut = `reply cut off at the ${this.cfg.maxTokens}-token limit; ${kept ? `only the first ${kept} of ${total} lines were complete and ran` : "no complete line could run"}`;
+          toRun = prefix ?? "";
+          if (!toRun) {
+            record.error = cut;
+            rt.lastResult = undefined;
+            agent.lastError = `your reply was cut off at the ${this.cfg.maxTokens}-token limit, so none of it ran`;
+            this.world.addLog(agentId, `turn reply cut off at ${this.cfg.maxTokens} tokens; nothing ran`);
+            this.world.record("code-error", 1, agentId, `${agent.name}'s reply was cut off at the token limit`, { data: { error: cut } });
+          }
+        }
+        if (toRun) {
+          const r = rt.sandbox.eval(toRun, `turn${agent.turns}.js`);
           this.pacing.sandboxCalls++;
           if (r.ok) {
             record.result = r.value;
             rt.lastResult = r.value;
-            agent.lastError = undefined;
-            this.world.keepTurnScript(agentId, code);
-            this.world.record("executed-code", 1, agentId, `${agent.name} ran ${code.split("\n").length} line(s) of code`, { data: { result: r.value.slice(0, 120) } });
+            if (cut) {
+              record.error = cut;
+              agent.lastError = `your reply was cut off at the ${this.cfg.maxTokens}-token limit; ${cut.slice(cut.indexOf(";") + 2)}`;
+              this.world.addLog(agentId, `turn reply cut off at ${this.cfg.maxTokens} tokens; ran the complete lines before the cut`);
+              this.world.record("code-error", 1, agentId, `${agent.name}'s reply was cut off at the token limit; the complete lines before the cut ran`, { data: { error: cut } });
+            } else agent.lastError = undefined;
+            this.world.keepTurnScript(agentId, toRun);
+            this.world.record("executed-code", 1, agentId, `${agent.name} ran ${toRun.split("\n").length} line(s) of code`, { data: { result: r.value.slice(0, 120), ...(cut ? { partial: true } : {}) } });
           } else {
             record.error = r.error;
             rt.lastResult = undefined;
@@ -668,7 +693,7 @@ export class Engine {
             if (r.fatal) await this.rebuildNode(agentId, r.error);
           }
           this.loadScriptIfChanged(agentId, this.nodes.get(agentId) ?? rt);
-        } else {
+        } else if (!result.truncated) {
           record.error = "no code in output";
           agent.lastError = "your reply contained no code";
           this.world.addLog(agentId, "turn produced no code");
