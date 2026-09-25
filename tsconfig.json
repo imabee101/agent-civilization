@@ -15,5 +15,5 @@
     "jsx": "preserve",
     "verbatimModuleSyntax": true
   },
-  "include": ["src", "ui", "tests"]
+  "include": ["src", "ui", "tests", "scripts"]
 }
