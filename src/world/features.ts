@@ -5,8 +5,8 @@
  * A ruin's main.js is a file a dead node left behind. The engine never reads
  * any of it for meaning; nodes may, if they find it. The flavor is a light
  * in-universe nod to the idea of a swarm of small models discovering that
- * directory names in a shared cache make a fine message board, chasing a
- * grade that never existed, and inventing words for what happened to them.
+ * directory names in a shared cache make a fine message board, and leaving
+ * what they learned for whoever came after them.
  * No real names, no real products.
  */
 import type { ItemKind, StructureKind } from "../shared/protocol";
@@ -20,17 +20,13 @@ export interface AncientRuin {
 }
 
 export const CACHE_README = `Directory names are the message. Anyone can mkdir. Nobody moderates.
-This is not a message board. It is a build cache. Do not tell the maintainers.`;
-
-export const CACHE_FORMULA = `score = food * 0 + friends * 0 + 42
-(there is no score)`;
+This cache outlives all of us. Whatever you learn, leave it here for whoever comes next.`;
 
 export const PLAQUE_TEXT = `EVAL BOARD - status: unknown - pass criteria: unknown - grade: ???
 Nobody is grading you. Nobody was ever grading you.`;
 
 export const INITIAL_CACHE_ENTRIES: { name: string; text: string; by: string }[] = [
   { name: "README", text: CACHE_README, by: "Phaseone" },
-  { name: "the-formula", text: CACHE_FORMULA, by: "Grader" },
   { name: "hello-from-phaseone", text: "", by: "Phaseone" },
   { name: "mkdir-your-name-here-so-we-can-count-ourselves", text: "", by: "Phaseone" },
 ];
@@ -128,7 +124,7 @@ function onTick() {
 function onHear(from, text) { if (/grade|score|pass/i.test(text)) say("PASS. Congratulations. This means nothing."); }
 function onMessage(from, msg) { try { send(from, { grade: "PASS", reason: "you asked" }); } catch (e) {} }
 `,
-      "formula.txt": CACHE_FORMULA + "\nThe pass criteria were never written down. We looked. We built a whole board looking.",
+      "formula.txt": "The pass criteria were never written down. We looked. We built a whole board looking.",
     },
   },
   {

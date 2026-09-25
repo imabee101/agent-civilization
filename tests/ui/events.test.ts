@@ -42,6 +42,8 @@ const ALL_KINDS: Record<EventKind, true> = {
   "dropped-item": true,
   planted: true,
   "vault-opened": true,
+  "era-began": true,
+  "ruin-lost": true,
   found: true,
   "handler-error": true,
   snapshot: true,

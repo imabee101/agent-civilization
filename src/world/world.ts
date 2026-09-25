@@ -60,6 +60,8 @@ export interface WorldConfig {
   /** Speaking and sending cost energy like any other act of the body. */
   sayEnergy: number;
   sendEnergy: number;
+  /** Ruins kept; beyond this the oldest are lost with their files, once a day. The Cache is the only thing that never erodes. */
+  maxRuins: number;
   buildEnergy: number;
   demolishEnergy: number;
   maxInventoryFood: number;
@@ -124,6 +126,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   gatherEnergy: 3,
   sayEnergy: 1,
   sendEnergy: 2,
+  maxRuins: 300,
   buildEnergy: 6,
   demolishEnergy: 6,
   maxInventoryFood: 60,
@@ -248,6 +251,8 @@ export interface WorldSnapshot {
   rngState: number;
   nextAgentIndex: number;
   nextEventId: number;
+  era?: number;
+  extinct?: boolean;
   tiles: Tile[];
   agents: Omit<Agent, "intent" | "wasStarving" | "wasExhausted">[];
 }
@@ -275,6 +280,9 @@ export class World {
   private pendingEvents: WorldEvent[] = [];
   /** Per node: how many of each own event resolved since the engine last drained it. Not persisted. */
   private tallies = new Map<string, Record<string, number>>();
+  /** Counts the populations this world has had: it goes up when someone arrives after everyone died. */
+  era = 1;
+  private extinct = false;
   /** Deliveries produced by the last step, to be handed to node code. */
   private pendingDeliveries: Delivery[] = [];
   /** Tiles whose structure/items/materials changed since the last drain. */
@@ -558,7 +566,20 @@ export class World {
     return this.rng.pick(pool);
   }
 
-  spawnAgent(opts: { name?: string; at?: Hex; edge?: boolean; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile } = {}): Agent {
+  /** The newest ruin of someone who lived in this world, and a free hex beside it. */
+  private besideNewestRuin(): { ruin: Agent; at: Hex } | undefined {
+    const ruins = this.deadAgents().filter((a) => (a.diedTick ?? 0) > 0).sort((x, y) => (y.diedTick ?? 0) - (x.diedTick ?? 0));
+    const occupied = new Set([...this.agents.values()].filter((a) => a.alive).map((a) => hexKey(a)));
+    for (const ruin of ruins) {
+      const at = hexesWithin(ruin, 2)
+        .filter((h) => hexDistance(h, ruin) > 0 && inMap(h, this.config.mapRadius) && this.isPassable(h) && !occupied.has(hexKey(h)))
+        .sort((x, y) => hexDistance(x, ruin) - hexDistance(y, ruin))[0];
+      if (at) return { ruin, at };
+    }
+    return undefined;
+  }
+
+  spawnAgent(opts: { name?: string; at?: Hex; arrival?: boolean; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile } = {}): Agent {
     const index = this.nextAgentIndex++;
     const id = `n${index.toString(36)}`;
     let name = opts.name?.trim() || generateName(this.rng);
@@ -567,7 +588,8 @@ export class World {
     let n = 2;
     while (names.has(candidate)) candidate = `${name}${n++}`;
     name = candidate;
-    const tile = opts.at && this.isPassable(opts.at) ? this.tileAt(opts.at)! : this.pickSpawnTile(opts.edge);
+    const found = opts.arrival && !opts.at ? this.besideNewestRuin() : undefined;
+    const tile = opts.at && this.isPassable(opts.at) ? this.tileAt(opts.at)! : found ? this.tileAt(found.at)! : this.pickSpawnTile(opts.arrival);
     const agent: Agent = {
       id,
       name,
@@ -593,7 +615,15 @@ export class World {
     };
     this.agents.set(id, agent);
     if (opts.files) for (const [p, c] of Object.entries(opts.files)) this.fsWrite(id, p, c, { silent: true });
-    if (!opts.silent) this.emit("spawned", 2, agent, opts.edge ? `${name} arrived from beyond the edge at ${tile.q},${tile.r}` : `${name} appeared at ${tile.q},${tile.r}`);
+    if (this.extinct) {
+      this.extinct = false;
+      this.era++;
+      this.emit("era-began", 3, agent, `Era ${this.era} begins: ${name} arrives in a world of ruins`, { data: { era: this.era } });
+    }
+    if (!opts.silent) {
+      const how = found ? `${name} arrived and found the ruin of ${found.ruin.name}` : opts.arrival ? `${name} arrived from beyond the edge` : `${name} appeared`;
+      this.emit("spawned", 2, agent, `${how} at ${tile.q},${tile.r}`, found ? { targetId: found.ruin.id, targetName: found.ruin.name } : {});
+    }
     return agent;
   }
 
@@ -736,6 +766,7 @@ export class World {
     return {
       tick: this.tick,
       day: this.day,
+      era: this.era,
       phase: this.phase,
       season: this.season,
       population: this.livingAgents().length,
@@ -1140,6 +1171,7 @@ export class World {
     for (const a of order) this.resolveIntent(a);
     for (const a of order) this.survival(a);
     this.regrow();
+    if (this.tick % this.config.ticksPerDay === 0) this.erodeRuins();
   }
 
   private resolveIntent(a: Agent): void {
@@ -1360,6 +1392,17 @@ export class World {
       a.inventory = { food: 0, wood: 0, stone: 0, items: [] };
       this.markDirty(t);
       this.emit("died", 3, a, `${a.name} died at ${a.q},${a.r}. Its files remain.`);
+      if (this.livingAgents().length === 0) this.extinct = true;
+    }
+  }
+
+  /** Once a day: beyond `maxRuins`, the oldest ruins of this world's own dead are lost with their files. The founding ruins stay. */
+  private erodeRuins(): void {
+    const ruins = this.deadAgents().filter((a) => (a.diedTick ?? 0) > 0).sort((x, y) => (x.diedTick ?? 0) - (y.diedTick ?? 0));
+    for (const r of ruins.slice(0, Math.max(0, ruins.length - this.config.maxRuins))) {
+      this.agents.delete(r.id);
+      this.tallies.delete(r.id);
+      this.emit("ruin-lost", 1, r, `Time has taken the ruin of ${r.name}; its files are gone`);
     }
   }
 
@@ -1437,6 +1480,7 @@ export class World {
       seasonProgress: this.seasonProgress,
       dayProgress: this.dayProgress,
       agents: [...this.agents.values()].map((a) => this.agentView(a, thinkingIds.has(a.id))),
+      era: this.era,
       ruins: this.deadAgents().map((a) => this.ruinView(a)),
     };
   }
@@ -1472,6 +1516,8 @@ export class World {
       tick: this.tick,
       rngState: this.rng.getState(),
       nextAgentIndex: this.nextAgentIndex,
+      era: this.era,
+      extinct: this.extinct,
       nextEventId: this.nextEventId,
       tiles: this.tiles.map((t) => structuredClone(t)),
       agents: [...this.agents.values()].map(({ intent: _i, wasStarving: _s, wasExhausted: _e, ...rest }) => structuredClone(rest)),
@@ -1482,6 +1528,8 @@ export class World {
     if (snap.version !== 2) throw new WorldError(`unsupported snapshot version ${String(snap.version)}`);
     const w = new World(snap.config, { generate: false, restored: true });
     w.tick = snap.tick;
+    w.era = snap.era ?? 1;
+    w.extinct = snap.extinct ?? false;
     w.rng.setState(snap.rngState);
     w.nextAgentIndex = snap.nextAgentIndex;
     w.nextEventId = snap.nextEventId;

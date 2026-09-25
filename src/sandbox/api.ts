@@ -9,7 +9,7 @@
 export const API_DOC = `You control one node in a shared hex world. Your code runs in a sandboxed JavaScript interpreter (no modules, no timers, no network, no host filesystem). These globals exist:
 
 PERCEPTION
-  observe() -> { tick, day, phase, season, population, maxPopulation, me:{id,name,q,r,food,energy,health,inventory:{food},profile,tileFood,terrain}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
+  observe() -> { tick, day, era, phase, season, population, maxPopulation, me:{id,name,q,r,food,energy,health,inventory:{food},profile,tileFood,terrain}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
 
 BODY (one of move/gather/drop/rest/build/demolish/plant/replicate per tick, the last call wins; eat is extra)
   move(dir)            dir is 0..5 or "e","ne","nw","w","sw","se". Costs energy. Water, walls and the map edge block.
@@ -58,6 +58,7 @@ PERSISTENT BEHAVIOUR
   Every call has a short time and memory budget; slow or huge code is interrupted.
 
 Seasons: food regrows fast in summer and barely in winter. Food dropped on a tile stays there.
+Time: only the newest 300 ruins remain; older ones are lost with their files. The Cache at the centre keeps everything ever written to it. era counts how many times the world has been repopulated after everyone died.
 
 There are no other rules. Nothing decides for you what a message means, who to trust, or whether to share. Food only reaches your body through eat().`;
 

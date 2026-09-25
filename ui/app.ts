@@ -203,7 +203,7 @@ const sun = $("sun");
 function renderClock(): void {
   const st = S.state;
   if (!st) return;
-  $("dayNum").textContent = `Day ${st.day}`;
+  $("dayNum").textContent = `Era ${st.era} · Day ${st.day}`;
   $("phaseName").textContent = st.phase;
   $("seasonName").textContent = st.season ?? "";
   $("seasonName").title = `${st.season ?? ""} · ${Math.round((st.seasonProgress ?? 0) * 100)}% through the season`;
