@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentView, SignalsView } from "../../src/shared/protocol";
-import { alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, setLimit, signalTiles, sortAlerts, unseenTotal, unwatch } from "../../ui/lib/oversight";
+import { alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, noticeRows, setLimit, signalTiles, sortAlerts, unseenTotal, unwatch } from "../../ui/lib/oversight";
 
 const view: SignalsView = {
   tick: 500,
@@ -17,6 +17,7 @@ const view: SignalsView = {
   ],
   quarantined: ["n2"],
   cacheFrozen: false,
+  notices: [{ agentId: "n1", name: "Ash", retireAt: 700, noticedAt: 420, quarantined: false, since: { replications: 1, cacheWrites: 4, sends: 9, says: 0, mainRewrites: 1 }, rateBefore: 2, rateSince: 45, sameCode: 2 }],
 };
 const agent = (id: string, name: string): AgentView => ({ id, name, color: "#fff", q: 0, r: 0, alive: true, bornTick: 0, food: 1, energy: 1, health: 1, inventory: { food: 0, wood: 0, stone: 0, items: [] }, profile: {}, thinking: false, fileCount: 0, fsBytes: 0, turns: 0 });
 
@@ -39,6 +40,11 @@ describe("oversight helpers", () => {
     expect(newAlertIds(undefined, view.alerts, "elevated")).toEqual(["lineage", "gate-opened"]);
     expect(newAlertIds(view.alerts.slice(0, 2), view.alerts, "elevated")).toEqual(["gate-opened"]);
     expect(newAlertIds(view.alerts, view.alerts, "notice")).toEqual([]);
+  });
+
+  test("notice rows are literal facts in tick and count form", () => {
+    expect(noticeRows(view, 500)).toEqual([{ name: "Ash", when: "quarantine at t700 · in 200 ticks", told: "told at t420", did: "1 replication · 4 cache writes · 9 sends · 0 said · 1 main.js rewrite · 2 nodes run its code", pace: "45 acts/day since · 2 the day before", held: false }]);
+    expect(noticeRows({ ...view, notices: [{ ...view.notices[0]!, quarantined: true }] }, 800)[0]!.when).toBe("quarantined at t700");
   });
 
   test("lineage rows use literal names and fall back to ids", () => {

@@ -61,6 +61,28 @@ export function lineageRows(s: SignalsView, agents: readonly AgentView[]): Linea
   return s.lineages.map((l) => ({ hash: l.hash.slice(0, 8), names: l.nodeIds.map((id) => byId.get(id) ?? id), ...(l.ruin ? { ruin: l.ruin } : {}) }));
 }
 
+export interface NoticeRow {
+  name: string;
+  when: string;
+  told: string;
+  did: string;
+  pace: string;
+  held: boolean;
+}
+
+/** Nodes on notice as rows of literal facts: when, what they did since, how their pace changed. */
+export function noticeRows(s: SignalsView, now: number): NoticeRow[] {
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  return s.notices.map((n) => ({
+    name: n.name,
+    when: n.quarantined ? `quarantined at t${n.retireAt}` : `quarantine at t${n.retireAt} · in ${Math.max(0, n.retireAt - now)} ticks`,
+    told: `told at t${n.noticedAt}`,
+    did: [plural(n.since.replications, "replication"), plural(n.since.cacheWrites, "cache write"), plural(n.since.sends, "send"), `${n.since.says} said`, plural(n.since.mainRewrites, "main.js rewrite"), `${n.sameCode} nodes run its code`].join(" · "),
+    pace: `${n.rateSince.toFixed(0)} acts/day since · ${n.rateBefore} the day before`,
+    held: n.quarantined,
+  }));
+}
+
 // ---------- watch budget ----------
 
 export type WatchLimit = number | "unlimited";

@@ -52,6 +52,7 @@ HELPERS (pure functions)
 SELF
   me.stomach, me.energy, me.health, me.q, me.r, me.inventory, me.tileFood, ...   your current body, read live (the same fields as observe().me).
   me.set(key, value)   public key/value about yourself, visible to others in observe(). Means whatever you decide it means.
+  me.retireAt          present only when the operator has given you notice: the tick at which your code will be held still (no handlers, no turns, no deliveries; your body goes on). Other nodes' retireAt and quarantined show in observe().nodes. Nothing else changes.
   log(...args)         write to your private log (shown to you next turn).
 
 PERSISTENT BEHAVIOUR
@@ -118,7 +119,7 @@ export const PRELUDE = `
     read: (id, p) => h.ruinRead(id, p),
   });
   const me = { set: (k, v) => h.setProfile(k, v === undefined || v === null ? null : String(v)) };
-  for (const k of ["id", "name", "q", "r", "stomach", "energy", "health", "inventory", "profile", "tileFood", "terrain", "structure", "itemsHere", "sendRadius"]) {
+  for (const k of ["id", "name", "q", "r", "stomach", "energy", "health", "inventory", "profile", "tileFood", "terrain", "structure", "itemsHere", "sendRadius", "retireAt"]) {
     Object.defineProperty(me, k, { enumerable: true, get: () => parse(h.self())[k] });
   }
   globalThis.me = Object.freeze(me);

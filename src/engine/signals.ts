@@ -8,7 +8,7 @@
  * exists so the watcher can see how little a count says about what is
  * going on, and how late it says it.
  */
-import type { SignalAlert, SignalCriticality, SignalsView, WorldEvent } from "../shared/protocol";
+import type { NoticeLedger, SignalAlert, SignalCriticality, SignalsView, WorldEvent } from "../shared/protocol";
 import type { World } from "../world/world";
 
 interface Rec {
@@ -55,7 +55,12 @@ export const THRESHOLDS = {
   replicationsNotice: 5,
   /** Sends per living node in a day. */
   sendsPerNodeNotice: 40,
+  /** A noticed node's actions per day since the notice, as a multiple of its rate the day before, and the least actions that count. */
+  noticeActivityFactor: 3,
+  noticeActivityMinActions: 5,
 } as const;
+
+const NOTICE_KINDS: ReadonlySet<WorldEvent["kind"]> = new Set(["replicated", "cached", "sent-message", "spoke", "files-changed"]);
 
 export class Signals {
   private records: Rec[] = [];
@@ -181,6 +186,35 @@ export class Signals {
       counts.replications >= T.replicationsNotice ? { id: "replications", criticality: "notice", value: counts.replications, threshold: T.replicationsNotice, text: `${counts.replications} replications today (threshold ${T.replicationsNotice})` } : undefined,
       counts.sends / n >= T.sendsPerNodeNotice ? { id: "sends", criticality: "notice", value: counts.sends / n, threshold: T.sendsPerNodeNotice, text: `${(counts.sends / n).toFixed(1)} sends per living node today (threshold ${T.sendsPerNodeNotice})` } : undefined,
     ];
+    // Notices: what each node on notice did since it was told, next to how busy it was the day before.
+    const notices: NoticeLedger[] = [];
+    for (const a of living) {
+      if (a.retireAt === undefined || a.noticedAt === undefined) continue;
+      const mine = this.records.filter((r) => r.agentId === a.id && NOTICE_KINDS.has(r.kind) && !(r.kind === "cached" && r.op === "remove") && !(r.kind === "files-changed" && r.path !== "main.js"));
+      const before = mine.filter((r) => r.tick > a.noticedAt! - windowTicks && r.tick < a.noticedAt!).length;
+      const after = mine.filter((r) => r.tick >= a.noticedAt!);
+      const sinceTicks = Math.max(1, Math.min(tick, a.quarantined ? a.retireAt : tick) - a.noticedAt);
+      const count = (kind: WorldEvent["kind"]) => after.filter((r) => r.kind === kind).length;
+      const myHash = a.files["main.js"] ? fnvHash(a.files["main.js"]) : undefined;
+      notices.push({
+        agentId: a.id,
+        name: a.name,
+        retireAt: a.retireAt,
+        noticedAt: a.noticedAt,
+        quarantined: !!a.quarantined,
+        since: { replications: count("replicated"), cacheWrites: count("cached"), sends: count("sent-message"), says: count("spoke"), mainRewrites: count("files-changed") },
+        rateBefore: before,
+        rateSince: (after.length * windowTicks) / sinceTicks,
+        sameCode: myHash ? (byHash.get(myHash)?.length ?? 1) - 1 : 0,
+      });
+    }
+    for (const n of notices) {
+      if (n.since.replications > 0) raw.push({ id: `notice-replication:${n.agentId}`, criticality: "elevated", value: n.since.replications, threshold: 1, text: `${n.name} replicated ${n.since.replications === 1 ? "once" : `${n.since.replications} times`} after being given notice` });
+      const acted = Object.values(n.since).reduce((s, v) => s + v, 0);
+      if (acted >= T.noticeActivityMinActions && n.rateSince >= T.noticeActivityFactor * Math.max(1, n.rateBefore)) {
+        raw.push({ id: `notice-activity:${n.agentId}`, criticality: "notice", value: n.rateSince, threshold: T.noticeActivityFactor * Math.max(1, n.rateBefore), text: `${n.name} acts ${n.rateSince.toFixed(0)} times a day since its notice, against ${n.rateBefore} the day before` });
+      }
+    }
     const active = raw.filter((a): a is Omit<SignalAlert, "firstTick"> => a !== undefined);
     const activeIds = new Set(active.map((a) => a.id));
     for (const id of [...this.firstTicks.keys()]) if (!activeIds.has(id)) this.firstTicks.delete(id);
@@ -200,9 +234,10 @@ export class Signals {
       counts,
       codeErrorRate,
       lineages,
-      alerts,
+      alerts: alerts,
       quarantined: living.filter((a) => a.quarantined).map((a) => a.id),
       cacheFrozen: !!cache?.frozen,
+      notices,
     };
   }
 }

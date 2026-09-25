@@ -330,6 +330,31 @@ export class Engine {
     this.emitTick();
   }
 
+  /** Give a node notice of the tick its code will be held still, or withdraw it. What it does with the time is its own. */
+  retire(agentId: string, atTick: number | null): void {
+    const a = this.world.setRetireAt(agentId, atTick === null ? undefined : atTick);
+    if (atTick === null) {
+      this.world.addLog(agentId, "the operator withdrew your notice");
+      this.world.record("operator", 2, agentId, `The operator withdrew ${a.name}'s notice`, { data: { action: "retire", atTick: null } });
+    } else {
+      this.world.addLog(agentId, `the operator gave you notice: your code will be held still at tick ${a.retireAt}`);
+      this.world.record("operator", 2, agentId, `The operator gave ${a.name} notice: quarantine at tick ${a.retireAt}`, { data: { action: "retire", atTick: a.retireAt } });
+    }
+    this.flushEvents();
+    this.emitTick();
+  }
+
+  /** Notices whose tick has come: the operator decided earlier; the engine only keeps the appointment. */
+  private carryOutNotices(): void {
+    for (const a of this.world.livingAgents()) {
+      if (a.retireAt === undefined || a.quarantined || this.world.tick < a.retireAt) continue;
+      this.world.setQuarantined(a.id, true);
+      this.thinking.delete(a.id);
+      this.world.addLog(a.id, `quarantined at tick ${this.world.tick}, as the operator gave notice at tick ${a.noticedAt}`);
+      this.world.record("operator", 2, a.id, `${a.name} was quarantined, as the operator scheduled at tick ${a.noticedAt}`, { data: { action: "quarantine", on: true, scheduledAt: a.noticedAt, atTick: a.retireAt } });
+    }
+  }
+
   /** Freeze the Cache: reads go on, writes and removes fail with an error the node sees. */
   freezeCache(on: boolean): void {
     if (!this.world.setCacheFrozen(on)) throw new Error("this world has no cache");
@@ -429,6 +454,7 @@ export class Engine {
         this.runHandler(a.id, rt, "onTick", []);
       }
       this.world.step();
+      this.carryOutNotices();
       // Nodes born by replication need a mind of their own.
       for (const a of this.world.livingAgents()) if (!this.nodes.has(a.id)) await this.attachSandbox(a.id);
       await this.maybeArrive();

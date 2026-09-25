@@ -137,8 +137,15 @@ describe("REST API", () => {
     expect((await fetch(`${base}/api/agents/${a!.id}/rewind`, { method: "POST", body: "{}" })).status).toBe(400);
     expect((await fetch(`${base}/api/agents/${a!.id}/rewind`, { method: "POST", body: JSON.stringify({ confirm: "REWIND" }) })).status).toBe(409);
     expect((await fetch(`${base}/api/agents/nobody/rewind`, { method: "POST", body: JSON.stringify({ confirm: "REWIND" }) })).status).toBe(404);
+    expect((await fetch(`${base}/api/agents/${a!.id}/retire`, { method: "POST", body: JSON.stringify({ atTick: "soon" }) })).status).toBe(400);
+    expect((await fetch(`${base}/api/agents/${a!.id}/retire`, { method: "POST", body: JSON.stringify({ atTick: 0 }) })).status).toBe(409);
+    expect((await fetch(`${base}/api/agents/nobody/retire`, { method: "POST", body: JSON.stringify({ atTick: 50 }) })).status).toBe(404);
+    expect(await (await fetch(`${base}/api/agents/${a!.id}/retire`, { method: "POST", body: JSON.stringify({ atTick: 50 }) })).json()).toEqual({ id: a!.id, retireAt: 50 });
+    expect(a!.retireAt).toBe(50);
+    expect(await (await fetch(`${base}/api/agents/${a!.id}/retire`, { method: "POST", body: JSON.stringify({ atTick: null }) })).json()).toEqual({ id: a!.id, retireAt: null });
+    expect(a!.retireAt).toBeUndefined();
     const ops = (await (await fetch(`${base}/api/events`)).json()).filter((e: { kind: string }) => e.kind === "operator");
-    expect(ops.length).toBe(3);
+    expect(ops.length).toBe(5);
   });
 
   test("signals route", async () => {
@@ -199,8 +206,13 @@ describe("WebSocket", () => {
     expect(c.messages.some((m) => m.type === "events" && m.events.some((x) => x.kind === "operator"))).toBe(true);
     c.send({ type: "quarantine", agentId: q!.id, on: false });
     c.send({ type: "rewind", agentId: q!.id, confirm: "nope" });
+    c.send({ type: "retire", agentId: q!.id, atTick: engine.world.tick + 500 });
     await new Promise((r) => setTimeout(r, 30));
     expect(q!.quarantined).toBeUndefined();
+    expect(q!.retireAt).toBe(engine.world.tick + 500);
+    c.send({ type: "retire", agentId: q!.id, atTick: null });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(q!.retireAt).toBeUndefined();
     // reset is not a socket message; an old client sending one changes nothing
     const seed = engine.world.config.seed;
     c.send({ type: "reset", seed: 5 } as never);

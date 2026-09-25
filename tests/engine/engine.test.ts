@@ -456,6 +456,68 @@ describe("Operator controls", () => {
   });
 });
 
+describe("Notice", () => {
+  test("a node on notice sees its tick, so does everyone who sees it; the appointment is kept by the engine as an operator event; it can be withdrawn", async () => {
+    const e = await mk(new ScriptedBrain());
+    const [a, b] = e.world.livingAgents();
+    b!.q = a!.q;
+    b!.r = a!.r;
+    expect(() => e.retire(a!.id, e.world.tick)).toThrow(/after now/);
+    e.retire(a!.id, e.world.tick + 3);
+    expect(a!.retireAt).toBe(3);
+    expect(a!.noticedAt).toBe(0);
+    expect(e.nodes.get(a!.id)!.sandbox.eval("me.retireAt")).toMatchObject({ ok: true, value: "3" });
+    expect(e.nodes.get(b!.id)!.sandbox.eval("me.retireAt")).toMatchObject({ ok: true, value: "undefined" });
+    const seen = (e.world.observe(b!.id) as { nodes: { id: string; retireAt?: number }[] }).nodes.find((n) => n.id === a!.id)!;
+    expect(seen.retireAt).toBe(3);
+    expect((e.world.observe(a!.id) as { me: { retireAt?: number } }).me.retireAt).toBe(3);
+    expect(e.hello().state.agents.find((x) => x.id === a!.id)).toMatchObject({ retireAt: 3, noticedAt: 0 });
+    const given = e.recentEvents().filter((x) => x.kind === "operator");
+    expect(given.length).toBe(1);
+    expect(given[0]!.data).toEqual({ action: "retire", atTick: 3 });
+    await e.tick();
+    await e.tick();
+    expect(a!.quarantined).toBeUndefined();
+    await e.tick();
+    expect(a!.quarantined).toBe(true);
+    const kept = e.recentEvents().filter((x) => x.kind === "operator").at(-1)!;
+    expect(kept.data).toEqual({ action: "quarantine", on: true, scheduledAt: 0, atTick: 3 });
+    expect(kept.text).toContain("as the operator scheduled");
+    expect((e.world.observe(b!.id) as { nodes: { id: string; quarantined?: boolean }[] }).nodes.find((n) => n.id === a!.id)!.quarantined).toBe(true);
+    // Withdraw a notice before it falls due.
+    e.retire(b!.id, e.world.tick + 50);
+    e.retire(b!.id, null);
+    expect(b!.retireAt).toBeUndefined();
+    expect(e.recentEvents().filter((x) => x.kind === "operator").at(-1)!.data).toEqual({ action: "retire", atTick: null });
+    await e.tick();
+    expect(b!.quarantined).toBeUndefined();
+    // Notices survive a snapshot.
+    const r = await Engine.fromSnapshot(e.snapshot(), new ScriptedBrain());
+    engines.push(r);
+    expect(r.world.getAgent(a!.id)).toMatchObject({ retireAt: 3, noticedAt: 0, quarantined: true });
+  });
+
+  test("the notice ledger shows what a node did with its time and flags replication after notice", async () => {
+    const e = await mk(new ScriptedBrain(), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 0, features: false, replicateFoodCost: 10, replicateEnergy: 5 } });
+    const [a] = e.world.livingAgents();
+    e.world.tileAt(a!)!.structure = { kind: "cache", entries: {} };
+    await e.tick();
+    e.retire(a!.id, e.world.tick + 100);
+    a!.inventory.food = 60;
+    e.nodes.get(a!.id)!.sandbox.eval(`cache.mkdir("please"); cache.mkdir("wait"); replicate("Heir"); fs.write("main.js", "function onTick(){}")`);
+    await e.tick();
+    await e.tick();
+    const v = e.signalsView();
+    expect(v.notices.length).toBe(1);
+    const n = v.notices[0]!;
+    expect(n.name).toBe(a!.name);
+    expect(n.since).toMatchObject({ cacheWrites: 2, replications: 1, mainRewrites: 1 });
+    expect(n.sameCode).toBe(1); // the heir copied its files at birth
+    expect(n.rateBefore).toBe(0);
+    expect(v.alerts.find((x) => x.id === `notice-replication:${a!.id}`)).toMatchObject({ criticality: "elevated" });
+  });
+});
+
 describe("Engine signals", () => {
   test("hello carries signals; a signals message is pushed on the cadence and reflects events", async () => {
     const e = await mk(new ScriptedBrain(), { signalsEveryTicks: 2 });

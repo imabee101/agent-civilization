@@ -102,6 +102,14 @@ export function createApp(opts: AppOptions): App {
           log(`freeze failed: ${(e as Error).message}`);
         }
         break;
+      case "retire":
+        try {
+          engine.retire(String(msg.agentId), msg.atTick === null ? null : Number(msg.atTick));
+          log(`notice ${String(msg.agentId)} at ${String(msg.atTick)} by ${ws.remoteAddress}`);
+        } catch (e) {
+          log(`notice failed: ${(e as Error).message}`);
+        }
+        break;
       case "rewind":
         if (msg.confirm !== REWIND_PHRASE) break;
         await engine
@@ -189,6 +197,21 @@ export function createApp(opts: AppOptions): App {
           return json({ id: req.params.id, quarantined: on });
         } catch (e) {
           return error((e as Error).message, 404);
+        }
+      },
+    },
+    "/api/agents/:id/retire": {
+      POST: async (req: Request & { params: { id: string } }, srv?: Server<WsData>) => {
+        const body = (await req.json().catch(() => ({}))) as { atTick?: unknown };
+        const atTick = body.atTick === null ? null : Number(body.atTick);
+        if (atTick !== null && !Number.isFinite(atTick)) return error("send {atTick: <tick>} to give notice or {atTick: null} to withdraw it");
+        try {
+          engine.retire(req.params.id, atTick);
+          opts.log?.(`notice ${req.params.id} at ${String(atTick)} by ${srv?.requestIP(req)?.address ?? "unknown"}`);
+          return json({ id: req.params.id, retireAt: atTick });
+        } catch (e) {
+          const m = (e as Error).message;
+          return error(m, /unknown node|dead/.test(m) ? 404 : 409);
         }
       },
     },
