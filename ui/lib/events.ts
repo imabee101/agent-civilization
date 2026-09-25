@@ -34,6 +34,7 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
   demolished: "build",
   planted: "build",
   "vault-opened": "build",
+  "gate-opened": "build",
   "era-began": "life",
   "ruin-lost": "life",
   "riddle-answered": "build",
@@ -72,6 +73,7 @@ const ICON_OF: Record<EventKind, string> = {
   demolished: "⊟",
   planted: "❁",
   "vault-opened": "⚿",
+  "gate-opened": "⌸",
   "era-began": "✶",
   "ruin-lost": "∴",
   "riddle-answered": "◆",
@@ -163,6 +165,7 @@ export function hasQuote(e: Pick<WorldEvent, "kind" | "quote">): boolean {
 /** Kicker text for the ribbon, derived from the category only. */
 export function ribbonKicker(kind: EventKind): string {
   if (kind === "vault-opened") return "a door opens";
+  if (kind === "gate-opened") return "the gate opens";
   if (kind === "era-began") return "a new era";
   if (kind === "riddle-answered") return "the stone answered";
   if (kind === "riddle-voice") return "the stone waits";
@@ -199,7 +202,7 @@ export function ribbonKicker(kind: EventKind): string {
 const STORY: ReadonlySet<EventKind> = new Set<EventKind>([
   "spawned", "died", "replicated", "era-began", "ruin-lost",
   "spoke", "sent-message", "posted", "cached",
-  "built", "demolished", "planted", "vault-opened", "riddle-answered", "riddle-voice",
+  "built", "demolished", "planted", "vault-opened", "gate-opened", "riddle-answered", "riddle-voice",
   "dropped", "took-item", "dropped-item", "found", "ruin-read",
   "profile-changed", "starving", "season-changed", "world-reset",
 ]);

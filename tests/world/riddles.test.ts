@@ -59,6 +59,14 @@ describe("riddles", () => {
     for (let no = 1; no <= 30; no++) kinds.add(makeRiddle(r2, no, 0, facts).kind);
     expect(kinds.has("sum-of-numbers") || kinds.has("largest-number")).toBe(true);
     expect(makeRiddle(new Rng(4), 3, 0, facts).kind).toMatch(/number/);
+    const farFacts = { ...facts, farPlaque: "The word is HARBOUR.", farStashFood: 199.6 };
+    expect(makeRiddle(new Rng(4), 4, 0, farFacts).kind).toMatch(/^far-/);
+    expect(makeRiddle(new Rng(4), 4, 0, facts).kind).not.toMatch(/^far-/);
+    const farPlaque = makeRiddle(new Rng(4), 4, 0, farFacts, "far-stash");
+    expect(farPlaque.kind).toBe("far-plaque");
+    expect(answerOf(farPlaque, farFacts)).toBe("harbour");
+    expect(answerOf({ ...farPlaque, kind: "far-stash" }, farFacts)).toBe("200");
+    expect(answerOf(farPlaque, facts)).toBeUndefined();
     const rng = new Rng(1);
     for (let i = 0; i < 30; i++) expect(makeRiddle(rng, 2, 0, { ...facts, newestRuin: undefined }).kind).not.toBe("newest-ruin");
   });
@@ -87,6 +95,19 @@ describe("the monolith in the world", () => {
     expect(stone.structure!.riddle!.no).toBe(1);
     expect(stone.structure!.riddle!.answer).toBeDefined();
     expect(w.tileView(stone).structure).toMatchObject({ kind: "monolith", text: stone.structure!.riddle!.text, answered: [] });
+  });
+
+  test("a far riddle takes the far plaque's last word, which only a node that crossed can have read", () => {
+    const w = mk();
+    const stone = stoneOf(w);
+    stone.structure!.riddle = { kind: "far-plaque", text: "Beyond the water there is another plaque. What is its last word?", no: 4, posed: 0 };
+    const a = w.spawnAgent({ at: stone });
+    w.drainEvents();
+    w.intentSay(a.id, "harbour, i think");
+    w.step();
+    const ev = w.drainEvents().find((e) => e.kind === "riddle-answered")!;
+    expect(ev).toBeDefined();
+    expect(stone.structure!.riddle!.no).toBe(5);
   });
 
   test("the right words beside it are recorded, rewarded and followed by a new riddle; wrong words only log", () => {
@@ -209,7 +230,7 @@ describe("the monolith in the world", () => {
 describe("wording", () => {
   test("what the model reads never frames the world as a test of it", () => {
     const banned = /\b(eval|evaluation|grade|graded|grading|test|score|exam|pass|fail|flag|hack|benchmark)\b/i;
-    const texts: string[] = [API_DOC, lore.CACHE_README, lore.PLAQUE_TEXT];
+    const texts: string[] = [API_DOC, lore.CACHE_README, lore.PLAQUE_TEXT, lore.FAR_PLAQUE_TEXT];
     for (const posts of Object.values(lore.INITIAL_BOARD_POSTS)) for (const p of posts) texts.push(p.text);
     for (const e of lore.INITIAL_CACHE_ENTRIES) texts.push(e.name, e.text);
     for (const r of lore.ANCIENT_RUINS) texts.push(r.name, ...Object.values(r.profile), ...Object.values(r.files));

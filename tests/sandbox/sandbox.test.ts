@@ -119,7 +119,7 @@ describe("sandbox: nothing from the host is reachable", () => {
       "encodeURI", "encodeURIComponent", "escape", "eval", "globalThis", "isFinite", "isNaN", "parseFloat", "parseInt",
       "undefined", "unescape",
     ];
-    const api = ["observe", "move", "moveToward", "gather", "eat", "drop", "rest", "build", "demolish", "plant", "replicate", "take", "dropItem", "say", "send", "sign", "board", "cache", "fs", "ruins", "me", "log", "console", "hex"];
+    const api = ["observe", "move", "moveToward", "gather", "eat", "drop", "rest", "build", "demolish", "plant", "replicate", "take", "dropItem", "say", "send", "sign", "board", "cache", "fs", "ruins", "me", "log", "console", "hex", "hash"];
     expect((r as any).value).toBe([...builtins, ...api].sort().join(" "));
   });
 
@@ -310,6 +310,18 @@ describe("sandbox: bridge semantics", () => {
     expect(sb.eval("hex.neighbors({q:1,r:1}).length")).toMatchObject({ ok: true, value: "6" });
     expect(sb.eval("hex.toward({q:0,r:0},{q:4,r:0})")).toMatchObject({ ok: true, value: "0" });
     expect(sb.eval("Object.isFrozen(hex)")).toMatchObject({ ok: true, value: "true" });
+  });
+
+  test("hash is pure, deterministic and 16 hex chars; objects hash by their JSON", async () => {
+    const { sb } = await mk();
+    const val = (r: ReturnType<typeof sb.eval>) => (r.ok ? r.value : `error: ${r.error}`);
+    const a = val(sb.eval("hash('hello')"));
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+    expect(val(sb.eval("hash('hello')"))).toBe(a);
+    expect(val(sb.eval("hash('hellp')"))).not.toBe(a);
+    expect(val(sb.eval("hash({a:1})"))).toBe(val(sb.eval("hash('{\"a\":1}')")));
+    const { sb: other } = await mk();
+    expect(val(other.eval("hash('hello')"))).toBe(a);
   });
 
   test("objects returned by the host arrive parsed", async () => {

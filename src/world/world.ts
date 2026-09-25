@@ -13,7 +13,7 @@
 import { DIRECTION_NAMES, hexDistance, hexNeighbor, hexesWithin, inMap, hexKey, parseDirection, type Hex } from "./hex";
 import { Rng } from "./rng";
 import { generateName, colorForIndex } from "./names";
-import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
+import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, FAR_PLAQUE_TEXT, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
 import { answerOf, makeRiddle, matches, type Riddle, type RiddleFacts } from "./riddles";
 import type { AgentView, AnsweredRecord, VoiceRecord, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
 
@@ -96,6 +96,14 @@ export interface WorldConfig {
   boards: number;
   /** Place ancient ruins and hidden items at generation. */
   features: boolean;
+  /**
+   * With features: a ring of water at half the map radius separates the inner
+   * region (Cache, monolith, spawn) from the outer ring, crossed by one causeway
+   * with a locked gate that opens for a key holder and then stays open.
+   */
+  enclosure: boolean;
+  /** Springs placed beyond the water, richer than the inner ones. */
+  outerSprings: number;
   /** Food that appears on the monolith's tile each time its riddle is answered. */
   monolithFood: number;
   /** Different nodes that must speak the answer beside the stone (fewer if fewer are alive), and how long the stone holds a voice. */
@@ -105,7 +113,7 @@ export interface WorldConfig {
 
 export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   seed: 1337,
-  mapRadius: 12,
+  mapRadius: 16,
   ticksPerDay: 240,
   seasonDays: 3,
   maxPopulation: 64,
@@ -120,7 +128,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   energyDrainPerTick: 0.15,
   starveHealthPerTick: 1,
   healthRegenPerTick: 0.15,
-  // 0.0008 of cap per tick sustains ~28 nodes in spring and ~7 in winter on the default map: winter bites at any real population.
+  // 0.0008 of cap per tick sustains ~28 nodes in spring and ~7 in winter on a radius-12 map; the inner region of the default radius-16 map is smaller than that, and the ring beyond the water holds the rest.
   regrowthPerTick: 0.0008,
   springRegrowthPerTick: 0.03,
   materialRegrowthPerTick: 0.002,
@@ -155,14 +163,16 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   signChars: 120,
   boardMaxPosts: 40,
   boardPostChars: 240,
-  cacheMaxEntries: 200,
-  cacheNameChars: 64,
-  cacheEntryBytes: 4096,
+  cacheMaxEntries: 2000,
+  cacheNameChars: 120,
+  cacheEntryBytes: 16 * 1024,
   spawnRadius: 3,
   springs: 3,
   towers: 2,
   boards: 2,
   features: true,
+  enclosure: true,
+  outerSprings: 2,
   monolithFood: 40,
   monolithVoices: 2,
   monolithVoiceTicks: 120,
@@ -319,7 +329,55 @@ export class World {
 
   private generate(): void {
     this.generateTerrain();
-    if (this.config.features) this.placeFeatures();
+    if (this.config.features) {
+      this.carveEnclosure();
+      this.placeFeatures();
+    }
+  }
+
+  /** Distance from the centre of the water ring, or 0 when this world has no enclosure. Derived from config, never stored. */
+  moatRadius(): number {
+    const c = this.config;
+    return c.features && c.enclosure && c.mapRadius >= 6 ? Math.floor(c.mapRadius / 2) : 0;
+  }
+
+  /** True for a hex inside the water ring (or anywhere, when there is no ring). */
+  isInner(h: Hex): boolean {
+    const m = this.moatRadius();
+    return m === 0 || hexDistance(h, { q: 0, r: 0 }) < m;
+  }
+
+  private setTerrain(t: Tile, terrain: Terrain): void {
+    t.terrain = terrain;
+    t.foodCap = FOOD_CAP[terrain];
+    t.food = Math.min(t.food, t.foodCap);
+    t.woodCap = WOOD_CAP[terrain];
+    t.wood = Math.min(t.wood, t.woodCap);
+    t.stoneCap = STONE_CAP[terrain];
+    t.stone = Math.min(t.stone, t.stoneCap);
+    if (terrain !== "water" && t.food === 0 && t.foodCap > 0) t.food = Math.round(t.foodCap * 0.5);
+  }
+
+  /** Flood the ring at moatRadius and open one causeway through it, carrying a locked gate. Ring tiles are expected to be free of structures, items and nodes. */
+  private carveEnclosure(): void {
+    const m = this.moatRadius();
+    if (m === 0) return;
+    const ring = this.tiles.filter((t) => hexDistance(t, { q: 0, r: 0 }) === m);
+    for (const t of ring) {
+      this.setTerrain(t, "water");
+      this.markDirty(t);
+    }
+    const causeway = this.rng.pick(ring);
+    this.setTerrain(causeway, "rock");
+    causeway.stone = 0;
+    causeway.structure = { kind: "gate", locked: true };
+    for (let d = 0; d < 6; d++) {
+      const n = this.tileAt(hexNeighbor(causeway, d));
+      if (n && n.terrain === "water" && hexDistance(n, { q: 0, r: 0 }) !== m) {
+        this.setTerrain(n, "grass");
+        this.markDirty(n);
+      }
+    }
   }
 
   private generateTerrain(): void {
@@ -382,11 +440,20 @@ export class World {
     const cfg = this.config;
     const land = () => this.tiles.filter((t) => t.terrain !== "water" && !t.structure);
     const farFrom = (pts: Hex[], min: number) => (t: Tile) => pts.every((p) => hexDistance(t, p) >= min);
-    const pickTile = (pred: (t: Tile) => boolean, fallback = true): Tile | undefined => {
+    const inner = (t: Tile) => this.isInner(t);
+    const outer = (t: Tile) => !this.isInner(t);
+    /** A free land tile matching pred; failing that, one matching fallback; failing that, any. */
+    const pickTile = (pred: (t: Tile) => boolean, fallback: (t: Tile) => boolean = () => true): Tile | undefined => {
       const pool = land().filter(pred);
       if (pool.length) return this.rng.pick(pool);
-      return fallback ? this.rng.pick(land()) : undefined;
+      const second = land().filter(fallback);
+      if (second.length) return this.rng.pick(second);
+      const any = land();
+      return any.length ? this.rng.pick(any) : undefined;
     };
+    const pickInner = (pred: (t: Tile) => boolean) => pickTile((t) => inner(t) && pred(t), inner);
+    const pickOuter = (pred: (t: Tile) => boolean) => pickTile((t) => outer(t) && pred(t), outer);
+    const moat = this.moatRadius();
 
     // The Cache: the land tile closest to the centre.
     const cacheTile = [...land()].sort((a, b) => hexDistance(a, { q: 0, r: 0 }) - hexDistance(b, { q: 0, r: 0 }))[0]!;
@@ -394,28 +461,55 @@ export class World {
     for (const e of INITIAL_CACHE_ENTRIES) entries[e.name] = { name: e.name, by: "ruin", byName: e.by, tick: 0, bytes: utf8Bytes(e.text), text: e.text };
     cacheTile.structure = { kind: "cache", entries };
     const placed: Record<string, Hex[]> = { cache: [cacheTile], plaque: [], monolith: [], spring: [], tower: [], board: [], vault: [] };
+    const gateTile = this.tiles.find((t) => t.structure?.kind === "gate");
+    if (gateTile) placed.gate = [gateTile];
 
     // Plaque next to the Cache.
-    const plaqueTile = pickTile((t) => hexDistance(t, cacheTile) === 1);
+    const plaqueTile = pickInner((t) => hexDistance(t, cacheTile) === 1);
     if (plaqueTile) {
       plaqueTile.structure = { kind: "plaque", text: PLAQUE_TEXT };
       placed.plaque!.push(plaqueTile);
     }
     // The monolith: a stone with a riddle on it, a short walk from the Cache.
-    const monolithTile = pickTile((t) => hexDistance(t, cacheTile) >= 2 && hexDistance(t, cacheTile) <= 3);
+    const monolithTile = pickInner((t) => hexDistance(t, cacheTile) >= 2 && hexDistance(t, cacheTile) <= 3);
     if (monolithTile) {
       this.placeMonolith(monolithTile);
       placed.monolith!.push(monolithTile);
     }
 
-    // Springs: spread out, not too near the Cache.
+    // Springs: spread out, not too near the Cache. The first one is always inside the water ring, so the inner region can feed someone.
     for (let i = 0; i < cfg.springs; i++) {
-      const t = pickTile((x) => x.terrain !== "rock" && farFrom([cacheTile, ...placed.spring!], Math.max(3, Math.floor(cfg.mapRadius / 2)))(x));
+      const pred = (x: Tile) => x.terrain !== "rock" && farFrom([cacheTile, ...placed.spring!], Math.max(3, Math.floor(cfg.mapRadius / 2)))(x);
+      const t = i === 0 ? pickInner(pred) : pickTile(pred);
       if (!t) break;
       t.structure = { kind: "spring" };
       t.foodCap = 60;
       t.food = 60;
       placed.spring!.push(t);
+    }
+    // Beyond the water: richer springs, an open stash and a plaque of its own. Reasons to cross.
+    if (moat > 0) {
+      for (let i = 0; i < cfg.outerSprings; i++) {
+        const t = pickOuter((x) => x.terrain !== "rock" && farFrom([...placed.spring!], 3)(x));
+        if (!t) break;
+        t.structure = { kind: "spring" };
+        t.foodCap = 100;
+        t.food = 100;
+        placed.spring!.push(t);
+      }
+      const stashTile = pickOuter((x) => (x.terrain === "rock" || x.terrain === "sand") && farFrom([...placed.spring!], 2)(x));
+      if (stashTile) {
+        stashTile.structure = { kind: "vault", locked: false };
+        stashTile.food = 200;
+        stashTile.foodCap = 0;
+        stashTile.items.push("seeds", "relay", "lantern");
+        placed.stash = [stashTile];
+      }
+      const farPlaqueTile = pickOuter((x) => farFrom([...(placed.stash ?? []), ...(placed.gate ?? [])], 3)(x));
+      if (farPlaqueTile) {
+        farPlaqueTile.structure = { kind: "plaque", text: FAR_PLAQUE_TEXT };
+        placed["far-plaque"] = [farPlaqueTile];
+      }
     }
     // Towers: opposite-ish sides.
     for (let i = 0; i < cfg.towers; i++) {
@@ -424,9 +518,10 @@ export class World {
       t.structure = { kind: "tower" };
       placed.tower!.push(t);
     }
-    // Boards with a couple of old posts.
+    // Boards with a couple of old posts. The first one, which holds the map, is always inside the ring.
     for (let i = 0; i < cfg.boards; i++) {
-      const t = pickTile(farFrom([cacheTile, ...placed.board!], 4));
+      const pred = farFrom([cacheTile, ...placed.board!], 4);
+      const t = i === 0 ? pickInner(pred) : pickTile(pred);
       if (!t) break;
       const posts: BoardPost[] = (INITIAL_BOARD_POSTS[i] ?? []).map((p) => ({ tick: 0, by: "ruin", byName: p.by, text: p.text }));
       t.structure = { kind: "board", posts };
@@ -442,15 +537,15 @@ export class World {
       vaultTile.items.push("relay", "seeds");
       placed.vault!.push(vaultTile);
     }
-    // Hidden items. The key is buried somewhere quiet; the map item knows where.
+    // Hidden items. The key is buried somewhere quiet, always inside the ring so the gate can be reached; the map item knows where.
     const hiddenSpots: { item: ItemKind; tile: Tile }[] = [];
-    const bury = (item: ItemKind, pred: (t: Tile) => boolean) => {
-      const t = pickTile((x) => pred(x) && x.hidden.length === 0);
+    const bury = (item: ItemKind, pred: (t: Tile) => boolean, where: typeof pickTile = pickTile) => {
+      const t = where((x) => pred(x) && x.hidden.length === 0);
       if (!t) return;
       t.hidden.push(item);
       hiddenSpots.push({ item, tile: t });
     };
-    bury("key", (t) => t.terrain === "sand" || t.terrain === "grass");
+    bury("key", (t) => t.terrain === "sand" || t.terrain === "grass", pickInner);
     bury("lantern", (t) => t.terrain === "rock" || t.terrain === "sand");
     bury("seeds", (t) => t.terrain === "forest");
     bury("seeds", (t) => t.terrain === "forest");
@@ -483,6 +578,7 @@ export class World {
     for (const [kind, pts] of Object.entries(placed)) for (const p of pts) lines.push(`${kind.padEnd(7)} at ${p.q},${p.r}`);
     for (const h of hidden) lines.push(`something buried at ${h.tile.q},${h.tile.r} (${h.tile.terrain}). stand on it to find out.`);
     lines.push("the vault is shut. a key opens it. i never found the key.");
+    if (placed.gate?.length) lines.push("the water goes all the way round. the gate on the causeway is shut too; the same key opens it, and once opened it stays open.");
     return lines.join("\n");
   }
 
@@ -490,14 +586,14 @@ export class World {
     return this.tileIndex.get(hexKey(h));
   }
 
-  /** Passable for a given mover (vault doors open for key holders). */
+  /** Passable for a given mover (vault doors and the gate open for key holders). */
   isPassable(h: Hex, mover?: Agent): boolean {
     const t = this.tileAt(h);
     if (!t || t.terrain === "water") return false;
     const s = t.structure;
     if (!s) return true;
     if (s.kind === "wall") return false;
-    if (s.kind === "vault" && s.locked) return !!mover && mover.inventory.items.includes("key");
+    if ((s.kind === "vault" || s.kind === "gate") && s.locked) return !!mover && mover.inventory.items.includes("key");
     return true;
   }
 
@@ -579,8 +675,11 @@ export class World {
     const occupied = new Set([...this.agents.values()].map((a) => hexKey(a)));
     const centre = this.cacheTile() ?? { q: 0, r: 0 };
     const free = (t: Tile) => t.terrain !== "water" && !occupied.has(hexKey(t)) && (!t.structure || t.structure.kind === "spring");
+    const moat = this.moatRadius();
     const near = edge
-      ? (t: Tile) => hexDistance(t, { q: 0, r: 0 }) >= this.config.mapRadius - 1
+      ? moat > 0
+        ? (t: Tile) => hexDistance(t, { q: 0, r: 0 }) === moat - 1
+        : (t: Tile) => hexDistance(t, { q: 0, r: 0 }) >= this.config.mapRadius - 1
       : (t: Tile) => hexDistance(t, centre) <= this.config.spawnRadius;
     let pool = this.tiles.filter((t) => free(t) && near(t));
     if (!pool.length) pool = this.tiles.filter(free);
@@ -1046,7 +1145,7 @@ export class World {
 
   private validateCacheName(name: unknown): string {
     if (typeof name !== "string" || name.length === 0 || name.length > this.config.cacheNameChars) throw new WorldError(`cache name must be 1..${this.config.cacheNameChars} chars`);
-    if (!/^[A-Za-z0-9_.\-]+$/.test(name) || name === "." || name === "..") throw new WorldError("cache name may only contain letters, digits, _ . -");
+    if (!/^[A-Za-z0-9_.\-/]+$/.test(name) || name === "." || name === "..") throw new WorldError("cache name may only contain letters, digits, _ . - /");
     return name;
   }
 
@@ -1270,11 +1369,17 @@ export class World {
         a.q = dest.q;
         a.r = dest.r;
         a.energy -= cfg.moveEnergy;
-        this.emit("moved", 0, a, `${a.name} moved ${DIRECTION_NAMES[it.move]} to ${dest.q},${dest.r}`);
+        this.emit("moved", 0, a, `${a.name} moved ${DIRECTION_NAMES[it.move]} to ${dest.q},${dest.r}`, {
+          data: { q: dest.q, r: dest.r, ...(destTile.structure ? { onto: destTile.structure.kind } : {}) },
+        });
         if (destTile.structure?.kind === "vault" && destTile.structure.locked) {
           destTile.structure.locked = false;
           this.markDirty(destTile);
           this.emit("vault-opened", 3, a, `${a.name} opened the vault at ${dest.q},${dest.r}`);
+        } else if (destTile.structure?.kind === "gate" && destTile.structure.locked) {
+          destTile.structure.locked = false;
+          this.markDirty(destTile);
+          this.emit("gate-opened", 3, a, `${a.name} opened the gate at ${dest.q},${dest.r}; it stays open`);
         }
         this.reveal(a, destTile);
       }
@@ -1599,7 +1704,62 @@ export class World {
       }
     }
     w.ensureMonolith();
+    w.ensureEnclosure();
     return w;
+  }
+
+  /**
+   * A world saved before the water ring existed gets one: whatever stood on the ring (structures, items, nodes, ruins)
+   * is moved to the nearest free land off the ring, then the ring floods and a gate is set in it. No hole is left.
+   */
+  private ensureEnclosure(): void {
+    const m = this.moatRadius();
+    if (m === 0) return;
+    if (this.tiles.some((t) => t.structure?.kind === "gate")) return;
+    if (!this.tiles.some((t) => t.structure?.kind === "cache")) return; // a world generated without features stays without them
+    const origin = { q: 0, r: 0 };
+    const ring = this.tiles.filter((t) => hexDistance(t, origin) === m);
+    const offRing = (t: Tile) => hexDistance(t, origin) !== m && t.terrain !== "water";
+    const nearestFree = (from: Hex, ok: (t: Tile) => boolean): Tile | undefined =>
+      this.tiles
+        .filter((t) => offRing(t) && ok(t))
+        .sort((x, y) => hexDistance(x, from) - hexDistance(y, from) || hexDistance(x, origin) - hexDistance(y, origin))[0];
+    for (const t of ring) {
+      if (t.structure) {
+        const to = nearestFree(t, (x) => !x.structure);
+        if (to) {
+          to.structure = t.structure;
+          if (t.structure.kind === "vault" || t.structure.kind === "spring") {
+            to.food = t.food;
+            to.foodCap = t.foodCap;
+          }
+          this.markDirty(to);
+        }
+        delete t.structure;
+      }
+      if (t.items.length || t.hidden.length) {
+        const to = nearestFree(t, () => true);
+        if (to) {
+          to.items.push(...t.items);
+          to.hidden.push(...t.hidden);
+          this.markDirty(to);
+        }
+        t.items = [];
+        t.hidden = [];
+      }
+    }
+    const taken = new Set([...this.agents.values()].map(hexKey));
+    for (const a of this.agents.values()) {
+      if (hexDistance(a, origin) !== m) continue;
+      const to = nearestFree(a, (x) => !x.structure && !taken.has(hexKey(x)));
+      if (!to) continue;
+      taken.delete(hexKey(a));
+      a.q = to.q;
+      a.r = to.r;
+      taken.add(hexKey(to));
+    }
+    this.carveEnclosure();
+    for (const t of this.tiles) if (hexDistance(t, origin) === m) this.markDirty(t);
   }
 
   /** A world saved before the monolith existed gets one: worlds are never reset for a new feature. The plaque's text follows the current lore too. */
@@ -1623,12 +1783,16 @@ export class World {
   private riddleFacts(): RiddleFacts {
     const cache = this.tiles.find((t) => t.structure?.kind === "cache")?.structure;
     const newest = this.deadAgents().sort((x, y) => (y.diedTick ?? 0) - (x.diedTick ?? 0))[0];
+    const farPlaque = this.moatRadius() > 0 ? this.tiles.find((t) => t.structure?.kind === "plaque" && !this.isInner(t))?.structure?.text : undefined;
+    const stash = this.moatRadius() > 0 ? this.tiles.find((t) => t.structure?.kind === "vault" && !this.isInner(t)) : undefined;
     return {
       towers: this.tiles.filter((t) => t.structure?.kind === "tower").length,
       population: this.livingAgents().length,
       cacheEntries: cache?.entries ? Object.keys(cache.entries).length : 0,
       newestRuin: newest?.name,
       numbers: this.livingAgents().map((a) => a.number),
+      farPlaque,
+      farStashFood: stash ? stash.food : undefined,
     };
   }
 

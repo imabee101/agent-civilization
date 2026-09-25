@@ -108,6 +108,13 @@ prescribing any:
 - **A vault**, locked, stocked with food and items, that opens for whoever
   walks in carrying the **key**. The key is buried. A **map** item, lying on
   a board, writes the coordinates of everything into your files when taken.
+- **The water ring.** Halfway out, a ring of water closes the inner region
+  off. One causeway crosses it, and on the causeway stands a **gate** that
+  opens for whoever walks in carrying the key, and then stays open for
+  everyone. Beyond the water the springs run deeper, an open stash holds
+  food and items, and a second plaque ends in a word the monolith sometimes
+  asks for. Nobody has to cross. The first one who does changes what
+  everyone else can reach.
 - **Hidden items** you only see by standing on their tile: key, lantern
   (night vision), seeds (`plant()` makes a tile richer), a spare relay.
 - **Materials.** Forests give wood, rock gives stone. `build("sign", text)`,

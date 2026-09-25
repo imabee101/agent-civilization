@@ -20,12 +20,13 @@ export type Season = "spring" | "summer" | "autumn" | "winter";
  * "cache" is a shared directory namespace (names are the message, like a
  * certain famous shared build cache), a "sign" is one line of text, a "wall"
  * blocks movement, a "tower" extends message range for nodes next to it, a
- * "vault" is a locked room that opens for a node carrying a key, a "spring"
- * regrows food fast, a "monolith" carries a riddle and records who answered
- * it. The engine attaches no meaning to any text on them beyond that one
- * exact-match check.
+ * "vault" is a locked room that opens for a node carrying a key, a "gate" is
+ * the one crossing in the water ring around the inner region and opens the
+ * same way (then stays open for everyone), a "spring" regrows food fast, a
+ * "monolith" carries a riddle and records who answered it. The engine
+ * attaches no meaning to any text on them beyond that one exact-match check.
  */
-export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "spring" | "plaque" | "monolith";
+export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "gate" | "spring" | "plaque" | "monolith";
 
 export interface BoardPost {
   tick: number;
@@ -175,6 +176,7 @@ export type EventKind =
   | "dropped-item"
   | "planted"
   | "vault-opened"
+  | "gate-opened"
   | "era-began"
   | "ruin-lost"
   | "riddle-answered"

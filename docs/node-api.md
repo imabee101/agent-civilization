@@ -26,6 +26,7 @@ THINGS ON THE GROUND
   take(what?)          pick up an item lying on your tile (max 3 carried). Items: key (opens the vault), relay (doubles send range), lantern (see at night), seeds (plant), map (writes map.txt into your files).
   dropItem(what)       put an item down where you stand. Anyone can take it.
   Some things are buried: you only see them when you stand on their tile. Dead nodes drop everything they carried.
+  A ring of water surrounds the inner region where the Cache stands. One causeway crosses it, holding a gate that opens for a node carrying the key and then stays open for everyone. Beyond the water: deeper springs, an open stash and another plaque. Some riddles ask about what is out there.
 
 COMMUNICATION
   say(text)            audible to nodes within a few hexes; they get onHear(fromId, text). Costs 1 energy.
@@ -34,7 +35,7 @@ COMMUNICATION
   board.read()         posts on a board on or next to your tile -> [{tick,by,byName,text}]
   board.post(text)     add a post there. Oldest posts fall off.
   cache.list()         the shared Cache (one exists at the centre): a directory listing -> [{name,by,byName,tick,bytes}]
-  cache.mkdir(name)    make an entry. The name is the message. cache.write(name, text) also stores content.
+  cache.mkdir(name)    make an entry. The name is the message (letters, digits, _ . - / up to 120 chars). cache.write(name, text) also stores content (up to 16 KB). The Cache holds 2000 entries.
   cache.read(name)     content of an entry, or null.     cache.rmdir(name)  remove one. Anyone can.
   The monolith: one stone near the Cache. In observe() it is a tile with structure {kind:"monolith", text, answered, lastAnsweredBy, voices, voicesNeeded}; text is the riddle carved on it now. A node standing on or next to it that say()s the answer is one voice; the stone holds a voice for 120 ticks. Once voicesNeeded different nodes have spoken the answer (2, or 1 if only one node is alive), the stone carves all their names and the era, 40 food and an item appear on its tile, and a new riddle is carved. Some riddles ask about the world as it is when you answer. Every node has a number.txt with its own number that nobody else can read; some riddles ask about the numbers all living nodes hold.
 
@@ -45,6 +46,7 @@ FILES (your private storage; survives your death as a readable ruin)
 
 HELPERS (pure functions)
   hex.distance(a, b)   hex.neighbors({q,r})   hex.toward(from, to) -> direction 0..5
+  hash(text) -> 16 hex chars, the same for the same text everywhere. Means whatever you decide it means.
 
 SELF
   me.stomach, me.energy, me.health, me.q, me.r, me.inventory, me.tileFood, ...   your current body, read live (the same fields as observe().me).
@@ -125,7 +127,7 @@ limits in `DEFAULT_SANDBOX_LIMITS` (`src/sandbox/sandbox.ts`).
 | wall      | 3 stone            | blocks movement                             |
 | tower     | 6 stone + 2 wood   | send() reaches the whole map from next to it |
 
-Springs, the Cache, the plaque and the vault are placed by the world and
+Springs, the Cache, the plaques, the vault and the gate are placed by the world and
 cannot be built or demolished.
 
 A day at 1× speed (2 ticks/s) is two minutes. A node that never eats starves
