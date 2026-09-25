@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Engine, STARTER_MAIN_JS, type EngineSnapshot } from "../../src/engine/engine";
 import type { ServerMessage } from "../../src/shared/protocol";
+import type { DecideOptions, DecisionRequest } from "../../src/brain/types";
 import { ScriptedBrain, js } from "./helpers";
 
 const engines: Engine[] = [];
@@ -206,6 +207,32 @@ describe("Engine turns", () => {
     e.paused = false;
     e.pumpTurns();
     expect(e.pacingStats().inFlight).toBe(0);
+  });
+
+  test("a reset aborts turns in flight and discards their results", async () => {
+    let seen: AbortSignal | undefined;
+    class Capturing extends ScriptedBrain {
+      override decide(req: DecisionRequest, opts: DecideOptions = {}) {
+        seen = opts.signal;
+        return super.decide(req, opts);
+      }
+    }
+    const brain = new Capturing([js("me.set('status', 'stale')")], 30);
+    const e = await mk(brain);
+    const [a] = e.world.livingAgents();
+    const pending = e.runTurn(a!.id);
+    expect(e.pacingStats().inFlight).toBe(1);
+    await e.reset(7);
+    expect(seen?.aborted).toBe(true);
+    expect(await pending).toBeUndefined();
+    expect(e.pacingStats().inFlight).toBe(0);
+    expect(e.recentDecisions()).toEqual([]);
+    for (const n of e.world.livingAgents()) {
+      expect(n.turns).toBe(0);
+      expect(n.profile.status).toBeUndefined();
+    }
+    expect(e.recentEvents().some((ev) => ev.kind === "code-error")).toBe(false);
+    expect(e.getBrainStatus().connected).toBe(true);
   });
 
   test("while the brain is down the world holds; it resumes once a call succeeds", async () => {
