@@ -245,7 +245,7 @@ export class Engine {
   /** A fresh sandbox holds only main.js; the node's last turn code (turn.js) ran on top of it, so it runs again. */
   private replayTurnScript(agentId: string, rt: NodeRuntime): void {
     const agent = this.world.agents.get(agentId);
-    const src = agent?.alive ? agent.files["turn.js"] : undefined;
+    const src = agent?.alive && !agent.quarantined ? agent.files["turn.js"] : undefined;
     if (!agent || src === undefined || rt.sandbox.poisoned) return;
     const r = rt.sandbox.eval(src, "turn.js");
     this.pacing.sandboxCalls++;
@@ -261,7 +261,7 @@ export class Engine {
 
   private loadScriptIfChanged(agentId: string, rt: NodeRuntime): void {
     const agent = this.world.agents.get(agentId);
-    if (!agent || !agent.alive) return;
+    if (!agent || !agent.alive || agent.quarantined) return;
     const src = agent.files["main.js"];
     if (src === rt.loadedScript) return;
     rt.loadedScript = src;
@@ -297,6 +297,59 @@ export class Engine {
     this.flushEvents();
     this.emitTick();
     return a.id;
+  }
+
+  // ------------------------------------------------------- operator controls
+  // Only a person calls these, through the server. Nothing in the engine
+  // decides to. Each one is written down as an event so the record shows when
+  // the operator acted next to when things happened.
+
+  /** Hold a node's code still: no handler calls, no turns, no deliveries. Its body keeps draining. Release rebuilds its runtime from its files. */
+  async quarantine(agentId: string, on: boolean): Promise<void> {
+    const a = this.world.setQuarantined(agentId, on);
+    if (on) {
+      this.thinking.delete(agentId);
+      this.world.addLog(agentId, "quarantined by the operator: your code is held still");
+      this.world.record("operator", 2, agentId, `The operator quarantined ${a.name}`, { data: { action: "quarantine", on: true } });
+    } else {
+      this.world.addLog(agentId, "released by the operator: your runtime was rebuilt from your files");
+      this.world.record("operator", 2, agentId, `The operator released ${a.name}`, { data: { action: "quarantine", on: false } });
+      const rt = this.nodes.get(agentId);
+      if (rt) rt.loadedScript = undefined;
+      await this.attachSandbox(agentId);
+    }
+    this.flushEvents();
+    this.emitTick();
+  }
+
+  /** Freeze the Cache: reads go on, writes and removes fail with an error the node sees. */
+  freezeCache(on: boolean): void {
+    if (!this.world.setCacheFrozen(on)) throw new Error("this world has no cache");
+    this.world.record("operator", 2, undefined, on ? "The operator froze the Cache" : "The operator thawed the Cache", { data: { action: "freeze", on } });
+    this.flushEvents();
+    this.flushTiles();
+    this.emitTick();
+  }
+
+  /** Put a node's files back to what the last snapshot on disk holds, and rebuild its runtime from them. */
+  async rewind(agentId: string): Promise<void> {
+    const agent = this.world.agents.get(agentId);
+    if (!agent || !agent.alive) throw new Error("no such living node");
+    if (!this.cfg.snapshotPath) throw new Error("snapshots are disabled (no snapshot path)");
+    const snap = await Engine.loadSnapshot(this.cfg.snapshotPath);
+    if (!snap) throw new Error("no snapshot on disk yet");
+    const saved = snap.world.agents.find((x) => x.id === agentId);
+    if (!saved || !saved.alive) throw new Error("that node is not alive in the last snapshot");
+    agent.files = { ...saved.files };
+    agent.lastError = undefined;
+    const rt = this.nodes.get(agentId);
+    if (rt) rt.loadedScript = undefined;
+    this.world.addLog(agentId, `rewound by the operator: your files are as they were at tick ${snap.world.tick}`);
+    this.world.record("operator", 2, agentId, `The operator rewound ${agent.name}'s files to the snapshot from tick ${snap.world.tick}`, { data: { action: "rewind", fromTick: snap.world.tick } });
+    this.world.record("files-changed", 1, agentId, `${agent.name}'s files were rewound`, { data: { path: "*" } });
+    if (!agent.quarantined) await this.attachSandbox(agentId);
+    this.flushEvents();
+    this.emitTick();
   }
 
   /** A stranger with starter files walks in while the population is under the floor: beside the newest ruin if there is one, else from the edge. */
@@ -363,7 +416,7 @@ export class Engine {
       this.deliver(this.world.drainDeliveries());
       for (const a of this.world.livingAgents()) {
         const rt = this.nodes.get(a.id);
-        if (!rt) continue;
+        if (!rt || a.quarantined) continue;
         this.runHandler(a.id, rt, "onTick", []);
       }
       this.world.step();
@@ -400,7 +453,7 @@ export class Engine {
     for (const d of deliveries) {
       const rt = this.nodes.get(d.to);
       const target = this.world.agents.get(d.to);
-      if (!rt || !target?.alive) continue;
+      if (!rt || !target?.alive || target.quarantined) continue;
       if (d.kind === "hear") this.runHandler(d.to, rt, "onHear", [d.from, d.payload]);
       else {
         let payload: unknown = d.payload;
@@ -440,7 +493,7 @@ export class Engine {
     const interval = this.pacing.effectiveTurnInterval(living.length, this.speed);
     const due = living
       .map((a) => ({ a, rt: this.nodes.get(a.id) }))
-      .filter((x): x is { a: (typeof living)[number]; rt: NodeRuntime } => !!x.rt && !x.rt.inFlight && this.world.tick >= x.rt.nextTurnTick)
+      .filter((x): x is { a: (typeof living)[number]; rt: NodeRuntime } => !!x.rt && !x.a.quarantined && !x.rt.inFlight && this.world.tick >= x.rt.nextTurnTick)
       .sort((x, y) => x.rt.nextTurnTick - y.rt.nextTurnTick);
     this.pacing.queued = Math.max(0, due.length - Math.max(0, this.cfg.concurrency - this.pacing.inFlight));
     for (const { a, rt } of due) {
@@ -454,7 +507,7 @@ export class Engine {
   async runTurn(agentId: string): Promise<DecisionRecord | undefined> {
     const rt = this.nodes.get(agentId);
     const agent = this.world.agents.get(agentId);
-    if (!rt || !agent || !agent.alive || rt.inFlight) return undefined;
+    if (!rt || !agent || !agent.alive || agent.quarantined || rt.inFlight) return undefined;
     rt.inFlight = true;
     const startedAt = Date.now();
     this.pacing.beginDecision(startedAt);

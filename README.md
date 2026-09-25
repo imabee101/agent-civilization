@@ -324,6 +324,16 @@ event text and literal quotes only.
 On phones the map still fills the whole screen; panels become full overlays
 behind a bottom tab bar.
 
+**The operator's hand.** Three things only a person can do, from the drawer
+or the dossier, never from node code: **quarantine** a node (its code gets
+no handler calls, no turns and no deliveries; its body keeps draining, so
+holding a node still can starve it), **freeze the Cache** (reads go on,
+writes and removes fail with an error the node sees), and **rewind** a
+node's files to the last snapshot on disk, after typing the word. Each one
+is written into the chronicle as an `operator` event, so the record shows
+when the person acted next to when things happened. Nothing in the engine
+ever calls these itself.
+
 No UI category, icon or class name is keyed to a social concept. Event
 categories are derived from generic kinds (`moved`, `spoke`, `sent-message`,
 `executed-code`, `files-changed`, `profile-changed`, `died`, …).

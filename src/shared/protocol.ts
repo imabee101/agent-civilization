@@ -77,8 +77,10 @@ export interface StructureView {
   entries?: CacheEntry[];
   /** Who built it (node id), if a node did. */
   builtBy?: string;
-  /** For vaults: whether the door is currently shut. */
+  /** For vaults and the gate: whether the door is currently shut. */
   locked?: boolean;
+  /** For the Cache: set by the operator; while true nothing can be made or removed in it. */
+  frozen?: boolean;
 }
 
 /** Carriable things. Each has one physical effect and nothing else. */
@@ -141,6 +143,8 @@ export interface AgentView {
   lastError?: string;
   /** Total model decisions this node has received. */
   turns: number;
+  /** Set by the operator: the node's code gets no handler calls, no turns and no deliveries until released. Its body goes on. */
+  quarantined?: boolean;
 }
 
 /** A dead node left in the world. Files are intact and readable by neighbours. */
@@ -177,6 +181,7 @@ export type EventKind =
   | "planted"
   | "vault-opened"
   | "gate-opened"
+  | "operator"
   | "era-began"
   | "ruin-lost"
   | "riddle-answered"
@@ -400,7 +405,13 @@ export type ClientMessage =
   | { type: "spawn"; name?: string }
   | { type: "snapshot" }
   /** Subscribe to file/log detail updates for one node (or null to stop). */
-  | { type: "watch"; agentId: string | null };
+  | { type: "watch"; agentId: string | null }
+  /** Operator controls. Human-only; the engine never sends these to itself. */
+  | { type: "quarantine"; agentId: string; on: boolean }
+  | { type: "freeze"; on: boolean }
+  | { type: "rewind"; agentId: string; confirm: string };
+
+export const REWIND_PHRASE = "REWIND";
 
 export const SPEEDS = [1, 2, 4] as const;
 export type Speed = (typeof SPEEDS)[number];

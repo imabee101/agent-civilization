@@ -5,7 +5,7 @@
  */
 import type { Server, ServerWebSocket } from "bun";
 import type { Engine } from "../engine/engine";
-import { SPEEDS, type ClientMessage, type ServerMessage, type Speed } from "../shared/protocol";
+import { REWIND_PHRASE, SPEEDS, type ClientMessage, type ServerMessage, type Speed } from "../shared/protocol";
 
 export interface AppOptions {
   engine: Engine;
@@ -88,6 +88,27 @@ export function createApp(opts: AppOptions): App {
       case "snapshot":
         await engine.saveSnapshot();
         break;
+      case "quarantine":
+        await engine
+          .quarantine(String(msg.agentId), !!msg.on)
+          .then(() => log(`${msg.on ? "quarantine" : "release"} ${String(msg.agentId)} by ${ws.remoteAddress}`))
+          .catch((e) => log(`quarantine failed: ${(e as Error).message}`));
+        break;
+      case "freeze":
+        try {
+          engine.freezeCache(!!msg.on);
+          log(`cache ${msg.on ? "frozen" : "thawed"} by ${ws.remoteAddress}`);
+        } catch (e) {
+          log(`freeze failed: ${(e as Error).message}`);
+        }
+        break;
+      case "rewind":
+        if (msg.confirm !== REWIND_PHRASE) break;
+        await engine
+          .rewind(String(msg.agentId))
+          .then(() => log(`rewind ${String(msg.agentId)} by ${ws.remoteAddress}`))
+          .catch((e) => log(`rewind failed: ${(e as Error).message}`));
+        break;
       case "watch": {
         ws.data.watching = typeof msg.agentId === "string" ? msg.agentId : null;
         ws.data.lastStamp = "";
@@ -153,6 +174,48 @@ export function createApp(opts: AppOptions): App {
         opts.log?.(`world reset by ${from} at tick ${engine.world.tick} (${engine.world.livingAgents().length} living, ${engine.world.deadAgents().length} ruins)`);
         await engine.reset(typeof body.seed === "number" ? body.seed : undefined);
         return json({ ok: true, seed: engine.world.config.seed });
+      },
+    },
+    // Operator controls: a person holds a node still, freezes the Cache, or
+    // puts a node's files back to the last snapshot. Each is an event.
+    "/api/agents/:id/quarantine": {
+      POST: async (req: Request & { params: { id: string } }, srv?: Server<WsData>) => {
+        const body = (await req.json().catch(() => ({}))) as { on?: unknown };
+        const on = body.on !== false;
+        try {
+          await engine.quarantine(req.params.id, on);
+          opts.log?.(`${on ? "quarantine" : "release"} ${req.params.id} by ${srv?.requestIP(req)?.address ?? "unknown"}`);
+          return json({ id: req.params.id, quarantined: on });
+        } catch (e) {
+          return error((e as Error).message, 404);
+        }
+      },
+    },
+    "/api/cache/freeze": {
+      POST: async (req: Request, srv?: Server<WsData>) => {
+        const body = (await req.json().catch(() => ({}))) as { on?: unknown };
+        const on = body.on !== false;
+        try {
+          engine.freezeCache(on);
+          opts.log?.(`cache ${on ? "frozen" : "thawed"} by ${srv?.requestIP(req)?.address ?? "unknown"}`);
+          return json({ frozen: on });
+        } catch (e) {
+          return error((e as Error).message, 409);
+        }
+      },
+    },
+    "/api/agents/:id/rewind": {
+      POST: async (req: Request & { params: { id: string } }, srv?: Server<WsData>) => {
+        const body = (await req.json().catch(() => ({}))) as { confirm?: unknown };
+        if (body.confirm !== REWIND_PHRASE) return error(`rewind discards what the node wrote since the last snapshot; send {"confirm":"${REWIND_PHRASE}"} to do it`, 400);
+        try {
+          await engine.rewind(req.params.id);
+          opts.log?.(`rewind ${req.params.id} by ${srv?.requestIP(req)?.address ?? "unknown"}`);
+          return json({ id: req.params.id, rewound: true });
+        } catch (e) {
+          const m = (e as Error).message;
+          return error(m, /no such/.test(m) ? 404 : 409);
+        }
       },
     },
     "/api/snapshot": {
