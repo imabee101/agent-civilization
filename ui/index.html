@@ -104,7 +104,7 @@
 
   <!-- Left rail: groups derived from agents' own profiles -->
   <aside class="rail-left" id="railLeft" aria-label="Groups">
-    <div class="rail-title lbl">groups</div>
+    <div class="rail-title"><span class="lbl">groups</span><button id="groupsVisibility" class="panel-toggle" type="button" aria-pressed="true" aria-label="Hide Groups">−</button></div>
     <div id="groupList" class="cards"></div>
     <div id="groupEmpty" class="empty glass">No groups yet: none of the living nodes has declared one.</div>
   </aside>
@@ -112,7 +112,7 @@
   <!-- Right rail: chronicle -->
   <aside class="rail-right glass" id="railRight" aria-label="Chronicle">
     <div class="chron-head">
-      <span class="lbl">chronicle</span>
+      <span class="lbl">chronicle</span><button id="chronicleVisibility" class="panel-toggle" type="button" aria-pressed="true" aria-label="Hide Chronicle">−</button>
       <label class="chk"><input type="checkbox" id="chkAll" /> <span>all</span></label>
     </div>
     <div id="evList" class="ev-list"></div>
@@ -128,39 +128,39 @@
         <div class="d-chips" id="dChips"></div>
       </div>
     </div>
-    <div class="d-bars d-agent">
+    <div class="d-bars d-agent" data-disclosure-key="dossier.status" data-disclosure-label="status">
       <div class="bar"><span class="lbl">health</span><div class="track"><div class="fill health" id="dHealth"></div></div><span class="mono val" id="dHealthV">0</span></div>
       <div class="bar"><span class="lbl">stomach</span><div class="track"><div class="fill food" id="dFood"></div></div><span class="mono val" id="dFoodV">0</span></div>
       <div class="bar"><span class="lbl">energy</span><div class="track"><div class="fill energy" id="dEnergy"></div></div><span class="mono val" id="dEnergyV">0</span></div>
     </div>
-    <div class="d-inv d-agent">
+    <div class="d-inv d-agent" data-disclosure-key="dossier.inventory" data-disclosure-label="inventory">
       <span class="lbl">inventory</span>
       <div class="chips" id="dInv"></div>
     </div>
-    <div class="d-kv" id="dKV"></div>
-    <div class="d-thought d-agent">
+    <div class="d-kv" id="dKV" data-disclosure-key="dossier.profile" data-disclosure-label="profile"></div>
+    <div class="d-thought d-agent" data-disclosure-key="dossier.thought" data-disclosure-label="live thought">
       <span class="lbl">live thought</span>
       <div class="thought mono" id="dThought"><span class="ttext"></span><span class="caret" aria-hidden="true"></span></div>
     </div>
     <div class="d-cols d-agent">
-      <div class="col"><span class="lbl">recent log</span><ul id="dLog" class="mini-list mono"></ul></div>
-      <div class="col"><span class="lbl">inbox &amp; heard</span><ul id="dInbox" class="mini-list"></ul></div>
+      <div class="col" data-disclosure-key="dossier.log" data-disclosure-label="recent log"><ul id="dLog" class="mini-list mono"></ul></div>
+      <div class="col" data-disclosure-key="dossier.inbox" data-disclosure-label="inbox &amp; heard"><ul id="dInbox" class="mini-list"></ul></div>
     </div>
     <!-- Tile mode: structure text, board posts, cache directory listing, items. All agent text is literal. -->
     <div id="dTile" class="d-tile" hidden>
-      <div class="d-sec" id="dTileText" hidden>
+      <div class="d-sec" id="dTileText" data-disclosure-key="tile.text" data-disclosure-label="text" hidden>
         <span class="lbl">text</span>
         <pre class="t-text"></pre>
       </div>
-      <div class="d-sec" id="dTilePosts" hidden>
+      <div class="d-sec" id="dTilePosts" data-disclosure-key="tile.posts" data-disclosure-label="posts · newest first" hidden>
         <span class="lbl">posts · newest first</span>
         <ul class="post-list"></ul>
       </div>
-      <div class="d-sec" id="dTileEntries" hidden>
+      <div class="d-sec" id="dTileEntries" data-disclosure-key="tile.directory" data-disclosure-label="directory listing" hidden>
         <span class="lbl">directory listing <span class="mono">0</span></span>
         <div class="dir mono"></div>
       </div>
-      <div class="d-sec" id="dTileItems" hidden>
+      <div class="d-sec" id="dTileItems" data-disclosure-key="tile.items" data-disclosure-label="items here" hidden>
         <span class="lbl">items here</span>
         <div class="chips"></div>
       </div>
@@ -196,7 +196,7 @@
     </div>
     <div class="n-body">
       <div class="n-tab" data-tab="brain" id="tabBrain" role="tabpanel" aria-labelledby="tab-brain" tabindex="0">
-        <div class="n-cols">
+        <div class="n-cols" data-disclosure-key="hood.decisions" data-disclosure-label="decisions">
           <div class="dlist" id="decisionList"></div>
           <div class="ddetail" id="decisionDetail">
             <div class="empty-note">Select a decision to inspect its prompt and raw output.</div>
@@ -204,7 +204,7 @@
         </div>
       </div>
       <div class="n-tab" data-tab="nodes" id="tabNodes" role="tabpanel" aria-labelledby="tab-nodes" tabindex="0" hidden>
-        <div class="n-cols">
+        <div class="n-cols" data-disclosure-key="hood.nodes" data-disclosure-label="nodes">
           <div class="dlist" id="nodeList"></div>
           <div class="ddetail" id="nodeDetail">
             <div class="empty-note">Select a node to see its live files, code and log.</div>
@@ -212,22 +212,22 @@
         </div>
       </div>
       <div class="n-tab" data-tab="pacing" id="tabPacing" role="tabpanel" aria-labelledby="tab-pacing" tabindex="0" hidden>
-        <div class="tiles" id="pacingTiles"></div>
+        <div class="tiles" id="pacingTiles" data-disclosure-key="hood.pacing" data-disclosure-label="pacing"></div>
       </div>
       <div class="n-tab" data-tab="oversight" id="tabOversight" role="tabpanel" aria-labelledby="tab-oversight" tabindex="0" hidden>
         <div class="ov-controls" id="oversightControls"></div>
         <div class="tiles" id="signalTiles"></div>
         <div class="ov-cols">
-          <div class="ov-list" id="alertList"></div>
-          <div class="ov-list" id="lineageList"></div>
+          <div class="ov-list" id="alertList" data-disclosure-key="hood.alerts" data-disclosure-label="alerts"></div>
+          <div class="ov-list" id="lineageList" data-disclosure-key="hood.lineages" data-disclosure-label="lineages"></div>
         </div>
       </div>
       <div class="n-tab" data-tab="timeline" id="tabTimeline" role="tabpanel" aria-labelledby="tab-timeline" tabindex="0" hidden>
         <div class="tl-head" id="tlHead"></div>
         <svg id="tlAxis" class="tl-axis" viewBox="0 0 1000 140" aria-label="Firsts along the days"></svg>
         <div class="ov-cols">
-          <div class="ov-list" id="tlFirsts"></div>
-          <div class="ov-list" id="tlAround"></div>
+          <div class="ov-list" id="tlFirsts" data-disclosure-key="hood.timeline-firsts" data-disclosure-label="firsts"></div>
+          <div class="ov-list" id="tlAround" data-disclosure-key="hood.timeline-around" data-disclosure-label="events around"></div>
         </div>
       </div>
     </div>

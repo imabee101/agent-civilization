@@ -34,6 +34,7 @@ import { guardOverflow, refreshGuards } from "./overflow-guard";
 import type { SignalCriticality, SignalsView, TimelineView } from "../src/shared/protocol";
 import { layoutTimeline, timelineFromEvents } from "./lib/timeline";
 import { WATCH_LIMITS, alertsAtOrAbove, dropDead, initialWatch, isWatched, lineageRows, newAlertIds, noteThinking, noticeRows, setLimit, signalTiles, unseenTotal, unwatch, type WatchLimit } from "./lib/oversight";
+import { createDisclosureState } from "./lib/disclosure";
 
 // ---------- tiny DOM helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -53,6 +54,76 @@ const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "
 /** Must match the mobile media query in app.css. */
 const MOBILE_MQ = "(max-width: 820px), (max-height: 500px)";
 const isMobile = () => window.matchMedia(MOBILE_MQ).matches;
+const disclosureState = createDisclosureState(typeof localStorage === "undefined" ? null : (() => {
+  try { return localStorage; } catch { return null; }
+})());
+
+function disclosureId(key: string): string {
+  return `disclosure-${key.replace(/[^a-z0-9_-]+/gi, "-")}`;
+}
+
+/** Turn a marked section into an accessible, keyboard-operable disclosure. */
+function installDisclosure(container: HTMLElement): void {
+  const key = container.dataset.disclosureKey;
+  if (!key || container.dataset.disclosureReady === "true") return;
+  container.dataset.disclosureReady = "true";
+  const label = container.dataset.disclosureLabel ?? "section";
+  const region = document.createElement("div");
+  region.className = "disclosure-content";
+  region.id = disclosureId(key);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "disclosure-toggle";
+  button.setAttribute("aria-controls", region.id);
+  button.addEventListener("click", () => {
+    disclosureState.toggle(key);
+    updateDisclosure();
+    refreshGuards();
+  });
+  const updateDisclosure = (): void => {
+    const collapsed = disclosureState.isCollapsed(key);
+    region.hidden = collapsed;
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.replaceChildren(el("span", "disclosure-chevron", collapsed ? "▸" : "▾"), el("span", "lbl", label));
+  };
+  const children = Array.from(container.childNodes);
+  container.replaceChildren(button, region);
+  region.append(...children);
+  updateDisclosure();
+}
+
+function installPanelVisibility(key: string, panelId: string, buttonId: string): void {
+  const panel = $(panelId);
+  const button = $(buttonId) as HTMLButtonElement;
+  const update = (): void => {
+    const visible = disclosureState.isVisible(key);
+    panel.classList.toggle("panel-preference-hidden", !visible);
+    button.setAttribute("aria-pressed", String(visible));
+    button.setAttribute("aria-label", `${visible ? "Hide" : "Show"} ${panel.getAttribute("aria-label") ?? key}`);
+    button.textContent = visible ? "−" : "+";
+  };
+  button.addEventListener("click", () => {
+    disclosureState.setVisible(key, !disclosureState.isVisible(key));
+    update();
+    refreshGuards();
+  });
+  update();
+}
+
+function installDisclosures(): void {
+  for (const section of document.querySelectorAll<HTMLElement>("[data-disclosure-key]")) installDisclosure(section);
+  installPanelVisibility("panel.groups", "railLeft", "groupsVisibility");
+  installPanelVisibility("panel.chronicle", "railRight", "chronicleVisibility");
+}
+function disclosureContent(id: string): HTMLElement {
+  const target = $(id);
+  return target.querySelector<HTMLElement>(":scope > .disclosure-content") ?? target;
+}
+function setDisclosureSummary(id: string, summary: string): void {
+  const target = $(id);
+  const label = target.querySelector<HTMLElement>(":scope > .disclosure-toggle .lbl");
+  if (label) label.textContent = summary;
+}
 
 // ---------- state ----------
 const S = {
@@ -712,7 +783,7 @@ function renderDossierLive(): void {
   set("dHealth", a.health);
   set("dFood", a.food);
   set("dEnergy", a.energy);
-  const kv = $("dKV");
+  const kv = disclosureContent("dKV");
   const rows: [string, string, boolean?][] = [];
   if (a.profile.status) rows.push(["status", a.profile.status]);
   rows.push(["position", `${a.q}, ${a.r}`]);
@@ -736,7 +807,7 @@ function renderDossierLive(): void {
 /** Inventory row: food / wood / stone counts plus one chip per carried item. */
 function renderInventory(a: AgentView): void {
   const inv = a.inventory;
-  const box = $("dInv");
+  const box = disclosureContent("dInv");
   const mat = (k: string, v: number) => {
     const c = el("span", `chip mat${v > 0 ? "" : " zero"}`);
     c.append(el("span", "k", k), el("span", "v mono", String(v)));
@@ -785,11 +856,11 @@ function renderTileDossier(t: TileView): void {
   });
   if (d.frozen !== null) kvRows.push(operatorRow([{ label: d.frozen ? "thaw the cache" : "freeze the cache", danger: !d.frozen, onClick: () => send({ type: "freeze", on: !d.frozen }) }]));
   kvRows.push(keeperRow(t.q, t.r));
-  $("dKV").replaceChildren(...kvRows);
+  disclosureContent("dKV").replaceChildren(...kvRows);
   const textSec = $("dTileText");
   textSec.hidden = d.text === null;
   if (d.text !== null) {
-    textSec.querySelector(".lbl")!.textContent = d.textLabel;
+    textSec.querySelector(".disclosure-content .lbl")!.textContent = d.textLabel;
     const pre = textSec.querySelector("pre")!;
     pre.textContent = d.text.length ? d.text : "(blank)";
     pre.classList.toggle("blank", d.text.length === 0);
@@ -837,7 +908,7 @@ function renderTileDossier(t: TileView): void {
     });
     list.replaceChildren(...rows);
     if (!rows.length) list.replaceChildren(el("div", "empty", "empty directory"));
-    entSec.querySelector(".lbl .mono")!.textContent = `${d.entries.length}`;
+    entSec.querySelector(".disclosure-content .lbl .mono")!.textContent = `${d.entries.length}`;
   }
   $("dTileItems").hidden = d.items.length === 0;
   if (d.items.length) {
@@ -925,7 +996,7 @@ function renderNerd(): void {
   else renderPacing();
 }
 function renderBrain(): void {
-  const list = $("decisionList");
+  const list = disclosureContent("decisionList");
   const ds = [...S.decisions].reverse();
   if (S.nerdDecisionId === null && ds[0]) S.nerdDecisionId = ds[0].id;
   list.replaceChildren(
@@ -993,7 +1064,7 @@ function preBlock(label: string, text: string, tone: "ok" | "err" | "plain"): HT
 }
 function renderNodeList(): void {
   const st = S.state;
-  const list = $("nodeList");
+  const list = disclosureContent("nodeList");
   if (!st) return;
   const nodes = [...st.agents].sort((a, b) => Number(b.alive) - Number(a.alive) || a.name.localeCompare(b.name));
   const ruinsOnly = st.ruins.filter((r) => !st.agents.some((a) => a.id === r.id));
@@ -1111,7 +1182,7 @@ function renderNodeDetail(): void {
 }
 function renderPacing(): void {
   const p = S.pacing;
-  const tiles = $("pacingTiles");
+  const tiles = disclosureContent("pacingTiles");
   if (!p) {
     tiles.replaceChildren(el("div", "empty-note", "No pacing stats yet."));
     return;
@@ -1150,8 +1221,8 @@ function renderOversight(): void {
   const s = S.signals;
   const tiles = $("signalTiles");
   const controls = $("oversightControls");
-  const alerts = $("alertList");
-  const lineages = $("lineageList");
+  const alerts = disclosureContent("alertList");
+  const lineages = disclosureContent("lineageList");
   // Controls: watch budget and alert floor. Pills, like the tab switcher.
   const pillRow = (label: string, options: readonly string[], current: string, onPick: (v: string) => void) => {
     const wrap = el("div", "ov-ctl");
@@ -1221,6 +1292,7 @@ function renderOversight(): void {
       return row;
     }),
   );
+  setDisclosureSummary("alertList", `alerts · ${shown.length}${hidden ? ` · ${hidden} below` : ""}`);
   const rows = lineageRows(s, S.state?.agents ?? []);
   const notices = noticeRows(s, S.state?.tick ?? s.tick);
   lineages.replaceChildren(
@@ -1241,6 +1313,7 @@ function renderOversight(): void {
       return row;
     }),
   );
+  setDisclosureSummary("lineageList", `on notice · ${notices.length} · lineages · ${rows.length}`);
 }
 // ---------- timeline ----------
 const SVG = "http://www.w3.org/2000/svg";
@@ -1280,8 +1353,8 @@ function renderTimeline(): void {
   const v = S.timeline;
   const head = $("tlHead");
   const axis = $("tlAxis") as unknown as SVGSVGElement;
-  const firsts = $("tlFirsts");
-  const around = $("tlAround");
+  const firsts = disclosureContent("tlFirsts");
+  const around = disclosureContent("tlAround");
   if (!v) {
     head.replaceChildren(el("div", "empty-note", "loading the record…"));
     return;
@@ -1328,11 +1401,13 @@ function renderTimeline(): void {
       return row;
     }),
   );
+  setDisclosureSummary("tlFirsts", `firsts · ${v.firsts.length}`);
   const a = S.timelineAround;
   around.replaceChildren(
     el("div", "lbl", a ? `around t${a.tick} · ${a.events.length} events` : "around a moment"),
     ...(a ? (a.events.length ? a.events.map((e) => eventRow(e)) : [el("div", "empty-note", "nothing recorded near that tick")]) : [el("div", "empty-note", "pick a first to see what was happening around it, in the record's own words")]),
   );
+  setDisclosureSummary("tlAround", a ? `events around t${a.tick} · ${a.events.length}` : "events around");
 }
 function fmtUptime(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -1556,6 +1631,7 @@ declare global {
 // ---------- boot ----------
 async function boot(): Promise<void> {
   await world.init();
+  installDisclosures();
   for (const id of ["railLeft", "railRight", "dossier", "nerd"]) guardOverflow($(id));
   const mock = new URLSearchParams(location.search).get("mock");
   if (mock) {

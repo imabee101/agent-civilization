@@ -11,4 +11,12 @@ describe("the page", () => {
     expect(html).toContain("start over");
     expect(html.toLowerCase()).not.toContain("rewind");
   });
+
+  test("declares accessible disclosure controls for dense panels", () => {
+    const keys = ["dossier.status", "dossier.inventory", "dossier.profile", "dossier.thought", "hood.decisions", "hood.nodes", "hood.pacing", "hood.alerts", "hood.lineages"];
+    for (const key of keys) expect(html).toContain(`data-disclosure-key="${key}"`);
+    expect(html).toContain('id="groupsVisibility"');
+    expect(html).toContain('id="chronicleVisibility"');
+    expect(html).toContain('aria-controls="tabBrain"');
+  });
 });
