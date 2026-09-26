@@ -33,9 +33,10 @@ if [[ -n $devices ]]; then
   compute="gpu ($(printf '%s\n' "$devices" | head -1 | sed -E 's/^\s+//'))"
   LLAMA_FLAGS="-ngl 99 -fa on"
 else
-  # Performance cores run at the top clock and show two threads per core; count the cores, not the threads.
+  # Performance cores run near the top clock (a couple of favoured cores boost 100 MHz above the rest)
+  # and show two threads per core; count the cores, not the threads. Within 5% of the top counts.
   top=$(lscpu -e=MAXMHZ | tail -n +2 | sort -n | tail -1)
-  pcores=$(lscpu -e=CORE,MAXMHZ | tail -n +2 | awk -v top="$top" '$2 == top {print $1}' | sort -u | wc -l)
+  pcores=$(lscpu -e=CORE,MAXMHZ | tail -n +2 | awk -v top="$top" '$2 >= top * 0.95 {print $1}' | sort -u | wc -l)
   cores=$(lscpu -e=CORE | tail -n +2 | sort -u | wc -l)
   [[ $pcores -gt 0 ]] || pcores=$cores
   compute="cpu ($pcores performance cores of $cores)"
