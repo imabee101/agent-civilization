@@ -144,7 +144,7 @@ export class Pacing {
     };
     const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
     const spanMs = n ? Math.max(1, Math.min(WINDOW_MS, now - Math.min(...turns.map((t) => t.at)))) : 1;
-    const timed = turns.filter((t) => t.timings);
+    const timed = turns.filter((t) => t.timings && t.timings.promptMs + t.timings.outputMs > 0);
     return {
       turns: n,
       turnsPerNodePerHour: n && livingNodes ? Math.round(((n / livingNodes) * 3_600_000) / spanMs * 10) / 10 : 0,

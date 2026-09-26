@@ -221,7 +221,7 @@ A brain is anything that turns a prompt into text. Pick one with
 | `openai`    | any OpenAI-compatible `/v1/chat/completions` (llama-server, Ollama, LM Studio, vLLM, …) | `http://127.0.0.1:8080/v1` |
 | `llamacpp`  | llama.cpp `llama-server` native `/completion` (raw prompt, timings) | `http://127.0.0.1:8080`   |
 | `ollama`    | Ollama native `/api/chat`                                       | `http://127.0.0.1:11434`     |
-| `grok`      | the local `grok` CLI, headless, under its own sign-in (`grok login`) | `--grok-bin`, default `grok` on PATH |
+| `grok`      | Grok's Responses API under the local `grok` CLI's sign-in (`grok login`) | `https://cli-chat-proxy.grok.com/v1` |
 | `random`    | nobody: one uniformly random valid primitive per turn           |                              |
 
 Aliases: `llama.cpp`, `llama-server`, `lmstudio`, `vllm`, `none`.
@@ -241,13 +241,17 @@ bun run dev -- --brain ollama --model qwen2.5:3b
 AGENTCIV_BASE_URL=http://gpu-box:8000/v1 AGENTCIV_MODEL=my-model AGENTCIV_API_KEY=... bun run dev
 ```
 
-`grok` runs one single-turn `grok -p` per decision with our system prompt in
-place of Grok's and every tool, memory and web search off (a tool call would
-end the turn with no text). Default model `grok-4.7-build-fast`, reasoning
-effort `low` (`--model`, `--reasoning-effort`); `--temperature`, `--max-tokens`
-and stop strings do not reach it. The CLI's reported cost is summed on the
-brain as `costUsd`. It only works for the user who signed in, so not under the
-deploy's service account, and every turn leaves a session in `~/.grok/sessions`.
+`grok` calls the endpoint the Grok CLI itself uses, with the OAuth token the
+CLI keeps in `~/.grok/auth.json`: read per call, never logged, refreshed by
+running `grok models` when it is within 30 minutes of expiry or after a 401
+(`--grok-bin` names the CLI). Each node's turns share one `prompt_cache_key`,
+so its unchanged prefix is served from cache (97% of a repeated prompt in a
+test). Default model `grok-4.7`, reasoning effort `minimal` (the lowest it takes)
+(`--model`, `--reasoning-effort`); temperature and top-p are sent, stop
+strings are applied as the reply streams, `--max-tokens` is not sent because
+reasoning counts against it. The endpoint's reported cost is summed on the
+brain as `costUsd`. It works only for a user who ran `grok login`, so not
+under the deploy's service account.
 
 With no brain configured, the launcher probes the usual local ports and falls
 back to `random`. The random brain is a control group, not a personality: it

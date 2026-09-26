@@ -61,6 +61,7 @@ export function brainConfigFromEnv(env: Record<string, string | undefined> = pro
     timeoutMs: num(env.AGENTCIV_TIMEOUT_MS),
     command: env.AGENTCIV_GROK_BIN || undefined,
     reasoningEffort: env.AGENTCIV_REASONING_EFFORT || undefined,
+    authFile: env.AGENTCIV_GROK_AUTH_FILE || undefined,
     promptFormat: format === "chatml" || format === "llama3" || format === "plain" ? format : undefined,
   };
 }

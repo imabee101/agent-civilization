@@ -8,17 +8,20 @@ host value lives in `/etc/agent-civ/install.env` (untracked, root, no secrets), 
 | `HOST`, `PORT` | address the game binds (default port 443) |
 | `DOMAIN` | the TLS name; `renew-tls.sh` issues it from Vault |
 | `VAULT_ADDR` | Vault base URL including `/v1`; needs `pki_int/issue/agent-civ` for this name and the AppRole in `approle.env` |
-| `LLAMA_DIR` | a llama.cpp build with `bin/` and `lib/` |
+| `LLAMA_DIR` | a llama.cpp build with `bin/` and `lib/`; with `MODEL`, the local brain (optional for `BRAIN=grok`, installed and kept running whenever set) |
 | `MODEL` | the GGUF to copy into `/opt/agent-civ/models` |
 | `MODEL_ALIAS` | what the game calls it (default: the file name, lower case) |
 | `GAME_FLAGS` | `--max-agents`, `--concurrency` (a ceiling), `--max-tokens`, `--temperature` |
 | `SLOTS`, `CTX_PER_SLOT` | llama-server slots (one per node) and context each (defaults 12, 6144) |
+| `BRAIN` | `local` (llama-server, default) or `grok` |
+| `GROK_USER`, `GROK_MODEL` | `BRAIN=grok`: the user whose `grok login` the game borrows; model (default `grok-4.7`) |
 
 | Piece | Where |
 |---|---|
 | TLS | Leaf from a Vault Intermediate CA, `pki_int/issue/agent-civ` (the one name, EC, 1 year) |
 | Game | `agent-civ.service`: `/opt/agent-civ/agentciv` on `$HOST:$PORT`, state in `/var/lib/agent-civ`, flags in `/etc/agent-civ/game.env` (rendered) |
 | Brain | `agent-civ-llm.service`: llama-server on `127.0.0.1:8080`. Flags in `/etc/agent-civ/llm.env`, written by `install.sh` from the compute it finds: a GPU with room for the model takes every layer, otherwise the performance cores decode with a q8 KV cache |
+| Grok token | `BRAIN=grok`: `agent-civ-grok-token.timer` runs `grok-token.sh` as `GROK_USER` every 20 min; it has the CLI renew the sign-in and copies only the access token to `/run/agent-civ-grok/auth.json` (group `agentciv-grok`, which the game joins). The refresh token never leaves the user's home |
 | Renewal | `agent-civ-renew.timer`, daily; reissues under 30 days left and restarts the game |
 | CPU | both services run in `agentciv.slice` (`CPUWeight=200`): about half the CPU when your builds saturate the box, nothing extra when it is idle |
 | History | `/var/lib/agent-civ/history.sqlite`: routine rows (moves, gathers, rests) kept 7 days; everything else and every prompt/reply kept forever |
@@ -27,6 +30,9 @@ host value lives in `/etc/agent-civ/install.env` (untracked, root, no secrets), 
 
 ```bash
 bun run build && sudo ./deploy/install.sh     # install or update; idempotent; refuses a Bun other than .bun-version
+sudo ./deploy/install.sh --brain grok         # think with the sudo user's `grok login` (--grok-user, --grok-model)
+sudo ./deploy/install.sh --brain local        # think with llama-server on this box (needs LLAMA_DIR, MODEL)
+sudo ./deploy/install.sh --fresh              # archive world, history, backups to /var/lib/agent-civ-archive/<time>; new world
 sudo /opt/agent-civ/renew-tls.sh              # force a check now
 journalctl -u agent-civ -u agent-civ-llm -f
 ```

@@ -649,7 +649,7 @@ export class Engine {
     let record: DecisionRecord | undefined;
     let succeeded = false;
     try {
-      const req = { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, stop: [FENCE_STOP], context: { visibleNodeIds } };
+      const req = { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, cacheKey: agentId, stop: [FENCE_STOP], context: { visibleNodeIds } };
       const opts = {
         signal: abort.signal,
         onToken: (chunk: string) => {

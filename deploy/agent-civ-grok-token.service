@@ -1,0 +1,14 @@
+[Unit]
+Description=Agent Civilization: renew the borrowed Grok sign-in
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# User= comes from install.sh (GROK_USER) as a drop-in. Group makes the token
+# readable by the game, which joins this group and nothing else of the user's.
+Group=agentciv-grok
+ExecStart=/opt/agent-civ/grok-token.sh
+RuntimeDirectory=agent-civ-grok
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes

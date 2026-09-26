@@ -1,77 +1,143 @@
 import { describe, expect, test } from "bun:test";
-import { GrokBrain, type Spawner } from "../../src/brain/grok";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { GrokBrain, type GrokAuth } from "../../src/brain/grok";
 import { createBrain } from "../../src/brain/registry";
 
-/** A spawner that records argv and env and prints the given NDJSON lines, split mid-line to cross chunk boundaries. */
-function fakeSpawn(lines: object[], exit = 0) {
-  const calls: { argv: string[]; env: Record<string, string | undefined> }[] = [];
-  const spawn: Spawner = (argv, opts) => {
-    calls.push({ argv, env: opts.env });
-    const body = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-    const enc = new TextEncoder();
-    const stdout = new ReadableStream<Uint8Array>({
-      start(c) {
-        const mid = Math.floor(body.length / 2);
-        c.enqueue(enc.encode(body.slice(0, mid)));
-        c.enqueue(enc.encode(body.slice(mid)));
-        c.close();
-      },
-    });
-    return { stdout, exited: Promise.resolve(exit), kill() {} };
-  };
-  return { spawn, calls };
+interface Captured {
+  url: string;
+  body: any;
+  headers: Record<string, string>;
 }
 
-const delta = (text: string) => ({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
-const thinking = { type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "hmm" } } };
-const result = (text: string, extra: object = {}) => ({ type: "result", is_error: false, result: text, stop_reason: "end_turn", total_cost_usd: 0.004, usage: { input_tokens: 4000, output_tokens: 12 }, ...extra });
+const sse = (events: object[]) => events.map((e) => `event: x\ndata: ${JSON.stringify(e)}\n\n`).join("");
+const delta = (d: string) => ({ type: "response.output_text.delta", delta: d });
+const completed = (extra: object = {}) => ({ type: "response.completed", response: { status: "completed", usage: { input_tokens: 3564, input_tokens_details: { cached_tokens: 3456 }, output_tokens: 42, cost_in_usd_ticks: 76_000_000 }, ...extra } });
+
+/** A fetch that answers each call with the next reply: SSE events streamed in two chunks, or a status code. */
+function fakeFetch(replies: (object[] | number)[]) {
+  const captured: Captured[] = [];
+  const f = async (url: string | URL | Request, init?: RequestInit) => {
+    captured.push({ url: String(url), body: JSON.parse(String(init?.body)), headers: init?.headers as Record<string, string> });
+    const r = replies[Math.min(captured.length - 1, replies.length - 1)]!;
+    if (typeof r === "number") return new Response("denied", { status: r });
+    const text = sse(r);
+    const enc = new TextEncoder();
+    const mid = Math.floor(text.length / 2);
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(enc.encode(text.slice(0, mid)));
+          c.enqueue(enc.encode(text.slice(mid)));
+          c.close();
+        },
+      }),
+      { status: 200 },
+    );
+  };
+  return { fetch: f, captured };
+}
+
+const hourFromNow = () => Date.now() + 3_600_000;
+/** Hands out the tokens in order: the next one after each refresh. */
+function authStub(tokens: GrokAuth[]) {
+  let i = 0;
+  const refreshes: number[] = [];
+  return {
+    auth: async () => tokens[Math.min(i, tokens.length - 1)],
+    refresh: async () => {
+      refreshes.push(Date.now());
+      i++;
+    },
+    refreshes,
+  };
+}
 
 describe("GrokBrain", () => {
   test("is registered as grok", () => {
     expect(createBrain({ kind: "grok" }).kind).toBe("grok");
   });
 
-  test("streams text deltas, skips thinking, and returns the final result", async () => {
-    const { spawn } = fakeSpawn([thinking, delta("```js\n"), delta("rest();\n```"), result("```js\nrest();\n```")]);
-    const b = new GrokBrain({ kind: "grok", spawn });
+  test("streams text, reports usage, cached tokens and cost", async () => {
+    const f = fakeFetch([[{ type: "response.created" }, delta("```js\n"), delta("rest();\n```"), completed()]]);
+    const a = authStub([{ token: "T1", expiresAt: hourFromNow() }]);
+    const b = new GrokBrain({ kind: "grok", fetch: f.fetch, ...a });
     const tokens: string[] = [];
     const r = await b.decide({ system: "SYS", user: "USER" }, { onToken: (t) => tokens.push(t) });
-    expect(tokens).toEqual(["```js\n", "rest();\n```"]);
+    expect(tokens.join("")).toBe("```js\nrest();\n```");
     expect(r.text).toBe("```js\nrest();\n```");
-    expect(r.tokens).toBe(12);
-    expect(r.estimated).toBe(false);
-    expect(b.costUsd).toBeCloseTo(0.004);
+    expect(r.tokens).toBe(42);
+    expect(r.timings).toMatchObject({ promptTokens: 3564, cachedTokens: 3456, promptMs: 0, outputMs: 0 });
+    expect(b.costUsd).toBeCloseTo(0.0076);
+    expect(a.refreshes.length).toBe(0);
   });
 
-  test("replaces Grok's system prompt, turns off tools and memory, and runs one turn", async () => {
-    const { spawn, calls } = fakeSpawn([result("ok")]);
-    await new GrokBrain({ kind: "grok", model: "grok-4.6", reasoningEffort: "medium", spawn }).decide({ system: "SYS", user: "USER" });
-    const { argv, env } = calls[0]!;
-    const after = (flag: string) => argv[argv.indexOf(flag) + 1];
-    expect(after("-p")).toBe("USER");
-    expect(after("--system-prompt-override")).toBe("SYS");
-    expect(after("-m")).toBe("grok-4.6");
-    expect(after("--reasoning-effort")).toBe("medium");
-    expect(after("--max-turns")).toBe("1");
-    expect(after("--disallowed-tools")).toBe("read_file,search_tool,use_tool");
-    expect(argv).toContain("--disable-web-search");
-    expect(env.GROK_MEMORY).toBe("0");
+  test("keeps a node's turns under one cache key and sends only our messages", async () => {
+    const f = fakeFetch([[delta("ok"), completed()]]);
+    const b = new GrokBrain({ kind: "grok", model: "grok-4.6", reasoningEffort: "medium", temperature: 0.9, fetch: f.fetch, ...authStub([{ token: "T1", expiresAt: hourFromNow() }]) });
+    await b.decide({ system: "SYS", user: "USER", cacheKey: "n7" });
+    const c = f.captured[0]!;
+    expect(c.url).toBe("https://cli-chat-proxy.grok.com/v1/responses");
+    expect(c.headers.authorization).toBe("Bearer T1");
+    expect(c.headers["x-grok-conv-id"]).toBe("agentciv-n7");
+    expect(c.body).toMatchObject({ model: "grok-4.6", prompt_cache_key: "agentciv-n7", reasoning: { effort: "medium" }, temperature: 0.9, store: false, stream: true });
+    expect(c.body.input).toEqual([
+      { type: "message", role: "system", content: "SYS" },
+      { type: "message", role: "user", content: "USER" },
+    ]);
   });
 
-  test("an error result, a missing result, or an empty reply is a BrainError", async () => {
-    const err = new GrokBrain({ kind: "grok", spawn: fakeSpawn([result("rate limited", { is_error: true })]).spawn });
-    await expect(err.decide({ system: "", user: "u" })).rejects.toThrow("grok: rate limited");
-    const turns = new GrokBrain({ kind: "grok", spawn: fakeSpawn([{ type: "result", is_error: true, subtype: "error_max_turns", errors: ["Reached the maximum number of turns"] }]).spawn });
-    await expect(turns.decide({ system: "", user: "u" })).rejects.toThrow("grok: Reached the maximum number of turns");
-    const none = new GrokBrain({ kind: "grok", spawn: fakeSpawn([], 1).spawn });
-    await expect(none.decide({ system: "", user: "u" })).rejects.toThrow("without a result");
-    const empty = new GrokBrain({ kind: "grok", spawn: fakeSpawn([result("  ")]).spawn });
+  test("cuts at a stop string, even one split across deltas, and shows nothing past it", async () => {
+    const f = fakeFetch([[delta("```js\nrest();\n`"), delta("``\nprose after"), delta("more"), completed()]]);
+    const b = new GrokBrain({ kind: "grok", fetch: f.fetch, ...authStub([{ token: "T", expiresAt: hourFromNow() }]) });
+    const tokens: string[] = [];
+    const r = await b.decide({ system: "", user: "u", stop: ["\n```"] }, { onToken: (t) => tokens.push(t) });
+    expect(r.text).toBe("```js\nrest();");
+    expect(tokens.join("")).toBe("```js\nrest();");
+  });
+
+  test("refreshes a token near expiry before use, and once more after a 401", async () => {
+    const near = authStub([{ token: "OLD", expiresAt: Date.now() + 60_000 }, { token: "NEW", expiresAt: hourFromNow() }]);
+    const f1 = fakeFetch([[delta("ok"), completed()]]);
+    await new GrokBrain({ kind: "grok", fetch: f1.fetch, ...near }).decide({ system: "", user: "u" });
+    expect(near.refreshes.length).toBe(1);
+    expect(f1.captured[0]!.headers.authorization).toBe("Bearer NEW");
+
+    const revoked = authStub([{ token: "OLD", expiresAt: hourFromNow() }, { token: "NEW", expiresAt: hourFromNow() }]);
+    const f2 = fakeFetch([401, [delta("ok"), completed()]]);
+    const r = await new GrokBrain({ kind: "grok", fetch: f2.fetch, ...revoked }).decide({ system: "", user: "u" });
+    expect(r.text).toBe("ok");
+    expect(f2.captured.map((c) => c.headers.authorization)).toEqual(["Bearer OLD", "Bearer NEW"]);
+  });
+
+  test("a failed response, a missing sign-in, or an empty reply is a BrainError", async () => {
+    const auth = authStub([{ token: "T", expiresAt: hourFromNow() }]);
+    const failed = new GrokBrain({ kind: "grok", fetch: fakeFetch([[{ type: "response.failed", response: { error: { message: "rate limited" } } }]]).fetch, ...auth });
+    await expect(failed.decide({ system: "", user: "u" })).rejects.toThrow("grok: rate limited");
+    const signedOut = new GrokBrain({ kind: "grok", fetch: fakeFetch([[completed()]]).fetch, auth: async () => undefined, refresh: async () => {} });
+    await expect(signedOut.decide({ system: "", user: "u" })).rejects.toThrow("no token in");
+    expect((await signedOut.health()).ok).toBe(false);
+    const empty = new GrokBrain({ kind: "grok", fetch: fakeFetch([[delta("  "), completed()]]).fetch, ...auth });
     await expect(empty.decide({ system: "", user: "u" })).rejects.toThrow("empty reply");
   });
 
-  test("probe classes a hosted model as fast", async () => {
-    const p = await new GrokBrain({ kind: "grok", spawn: fakeSpawn([result("ok")]).spawn }).probe();
+  test("a given token file is read on every call and nothing is run to refresh it", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "grok-auth-")), "auth.json");
+    const write = (key: string, inMs: number) => writeFileSync(path, JSON.stringify({ "issuer::id": { key, expires_at: new Date(Date.now() + inMs).toISOString() } }));
+    write("A", 60_000);
+    const f = fakeFetch([[delta("ok"), completed()]]);
+    const b = new GrokBrain({ kind: "grok", authFile: path, command: "/nonexistent/grok", fetch: f.fetch });
+    await b.decide({ system: "", user: "u" });
+    write("B", 3_600_000);
+    await b.decide({ system: "", user: "u" });
+    expect(f.captured.map((c) => c.headers.authorization)).toEqual(["Bearer A", "Bearer B"]);
+  });
+
+  test("probe classes a hosted model as fast and skips the cache", async () => {
+    const f = fakeFetch([[delta("ok"), completed()]]);
+    const p = await new GrokBrain({ kind: "grok", fetch: f.fetch, ...authStub([{ token: "T", expiresAt: hourFromNow() }]) }).probe();
     expect(p?.kind).toBe("fast");
-    expect(p?.cacheable).toBe(false);
+    expect(f.captured[0]!.body.prompt_cache_key).toBeUndefined();
   });
 });
