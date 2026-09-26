@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# Install or update the LAN deployment on this workstation. Run as root from the
-# repo root after `bun run build`. Idempotent; see deploy/README.md.
+# Install or update the deployment on this box. Run as root from the repo root
+# after `bun run build`. Idempotent; see deploy/README.md.
+#
+# Everything about the box comes from /etc/agent-civ/install.env (untracked):
+#   HOST, PORT, DOMAIN, VAULT_ADDR, LLAMA_DIR, MODEL, and optionally
+#   MODEL_ALIAS, GAME_FLAGS, SLOTS, CTX_PER_SLOT. Nothing here names a machine.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-LLAMA=${LLAMA_DIR:-/home/imma/projects/llm/.opt/llama.cpp}
-MODEL=${MODEL:-/home/imma/projects/llm/models/Huihui-Qwen3-4B-Instruct-2507-abliterated.i1-Q4_0.gguf}
+INSTALL_ENV=${INSTALL_ENV:-/etc/agent-civ/install.env}
+[[ -f $INSTALL_ENV ]] || { echo "install: $INSTALL_ENV missing; see deploy/README.md for its variables" >&2; exit 1; }
+. "$INSTALL_ENV"
+for v in HOST DOMAIN VAULT_ADDR LLAMA_DIR MODEL; do
+  [[ -n ${!v:-} ]] || { echo "install: $v not set in $INSTALL_ENV" >&2; exit 1; }
+done
+PORT=${PORT:-443}
+MODEL_ALIAS=${MODEL_ALIAS:-$(basename "$MODEL" .gguf | tr '[:upper:]' '[:lower:]')}
+GAME_FLAGS=${GAME_FLAGS:-"--max-agents 12 --concurrency 3 --max-tokens 600"}
+LLAMA=$LLAMA_DIR
 
 [[ $EUID -eq 0 ]] || { echo "install: run as root" >&2; exit 1; }
 [[ -x dist/agentciv ]] || { echo "install: dist/agentciv missing; run bun run build" >&2; exit 1; }
@@ -23,7 +35,7 @@ install -m 0644 deploy/agentciv.slice deploy/agent-civ{,-llm,-renew}.service dep
 
 # The brain's flags come from what this box has, not from a file someone edits.
 # A GPU with room for the model takes every layer; otherwise the CPU's
-# performance cores decode and every core prefills. Slots: 12 nodes, one each.
+# performance cores decode and every core prefills. Slots: one per node.
 SLOTS=${SLOTS:-12}
 CTX_PER_SLOT=${CTX_PER_SLOT:-6144}
 MODEL_FILE=/opt/agent-civ/models/$(basename "$MODEL")
@@ -43,9 +55,10 @@ else
   # q8 KV halves the cache; flash attention is what allows the quantised V cache on CPU.
   LLAMA_FLAGS="-t $pcores -tb $cores -fa on -ctk q8_0 -ctv q8_0"
 fi
-LLAMA_FLAGS="-m $MODEL_FILE --alias $(basename "$MODEL" .gguf | tr '[:upper:]' '[:lower:]' | sed -E 's/^huihui-//; s/-instruct//; s/\.i1-q4_0$//') -c $((SLOTS * CTX_PER_SLOT)) -np $SLOTS $LLAMA_FLAGS"
+LLAMA_FLAGS="-m $MODEL_FILE --alias $MODEL_ALIAS -c $((SLOTS * CTX_PER_SLOT)) -np $SLOTS $LLAMA_FLAGS"
 install -d -m 0755 /etc/agent-civ
 printf 'LLAMA_FLAGS=%s\n' "$LLAMA_FLAGS" > /etc/agent-civ/llm.env
+printf 'HOST=%s\nPORT=%s\nMODEL_ALIAS=%s\nGAME_FLAGS=%s\n' "$HOST" "$PORT" "$MODEL_ALIAS" "$GAME_FLAGS" > /etc/agent-civ/game.env
 # The operator token: made once, root-only, never printed here. Read it with:
 #   sudo cat /etc/agent-civ/operator-token
 if [[ ! -s /etc/agent-civ/operator-token ]]; then
@@ -53,6 +66,7 @@ if [[ ! -s /etc/agent-civ/operator-token ]]; then
   echo "install: operator token created at /etc/agent-civ/operator-token (sudo cat it to hold the switch)"
 fi
 echo "install: brain on $compute: $LLAMA_FLAGS"
+echo "install: game on https://$DOMAIN ($HOST:$PORT): $GAME_FLAGS"
 systemctl daemon-reload
 
 /opt/agent-civ/renew-tls.sh

@@ -1,5 +1,5 @@
 [Unit]
-Description=Renew civ.imabee.com from Vault pki_int
+Description=Renew the game's TLS leaf from Vault pki_int
 After=network-online.target
 Wants=network-online.target
 

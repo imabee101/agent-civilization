@@ -1,19 +1,20 @@
 [Unit]
-Description=Agent Civilization on https://civ.imabee.com
+Description=Agent Civilization
 After=network-online.target agent-civ-llm.service
 Wants=network-online.target agent-civ-llm.service
 
 [Service]
-# Bound to this workstation's own address only: .130 on the same NIC is the
-# apsy edge's :443.
-ExecStart=/opt/agent-civ/agentciv --host 192.168.101.7 --port 443 \
+# HOST, PORT, MODEL_ALIAS and GAME_FLAGS are written by deploy/install.sh from
+# /etc/agent-civ/install.env, the one untracked file that knows which box this is.
+EnvironmentFile=/etc/agent-civ/game.env
+ExecStart=/opt/agent-civ/agentciv --host ${HOST} --port ${PORT} \
   --data /var/lib/agent-civ \
   --tls-cert ${CREDENTIALS_DIRECTORY}/fullchain.pem --tls-key ${CREDENTIALS_DIRECTORY}/key.pem \
   --operator-token-file ${CREDENTIALS_DIRECTORY}/operator-token \
-  --max-agents 12 --concurrency 3 --max-tokens 600 --temperature 0.4 \
-  --brain openai --base-url http://127.0.0.1:8080/v1 --model qwen3-4b-2507-abliterated
-# --concurrency is a ceiling: the engine measures the backend and picks the
-# level itself. Slots and the prompt budget come from the server's /props.
+  --brain openai --base-url http://127.0.0.1:8080/v1 --model ${MODEL_ALIAS} $GAME_FLAGS
+# GAME_FLAGS holds --max-agents, --concurrency (a ceiling: the engine measures
+# the backend and picks the level itself), --max-tokens, --temperature. Slots
+# and the prompt budget come from the server's /props.
 Slice=agentciv.slice
 LoadCredential=fullchain.pem:/etc/agent-civ/tls/fullchain.pem
 LoadCredential=key.pem:/etc/agent-civ/tls/key.pem
