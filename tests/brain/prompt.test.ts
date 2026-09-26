@@ -28,6 +28,23 @@ describe("extractCode", () => {
 });
 
 describe("buildUserPrompt", () => {
+  test("two nodes do not start with the same line", () => {
+    const line = (name: string, note: string) =>
+      buildUserPrompt({
+        observation: { me: { name, originNote: note } },
+        files: { "number.txt": name === "Mith" ? "12" : "87", "main.js": "" },
+        log: [],
+        turn: 1,
+        handlers: [],
+      }).split("\n")[0];
+    const a = line("Mith", "I carried food off the spring.");
+    const b = line("Feis", "One body stands on the well.");
+    expect(a).toContain("You are Mith.");
+    expect(a).toContain("Your number is 12.");
+    expect(b).toContain("You are Feis.");
+    expect(a).not.toBe(b);
+  });
+
   test("includes situation, files, handlers, errors and log", () => {
     const p = buildUserPrompt({
       observation: { me: { id: "n0" } },

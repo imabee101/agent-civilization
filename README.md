@@ -246,7 +246,7 @@ CLI keeps in `~/.grok/auth.json`: read per call, never logged, refreshed by
 running `grok models` when it is within 30 minutes of expiry or after a 401
 (`--grok-bin` names the CLI). Each node's turns share one `prompt_cache_key`,
 so its unchanged prefix is served from cache (97% of a repeated prompt in a
-test). Default model `grok-4.7`, reasoning effort `minimal` (the lowest it takes)
+test). Default model `grok-4.6`, reasoning effort `low` (the latency-oriented setting)
 (`--model`, `--reasoning-effort`); temperature and top-p are sent, stop
 strings are applied as the reply streams, `--max-tokens` is not sent because
 reasoning counts against it. The endpoint's reported cost is summed on the

@@ -45,7 +45,9 @@ case $BRAIN in
     [[ -n $GROK_USER && $GROK_USER != root ]] || { echo "install: --brain grok needs --grok-user (or GROK_USER), the user who ran \`grok login\`" >&2; exit 1; }
     GROK_HOME=$(getent passwd "$GROK_USER" | cut -d: -f6)
     [[ -f $GROK_HOME/.grok/auth.json ]] || { echo "install: $GROK_USER has no Grok sign-in; run \`grok login\` as $GROK_USER" >&2; exit 1; }
-    BRAIN_FLAGS="--brain grok --grok-auth-file /run/agent-civ-grok/auth.json${GROK_MODEL:+ --model $GROK_MODEL}" ;;
+    GROK_MODEL=${GROK_MODEL:-grok-4.6}
+    GROK_REASONING_EFFORT=${GROK_REASONING_EFFORT:-low}
+    BRAIN_FLAGS="--brain grok --grok-auth-file /run/agent-civ-grok/auth.json --model $GROK_MODEL --reasoning-effort $GROK_REASONING_EFFORT" ;;
   *) echo "install: --brain must be local or grok, not $BRAIN" >&2; exit 1 ;;
 esac
 if [[ $LOCAL == 1 ]]; then
@@ -108,12 +110,6 @@ if [[ $LOCAL == 1 ]]; then
   echo "install: local brain on $compute: $LLAMA_FLAGS"
 fi
 printf 'HOST=%s\nPORT=%s\nBRAIN_FLAGS=%s\nGAME_FLAGS=%s\n' "$HOST" "$PORT" "$BRAIN_FLAGS" "$GAME_FLAGS" > /etc/agent-civ/game.env
-# The operator token: made once, root-only, never printed here. Read it with:
-#   sudo cat /etc/agent-civ/operator-token
-if [[ ! -s /etc/agent-civ/operator-token ]]; then
-  (umask 077; openssl rand -hex 16 > /etc/agent-civ/operator-token)
-  echo "install: operator token created at /etc/agent-civ/operator-token (sudo cat it to hold the switch)"
-fi
 echo "install: game thinks with $BRAIN: $BRAIN_FLAGS"
 echo "install: game on https://$DOMAIN ($HOST:$PORT): $GAME_FLAGS"
 systemctl daemon-reload

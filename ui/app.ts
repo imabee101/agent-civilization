@@ -1074,7 +1074,7 @@ function renderNodeDetail(): void {
       if (a.retireAt !== undefined) parts.push(el("div", "empty-note", `on notice: it and every node that sees it know its code will be held still at tick ${a.retireAt}. What it does with the time is its own.`));
     }
   }
-  if (a.lastError) parts.push(preBlock("last runtime error", a.lastError, "err"));
+  if (a.lastError) parts.push(preBlock("last runtime error", `${a.lastError}\ntick ${S.state?.tick ?? ""}`, "err"));
   if (!d) parts.push(el("div", "empty-note", "waiting for node detail…"));
   else {
     const names = Object.keys(d.files).sort();
@@ -1379,29 +1379,6 @@ $("resetForm").addEventListener("submit", (ev) => {
     if (!r.ok) toast(`reset refused: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
   });
 });
-// Rewind a node's files: a dialog, and the button stays disabled until the word is typed.
-const rewindDialog = $("rewindDialog") as HTMLDialogElement;
-const rewindPhrase = $("rewindPhrase") as HTMLInputElement;
-const rewindGo = $("rewindGo") as HTMLButtonElement;
-let rewindTarget: string | null = null;
-function openRewind(a: AgentView): void {
-  rewindTarget = a.id;
-  $("rewindFacts").textContent = `${a.name}: ${a.fileCount} file${a.fileCount === 1 ? "" : "s"}, ${fmtBytes(a.fsBytes)}, ${a.turns} turn${a.turns === 1 ? "" : "s"} so far.`;
-  rewindPhrase.value = "";
-  rewindGo.disabled = true;
-  rewindDialog.showModal();
-  rewindPhrase.focus();
-}
-rewindPhrase.addEventListener("input", () => {
-  rewindGo.disabled = rewindPhrase.value !== "REWIND";
-});
-$("rewindCancel").addEventListener("click", () => rewindDialog.close());
-$("rewindForm").addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  if (rewindPhrase.value !== "REWIND" || !rewindTarget) return;
-  rewindDialog.close();
-  send({ type: "rewind", agentId: rewindTarget, confirm: "REWIND" });
-});
 window.addEventListener("resize", () => {
   if (S.nerdTab === "timeline" && document.body.classList.contains("nerd-open") && S.timeline) renderTimeline();
 });
@@ -1473,12 +1450,19 @@ function renderScene(): void {
   const distinct = new Set(quotes.map((e) => e.quote)).size;
   const keys = new Map<string, number>();
   for (const a of S.state.agents) if (a.alive && a.codeKey) keys.set(a.codeKey, (keys.get(a.codeKey) ?? 0) + 1);
-  const shared = Math.max(0, ...keys.values());
+  let sharedNames: string[] = [];
+  let shared = 0;
+  for (const [key, n] of keys) {
+    if (n > shared) {
+      shared = n;
+      sharedNames = S.state.agents.filter((a) => a.alive && a.codeKey === key).map((a) => a.name);
+    }
+  }
   const notable = [...S.events].reverse().find((e) => e.importance >= 2 || e.kind === "spoke" || e.kind === "died" || e.kind === "same-script");
   const err = S.state.agents.find((a) => a.alive && a.lastError);
   const lines = [
     notable ? `${notable.text}${notable.quote ? ` — ${String(notable.quote).slice(0, 80)}` : ""}` : "quiet",
-    `${S.state.agents.filter((a) => a.alive).length} living, ${distinct} different sentences, ${shared > 1 ? shared + " share a loop" : "no shared loop"}`,
+    `${S.state.agents.filter((a) => a.alive).length} living, ${distinct} different sentences, ${shared > 1 ? sharedNames.join(" and ") + " run the same loop" : "no shared loop"}`,
     err ? `${err.name}: ${err.lastError}` : "",
   ].filter(Boolean);
   strip.textContent = lines.join(" · ");

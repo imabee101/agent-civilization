@@ -109,7 +109,7 @@ export interface BrainConfig {
   seed?: number;
   /** Executable for CLI backends (grok). */
   command?: string;
-  /** Reasoning effort for backends that take one (grok: minimal | low | medium | high). */
+  /** Reasoning effort for backends that take one (grok: low | medium | high | xhigh). */
   reasoningEffort?: string;
   /** grok: a token file kept fresh by someone else (the deploy's refresh timer); read on every call, the CLI is never run. */
   authFile?: string;

@@ -192,7 +192,7 @@ export class Engine {
     for (const a of this.world.livingAgents()) await this.attachSandbox(a.id);
     // A fresh world may already contain ancient ruins; only living nodes count as a population.
     if (this.world.livingAgents().length === 0 && this.world.tick === 0) {
-      for (let i = 0; i < this.cfg.initialAgents; i++) await this.spawn(undefined, { ruinIndex: i });
+      for (let i = 0; i < this.cfg.initialAgents; i++) await this.spawn();
     }
     this.flushEvents();
     await this.checkBrain();
@@ -227,6 +227,9 @@ export class Engine {
     this.paused = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    // A pause is a hard boundary for model work too: cancel calls already in
+    // flight and invalidate results from backends that ignore AbortSignal.
+    this.abortTurns("paused");
     this.emitStats();
   }
 
@@ -343,21 +346,10 @@ export class Engine {
     this.emitTick();
   }
 
-  async spawn(name?: string, opts: { arrival?: boolean; spread?: boolean; nearRuinId?: string; ruinIndex?: number } = {}): Promise<string> {
+  async spawn(name?: string, opts: { arrival?: boolean; spread?: boolean; nearRuinId?: string } = {}): Promise<string> {
     if (this.world.livingAgents().length >= this.cfg.maxAgents) throw new Error(`at most ${this.cfg.maxAgents} living nodes`);
     if (opts.nearRuinId) this.world.keeperGap("summon");
     let at = opts.nearRuinId ? this.world.tileBesideRuin(opts.nearRuinId) : undefined;
-    if (at === undefined && opts.ruinIndex !== undefined) {
-      const ruins = [...this.world.agents.values()].filter((a) => !a.alive);
-      const ruin = ruins.length ? ruins[opts.ruinIndex % ruins.length] : undefined;
-      if (ruin) {
-        try {
-          at = this.world.tileBesideRuin(ruin.id);
-        } catch {
-          at = undefined;
-        }
-      }
-    }
     const a = this.world.spawnAgent({ name, arrival: opts.arrival, spread: opts.spread, at, files: this.cfg.starterFiles });
     await this.attachSandbox(a.id);
     this.flushEvents();
@@ -476,21 +468,7 @@ export class Engine {
     this.signals = new Signals(this.world.config.ticksPerDay);
     this.history?.clear();
     this.reservedSlots.clear();
-    for (let i = 0; i < this.cfg.initialAgents; i++) {
-      const a = this.world.spawnAgent({ files: this.cfg.starterFiles });
-      try {
-        const ruins = [...this.world.agents.values()].filter((x) => !x.alive);
-        const ruin = ruins[i % Math.max(1, ruins.length)];
-        if (ruin) {
-          const tile = this.world.tileBesideRuin(ruin.id);
-          a.q = tile.q;
-          a.r = tile.r;
-        }
-      } catch {
-        /* stay where spawn put them */
-      }
-      await this.attachSandbox(a.id);
-    }
+    for (let i = 0; i < this.cfg.initialAgents; i++) await this.spawn();
     this.flushEvents();
     this.emit({ type: "reset", hello: this.hello() });
     if (wasRunning) this.start();

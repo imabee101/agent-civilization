@@ -66,7 +66,7 @@ usage: agentciv [options]
   --min-p <x>           min-p sampling, sent only when set (env AGENTCIV_MIN_P)
   --repeat-penalty <x>  repetition penalty, sent only when set (env AGENTCIV_REPEAT_PENALTY)
   --prompt-format <f>   chatml | llama3 | plain — llama.cpp native only
-  --reasoning-effort <e> minimal | low | medium | high — grok only (default minimal, env AGENTCIV_REASONING_EFFORT)
+  --reasoning-effort <e> low | medium | high | xhigh — grok only (default low, env AGENTCIV_REASONING_EFFORT)
   --grok-bin <path>     the grok CLI that refreshes the sign-in (default: grok on PATH, env AGENTCIV_GROK_BIN)
   --grok-auth-file <p>  grok: read the token from this file, kept fresh elsewhere; the CLI is not run (env AGENTCIV_GROK_AUTH_FILE)
   --no-stream           disable streaming

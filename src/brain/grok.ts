@@ -79,9 +79,10 @@ export class GrokBrain implements Brain {
   private readonly authPath: string;
 
   constructor(cfg: BrainConfig & { auth?: AuthSource; refresh?: Refresher }) {
-    this.model = cfg.model ?? "grok-4.7";
+    this.model = cfg.model ?? "grok-4.6";
     this.baseUrl = (cfg.baseUrl ?? GROK_BASE_URL).replace(/\/+$/, "");
-    this.effort = cfg.reasoningEffort ?? "minimal";
+    // xAI accepts low/medium/high/xhigh. Low is the latency-oriented setting.
+    this.effort = cfg.reasoningEffort ?? "low";
     this.temperature = cfg.temperature;
     this.topP = cfg.topP;
     this.timeoutMs = cfg.timeoutMs ?? 120_000;

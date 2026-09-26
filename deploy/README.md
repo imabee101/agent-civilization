@@ -14,7 +14,7 @@ host value lives in `/etc/agent-civ/install.env` (untracked, root, no secrets), 
 | `GAME_FLAGS` | `--max-agents`, `--concurrency` (a ceiling), `--max-tokens`, `--temperature` |
 | `SLOTS`, `CTX_PER_SLOT` | llama-server slots (one per node) and context each (defaults 12, 6144) |
 | `BRAIN` | `local` (llama-server, default) or `grok` |
-| `GROK_USER`, `GROK_MODEL` | `BRAIN=grok`: the user whose `grok login` the game borrows; model (default `grok-4.7`) |
+| `GROK_USER`, `GROK_MODEL`, `GROK_REASONING_EFFORT` | `BRAIN=grok`: the user whose `grok login` the game borrows; model (default `grok-4.6`) and effort (default `low`, the fast setting) |
 
 | Piece | Where |
 |---|---|
@@ -76,7 +76,5 @@ journalctl -u agent-civ -u agent-civ-llm -f
   prompt was reused (`f_keep` in the llm journal), the rest re-prefilled.
 - A host resolving through public DNS (the NUC itself) sees no record; that is the split.
 - `--max-agents 12`: every extra node slows the paced clock; past `--max-tick-ms` turns space out instead.
-- Controls need the operator token: `/etc/agent-civ/operator-token` (root, 0600, made by `install.sh`;
-  `sudo cat` it). The UI asks for it once per browser session ("watch only" badge → "operator") and
-  forgets it when the server refuses it; over REST it is a bearer header. Reads stay open to the LAN.
-  A reset still also needs the word RESET; every control is logged with the caller's address.
+- This local deployment intentionally has no operator token: controls are available to the LAN, while
+  reset still needs the word RESET. The server retains optional token enforcement for other deployments.

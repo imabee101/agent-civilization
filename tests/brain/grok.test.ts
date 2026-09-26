@@ -59,6 +59,13 @@ describe("GrokBrain", () => {
     expect(createBrain({ kind: "grok" }).kind).toBe("grok");
   });
 
+  test("defaults to the fast Grok 4.6 configuration", async () => {
+    const f = fakeFetch([[delta("ok"), completed()]]);
+    const b = new GrokBrain({ kind: "grok", fetch: f.fetch, ...authStub([{ token: "T", expiresAt: hourFromNow() }]) });
+    await b.decide({ system: "", user: "u" });
+    expect(f.captured[0]!.body).toMatchObject({ model: "grok-4.6", reasoning: { effort: "low" } });
+  });
+
   test("streams text, reports usage, cached tokens and cost", async () => {
     const f = fakeFetch([[{ type: "response.created" }, delta("```js\n"), delta("rest();\n```"), completed()]]);
     const a = authStub([{ token: "T1", expiresAt: hourFromNow() }]);
@@ -86,6 +93,16 @@ describe("GrokBrain", () => {
       { type: "message", role: "system", content: "SYS" },
       { type: "message", role: "user", content: "USER" },
     ]);
+  });
+
+  test("two nodes do not share a prompt cache key", async () => {
+    const f = fakeFetch([[delta("a"), completed()], [delta("b"), completed()]]);
+    const b = new GrokBrain({ kind: "grok", fetch: f.fetch, ...authStub([{ token: "T", expiresAt: hourFromNow() }]) });
+    await b.decide({ system: "SYS", user: "USER", cacheKey: "n1" });
+    await b.decide({ system: "SYS", user: "USER", cacheKey: "n2" });
+    expect(f.captured[0]!.body.prompt_cache_key).toBe("agentciv-n1");
+    expect(f.captured[1]!.body.prompt_cache_key).toBe("agentciv-n2");
+    expect(f.captured[0]!.headers["x-grok-conv-id"]).not.toBe(f.captured[1]!.headers["x-grok-conv-id"]);
   });
 
   test("cuts at a stop string, even one split across deltas, and shows nothing past it", async () => {

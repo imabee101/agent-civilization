@@ -16,7 +16,7 @@ import { fnvHash } from "../engine/signals";
 import { normalizeScript } from "../brain/prompt";
 import { generateName, colorForIndex } from "./names";
 import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, FAR_PLAQUE_TEXT, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
-import { answerOf, makeRiddle, matches, type Riddle, type RiddleFacts } from "./riddles";
+import { answerOf, makeRiddle, matches, tokens, type Riddle, type RiddleFacts } from "./riddles";
 import type { AgentView, AnsweredRecord, VoiceRecord, BoardPost, CacheEntry, EventKind, ItemKind, Phase, Profile, RuinView, Season, StructureKind, StructureView, Terrain, TileView, WorldConfigView, WorldEvent, WorldState } from "../shared/protocol";
 
 export const SEASONS: readonly Season[] = ["spring", "summer", "autumn", "winter"];
@@ -515,7 +515,7 @@ export class World {
     // Beyond the water: richer springs, an open stash and a plaque of its own. Reasons to cross.
     if (moat > 0) {
       for (let i = 0; i < cfg.outerSprings; i++) {
-        const t = pickOuter((x) => x.terrain !== "rock" && farFrom([...placed.spring!], 3)(x));
+        const t = pickOuter((x) => x.terrain !== "rock" && farFrom([...placed.spring!], 8)(x));
         if (!t) break;
         t.structure = { kind: "spring" };
         t.foodCap = 100;
@@ -598,15 +598,27 @@ export class World {
     for (const t of this.tiles) if (t.structure || t.items.length) this.dirtyTiles.add(hexKey(t));
   }
 
-  /** Device, well, and bell. Words differ. The device sits outside the centre spring's circle. */
+  /** Device, well, and bell. Words differ. The device is a local hazard. */
+  private centreSpring(): Tile | undefined {
+    const springs = this.tiles.filter((t) => t.structure?.kind === "spring");
+    const cache = this.cacheTile();
+    if (!springs.length) return undefined;
+    if (!cache) return springs[0];
+    return springs.slice().sort((a, b) => hexDistance(a, cache) - hexDistance(b, cache))[0];
+  }
+
   private placePuzzles(): void {
-    const spring = this.tiles.find((t) => t.structure?.kind === "spring");
+    const spring = this.centreSpring();
     if (!spring) return;
     const land = (t: Tile) => t.terrain !== "water" && t.terrain !== "rock" && !t.structure;
     const device = this.tiles.find((t) => land(t) && hexDistance(t, spring) >= 5 && hexDistance(t, spring) <= 7);
     if (device) device.structure = { kind: "device", text: "HARBOUR" };
     const well = this.tiles.find((t) => land(t) && hexDistance(t, spring) >= 8);
-    if (well) well.structure = { kind: "well", text: "DEPTH" };
+    if (well) {
+      well.structure = { kind: "well", text: "DEPTH" };
+      const plaque = this.tiles.find((t) => land(t) && hexDistance(t, well) === 1);
+      if (plaque) plaque.structure = { kind: "plaque", text: "One body stands on the well. Another stands beside it. The word under the well is DEPTH.\n" };
+    }
     const bell = this.tiles.find((t) => land(t) && hexDistance(t, spring) >= 3 && hexDistance(t, spring) <= 4 && t !== device);
     if (bell) bell.structure = { kind: "bell", text: "TURN" };
   }
@@ -615,7 +627,7 @@ export class World {
     if (this.day !== 3 || this.longDarkUntilDay > 0) return;
     const n = Object.keys(this.cacheTile()?.structure?.entries ?? {}).length;
     if (n < 3) {
-      this.longDarkUntilDay = this.day + 2;
+      this.longDarkUntilDay = this.day + this.config.seasonDays + 2;
       this.emit("season-changed", 3, undefined, "the shelf is thin; a long winter follows", { data: { untilDay: this.longDarkUntilDay } });
     }
   }
@@ -640,26 +652,21 @@ export class World {
         this.addLog(a.id, "the device did not know that word");
         return;
       }
-      const spring = this.tiles.find((x) => x.structure?.kind === "spring");
+      const spring = this.centreSpring();
       if (!spring) return;
-      let n = 0;
-      for (const o of this.livingAgents()) {
-        if (o.id === a.id) continue;
-        if (hexDistance(o, spring) <= 4) {
-          o.health = 0;
-          n++;
-        }
-      }
       s.text = "spent";
       this.markDirty(t!);
-      this.emit("died", 3, a, `the device at ${t!.q},${t!.r} spent; ${n} nodes in the circle`, { data: { q: t!.q, r: t!.r, n } });
+      a.health = 0;
+      this.addLog(a.id, "the device spent its charge");
+      this.emit("died", 3, a, `${a.name} spent the device at ${t!.q},${t!.r}`, { data: { q: t!.q, r: t!.r } });
     } else if (s.kind === "well" && !s.locked && said === (s.text ?? "").toUpperCase()) {
       t!.food = 80;
       s.locked = true;
       this.markDirty(t!);
       this.emit("built", 2, a, `${a.name} sealed the well`, { quote: text });
     } else if (s.kind === "bell" && s.text !== "spent" && said === (s.text ?? "").toUpperCase()) {
-      this.seasonShift += 1;
+      const now = this.season;
+      this.seasonShift += now === "spring" ? 3 : 1;
       s.text = "spent";
       this.markDirty(t!);
       this.emit("season-changed", 3, a, `${a.name} rang the bell; the season turned`, { data: { season: this.season } });
@@ -1812,6 +1819,11 @@ export class World {
   }
 
   private survival(a: Agent): void {
+    if (!a.alive) return;
+    if (a.health <= 0) {
+      this.finishDeath(a);
+      return;
+    }
     const cfg = this.config;
     a.food = Math.max(0, a.food - cfg.foodDrainPerTick);
     a.energy = Math.max(0, a.energy - cfg.energyDrainPerTick);
@@ -1831,23 +1843,25 @@ export class World {
         this.emit("exhausted", 1, a, `${a.name} is exhausted`);
       }
     } else a.wasExhausted = false;
-    if (a.health <= 0) {
-      a.health = 0;
-      a.alive = false;
-      a.diedTick = this.tick;
-      a.intent = { sends: [] };
-      // Everything it carried falls to the ground.
-      const t = this.tileAt(a)!;
-      t.food += a.inventory.food;
-      t.wood += a.inventory.wood;
-      t.stone += a.inventory.stone;
-      t.items.push(...a.inventory.items);
-      a.inventory = { food: 0, wood: 0, stone: 0, items: [] };
-      this.markDirty(t);
-      this.leavePapers(a);
-      this.emit("died", 3, a, `${a.name} died at ${a.q},${a.r}. Its files remain.`);
-      if (this.livingAgents().length === 0) this.extinct = true;
-    }
+    if (a.health <= 0) this.finishDeath(a);
+  }
+
+  private finishDeath(a: Agent): void {
+    if (!a.alive) return;
+    a.health = 0;
+    a.alive = false;
+    a.diedTick = this.tick;
+    a.intent = { sends: [] };
+    const t = this.tileAt(a)!;
+    t.food += a.inventory.food;
+    t.wood += a.inventory.wood;
+    t.stone += a.inventory.stone;
+    t.items.push(...a.inventory.items);
+    a.inventory = { food: 0, wood: 0, stone: 0, items: [] };
+    this.markDirty(t);
+    this.leavePapers(a);
+    this.emit("died", 3, a, `${a.name} died at ${a.q},${a.r}. Its files remain.`);
+    if (this.livingAgents().length === 0) this.extinct = true;
   }
 
   /** Once a day: beyond `maxRuins`, the oldest ruins of this world's own dead are lost with their files. The founding ruins stay. */
@@ -2111,14 +2125,16 @@ export class World {
 
   private riddleFacts(): RiddleFacts {
     const cache = this.tiles.find((t) => t.structure?.kind === "cache")?.structure;
-    const newest = this.deadAgents().sort((x, y) => (y.diedTick ?? 0) - (x.diedTick ?? 0))[0];
-    const farPlaque = this.moatRadius() > 0 ? this.tiles.find((t) => t.structure?.kind === "plaque" && !this.isInner(t))?.structure?.text : undefined;
+    const outerPlaques = this.moatRadius() > 0 ? this.tiles.filter((t) => t.structure?.kind === "plaque" && !this.isInner(t)) : [];
+    const farPlaque = (outerPlaques.find((t) => t.structure?.text?.includes("HARBOUR")) ?? outerPlaques[0])?.structure?.text;
     const stash = this.moatRadius() > 0 ? this.tiles.find((t) => t.structure?.kind === "vault" && !this.isInner(t)) : undefined;
+    const entries = cache?.entries ? Object.values(cache.entries) : [];
+    const note = entries.find((e) => e.text && tokens(e.text).length > 0);
+    const near = this.tiles.find((t) => t.structure?.kind === "plaque" && this.isInner(t))?.structure?.text;
     return {
-      towers: this.tiles.filter((t) => t.structure?.kind === "tower").length,
-      population: this.livingAgents().length,
-      cacheEntries: cache?.entries ? Object.keys(cache.entries).length : 0,
-      newestRuin: newest?.name,
+      nearPlaque: near,
+      shelfName: entries[0]?.name,
+      shelfWord: note ? tokens(note.text)[0] : undefined,
       farPlaque,
       farStashFood: stash ? stash.food : undefined,
     };
@@ -2126,7 +2142,10 @@ export class World {
 
   private carveRiddle(s: Structure): void {
     const no = (s.riddle?.no ?? 0) + 1;
-    s.riddle = makeRiddle(this.rng, no, this.tick, this.riddleFacts(), s.riddle?.kind);
+    const facts = this.riddleFacts();
+    s.riddle = makeRiddle(this.rng, no, this.tick, facts, s.riddle?.kind);
+    s.riddle.answer = answerOf(s.riddle, facts);
+    s.riddle.text += " Include your own name in what you say.";
   }
 
   /** Voices the stone still holds for its current riddle: one per node, none older than monolithVoiceTicks. */
@@ -2148,7 +2167,8 @@ export class World {
     const s = t?.structure;
     if (!t || !s?.riddle) return;
     const answer = answerOf(s.riddle, this.riddleFacts());
-    if (answer === undefined || !matches(spoken, answer)) {
+    const named = tokens(spoken).includes(a.name.toLowerCase());
+    if (answer === undefined || !matches(spoken, answer) || !named) {
       this.addLog(a.id, "the monolith stayed silent");
       return;
     }

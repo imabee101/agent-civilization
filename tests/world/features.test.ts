@@ -17,7 +17,7 @@ describe("world generation places nuggets", () => {
     const w = mk();
     const kinds = structures(w);
     expect(kinds.filter((k) => k === "cache").length).toBe(1);
-    expect(kinds.filter((k) => k === "plaque").length).toBe(2);
+    expect(kinds.filter((k) => k === "plaque").length).toBe(3);
     expect(kinds.filter((k) => k === "spring").length).toBe(w.config.springs + w.config.outerSprings);
     expect(kinds.filter((k) => k === "tower").length).toBe(w.config.towers);
     expect(kinds.filter((k) => k === "board").length).toBe(w.config.boards);
@@ -32,7 +32,7 @@ describe("world generation places nuggets", () => {
     const cache = w.tiles.find((t) => t.structure?.kind === "cache")!;
     expect(hexDistance(cache, { q: 0, r: 0 })).toBeLessThanOrEqual(1);
     expect(Object.keys(cache.structure!.entries!).sort()).toEqual(INITIAL_CACHE_ENTRIES.map((e) => e.name).sort());
-    const vault = w.tiles.find((t) => t.structure?.kind === "vault")!;
+    const vault = w.tiles.find((t) => t.structure?.kind === "vault" && t.structure.locked)!;
     expect(vault.structure!.locked).toBe(true);
     expect(vault.food).toBeGreaterThan(50);
     expect(vault.items).toContain("relay");
@@ -117,7 +117,7 @@ describe("the enclosure", () => {
     for (const kind of ["cache", "monolith"] as const) expect(inside(w.tiles.find((t) => t.structure?.kind === kind)!)).toBe(true);
     const plaques = w.tiles.filter((t) => t.structure?.kind === "plaque");
     expect(plaques.filter(inside).length).toBe(1);
-    expect(plaques.filter((t) => !inside(t))[0]!.structure!.text).toBe(lore.FAR_PLAQUE_TEXT);
+    expect(plaques.filter((t) => !inside(t)).some((t) => t.structure!.text === lore.FAR_PLAQUE_TEXT)).toBe(true);
     expect(inside(w.tiles.find((t) => t.hidden.includes("key"))!)).toBe(true);
     expect(inside(w.tiles.find((t) => t.items.includes("map"))!)).toBe(true);
     const springs = w.tiles.filter((t) => t.structure?.kind === "spring");
@@ -173,7 +173,7 @@ describe("the enclosure", () => {
     const w = mk({ enclosure: false });
     expect(w.moatRadius()).toBe(0);
     expect(w.tiles.some((t) => t.structure?.kind === "gate")).toBe(false);
-    expect(w.tiles.filter((t) => t.structure?.kind === "plaque").length).toBe(1);
+    expect(w.tiles.filter((t) => t.structure?.kind === "plaque").length).toBe(2);
   });
 
   test("a world saved before the ring existed gets one on restore; whatever stood on the ring is moved off it", () => {
