@@ -1,7 +1,10 @@
 # Acceptance: measured against plan.md and the verbal brief
 
-Each row names the requirement, where it lives, and the evidence. "Test"
-means an automated test in `tests/`; run `bun test` to re-verify.
+Each row names the requirement, where it lives, and the evidence. The current
+suite is 426 tests in 36 files (`bun test`). With localhost binding enabled,
+`bun run check` passes all 426 tests and typechecking. A restricted-sandbox
+attempt blocked 10 server tests with `EPERM`; that is an environment limitation,
+not a code failure. Build passes. Browser results remain environment-dependent.
 
 ## plan.md — the core idea and the failure mode to avoid
 
@@ -58,13 +61,15 @@ means an automated test in `tests/`; run `bun test` to re-verify.
 | Hidden artifacts placed strategically | `src/world/world.ts` `placeFeatures` | Key on sand/grass, lantern on rock/sand, seeds in forests, spare relay on grass; revealed only by standing there; the Cartographer's map names them vaguely. |
 | Meme inspiration, clean | `src/world/features.ts` | Shared cache as message board, "counting ourselves", a plaque about the monolith, a Solver ruin whose code answered one riddle, "the stone". No real names. |
 | Works on any device, portrait and landscape, no empty space, no overflow | `ui/app.css`, `scripts/e2e-screens.ts` | See UI section. |
-| Test and run it; screenshots | `bun test` (267 tests, 23 files), `bun run e2e` | `docs/screenshots/*.png`; full set in `scratch/ui-shots/` with `report.json`. Compiled binary `dist/agentciv` verified: page, assets, API, WebSocket, history, snapshot on SIGTERM, restore. |
+| Test and run it; screenshots | `bun test` (426 tests, 36 files), `bun run e2e` | Eight committed representative PNGs in `docs/screenshots/`; the full generated set is untracked under `scratch/ui-shots/` with `report.json`. E2E is environment-dependent on Chromium and localhost binding. |
 
 ## UI
 
 Filled in from the end-to-end run; see below.
 
-Automated audit (`bun run e2e`, Chromium over the DevTools protocol, real server on the random brain): **57/57 checks passed**.
+Automated audit (`bun run e2e`, Chromium over the DevTools protocol, real server
+on the random brain): **environment-dependent**. It requires Chromium and a
+host that permits localhost binding; no result is claimed when either is absent.
 
 Each check asserts: the page does not scroll, the canvas covers the full viewport, no visible element extends outside the viewport (clip-aware), `html/body` overflow hidden, the map covers >= 98.5% of the viewport (`coverage()`), and on mobile every opened panel fills the free area between the top bar and the tab bar.
 
@@ -78,7 +83,9 @@ Each check asserts: the page does not scroll, the canvas covers the full viewpor
 | phone-landscape-844x390 | world, dossier-agent, dossier-tile, groups, chronicle, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
 | small-phone-360x740 | world, dossier-agent, dossier-tile, groups, chronicle, hood-brain, hood-nodes, hood-pacing, back-to-world | all pass | 1.000 |
 
-Representative screenshots are committed under `docs/screenshots/`; the full set (57 PNGs + `report.json`) is written to `scratch/ui-shots/` by the script.
+Representative screenshots are committed under `docs/screenshots/` (eight PNGs);
+the full set and `report.json` are generated under `scratch/ui-shots/` and are
+not deployment data.
 
 | Requirement (plan.md UI spec / verbal) | Evidence |
 | --- | --- |

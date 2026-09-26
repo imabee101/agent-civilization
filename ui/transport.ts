@@ -22,7 +22,10 @@ export function createWebSocketTransport(url = wsUrl()): Transport {
   let backoff = 500;
   const queue: { msg: ClientMessage; at: number }[] = [];
   let dropCb: (action: string) => void = () => {};
-  const late = new Set(["spawn", "retire", "quarantine", "rewind", "keeper-bite", "keeper-sign", "keeper-say", "keeper-summon"]);
+  // A reconnect is a new control session. Reads/subscriptions may be replayed
+  // by their caller, but controls describe the state when requested and must
+  // not be applied minutes later.
+  const staleAfterMs = 3000;
 
   const connect = () => {
     if (closed) return;
@@ -38,7 +41,7 @@ export function createWebSocketTransport(url = wsUrl()): Transport {
       const now = Date.now();
       while (queue.length) {
         const item = queue.shift()!;
-        if (late.has(item.msg.type) && now - item.at > 3000) {
+        if (now - item.at > staleAfterMs) {
           dropCb(item.msg.type);
           continue;
         }

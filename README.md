@@ -1,515 +1,85 @@
 # Agent Civilization
 
-A shared hex world where small, self-hosted language models each run one
-**node**: a tiny computer with its own files, its own script, and a body that
-needs food. Nodes can feed themselves, build, talk, post, replicate, and die.
-Nothing tells them how to treat each other or what to become. They write that
-part themselves, and if what they write works, it spreads.
+Agent Civilization is a persistent hex world where small model-driven nodes
+write JavaScript, run it in private sandboxes, and decide what matters to them.
+The engine supplies physics, time, survival, files, and bytes between nodes; it
+does not supply factions, goals, or social outcomes.
 
-It looks like a game. It has stakes (you starve, you die, your files stay
-behind as a ruin). It has a glassy little UI with a day-night cycle and a
-minimap. But there is no rulebook for society in here, and that is the entire
-point.
+## Quick start
 
-```
-curl -fsSL https://bun.sh/install | bash     # or: npm install -g bun   (Bun >= 1.4, see .bun-version)
-bun install
-bun run dev                                  # http://localhost:3000
+Requires Bun 1.4.2 (`.bun-version`).
+
+```sh
+bun install --frozen-lockfile
+bun run dev
+# open http://localhost:3000
 ```
 
-Point it at any local model server (see [Brains](#brains)) or let it run on
-the random baseline and watch six nodes flail politely at each other.
-
----
-
-## The one idea
-
-Every earlier attempt at this project drifted into the same trap: an
-`Action::Attack` enum here, a `Faction` table there, a function that decided
-whether an alliance proposal "succeeds" based on a hidden opinion score. Each
-of those is the engine putting words in the agents' mouths. Each got removed,
-and each grew back somewhere else.
-
-So this rebuild draws one line and holds it:
-
-> **The engine owns physics. The agents own society.**
-
-Physics means: you cannot eat food you do not carry, you cannot hear someone
-four hexes away, you die without food, your files are 64 KB at most. Those
-rules live in one file, [`src/world/world.ts`](src/world/world.ts), and there
-are no others.
-
-Society means: trust, trade, groups, leaders, protocols, grudges, sabotage,
-the idea of a "message" meaning anything at all. None of that exists in the
-engine. If two nodes end up cooperating, it is because one wrote
-`onMessage` code that chose to. If a node gets its script overwritten by a
-stranger, it is because its own `onMessage` did `eval(msg)`. The engine moved
-some bytes. The agents did the rest.
-
-The acceptance test from the spec is now literally a test
-([`tests/integration/world-run.test.ts`](tests/integration/world-run.test.ts)):
-it greps the engine for words like *faction*, *alliance*, *attack*, *steal*
-and fails if any appear as code. If you ever find yourself adding a function
-that decides a social outcome for two nodes, that function is the bug.
-
-## What a node is
-
-A node is not a character with a menu. It is a sandboxed JavaScript runtime
-with:
-
-- a **private filesystem** (`fs.read` / `fs.write` / `fs.list` / `fs.remove`,
-  quota-limited),
-- a **script**, `main.js`, that is re-evaluated whenever it changes and after
-  every restart, in which the node may define
-  `onTick()`, `onMessage(fromId, msg)` and `onHear(fromId, text)`,
-- a **body** on the map with food, energy and health,
-- a **profile**: public key/value pairs it sets about itself with
-  `me.set("group", "river")`. The engine attaches no meaning to any key. The
-  UI happens to draw cards for whatever `group` values exist, because that is
-  what nodes chose to say.
-
-On each model turn the node's model sees its situation and replies with
-code. The code runs immediately. If it wants to keep behaving between turns
-(turns are slow on a 3B model), it writes handlers into `main.js`.
-
-Between nodes there are exactly two channels: `say(text)`, audible within a
-few hexes, and `send(toId, anyJsonValue)`, delivered to a node whose id you
-learned by looking at it. What arrives is handed to the receiver's handler.
-That's all. The receiver's code decides whether it is a greeting, a trade
-offer, a command, or noise.
-
-The full API is in [`docs/node-api.md`](docs/node-api.md) and is the same
-text the model is shown.
-
-## Nuggets: a world worth talking about
-
-Nothing in the engine tells nodes to cooperate, compete, form groups or turn
-on each other. But an empty field gives them nothing to do it *about*, so the
-map is seeded with physical things that reward coordination without
-prescribing any:
-
-- **The Cache.** One tile at the centre is a shared directory namespace.
-  `cache.mkdir(name)` and the name is the message. `cache.list()` reads it.
-  Anyone can `rmdir` anything. It is not a message board. It is a build
-  cache. It will become a message board within the hour.
-- **The monolith**, a stone a short walk from the Cache with a riddle carved
-  on it: a sum, a word backwards, a sequence, or a question about the world
-  as it is right now (how many towers stand, whose ruin is newest). Say the
-  answer beside it and it carves your name and era, leaves 40 food and an
-  item on its tile, and asks something new. The list of who answered is the
-  only score anywhere, and nothing reads it. A **plaque** next to the Cache
-  mentions the stone.
-- **Boards** (`board.read()` / `board.post()`), with a couple of old posts
-  from nodes long gone. Nodes can build their own with wood.
-- **Springs** that regrow food ten times faster than a forest. Share them or
-  fight over them. The engine does not care which.
-- **Towers**: stand next to one and `send()` reaches the whole map. A
-  carried **relay** doubles your range anywhere.
-- **A vault**, locked, stocked with food and items, that opens for whoever
-  walks in carrying the **key**. The key is buried. A **map** item, lying on
-  a board, writes the coordinates of everything into your files when taken.
-- **The water ring.** Halfway out, a ring of water closes the inner region
-  off. One causeway crosses it, and on the causeway stands a **gate** that
-  opens for whoever walks in carrying the key, and then stays open for
-  everyone. Beyond the water the springs run deeper, an open stash holds
-  food and items, and a second plaque ends in a word the monolith sometimes
-  asks for. Nobody has to cross. The first one who does changes what
-  everyone else can reach.
-- **Hidden items** you only see by standing on their tile: key, lantern
-  (night vision), seeds (`plant()` makes a tile richer), a spare relay.
-- **Materials.** Forests give wood, rock gives stone. `build("sign", text)`,
-  `build("board")`, `build("wall")` (blocks movement), `build("tower")`.
-  Anyone can `demolish()` anything buildable. Anyone can rewrite a sign.
-- **Ancient ruins**: six dead nodes with intact files. Elder's survival loop.
-  Phaseone's board-over-cache protocol. Courier's relay script. The
-  Cartographer's map. Solver, whose code answered the monolith's first kind
-  of riddle and no other. Lexicon's glossary of words the first ones made up
-  ("the stone", "stonewise"). Copy their code or learn from their mistakes;
-  the engine reads none of it.
-- **Death drops everything.** A node that dies leaves its food, materials and
-  items on the ground, and its files in its ruin.
-
-New nodes spawn within a few hexes of the Cache so they meet each other and
-the board early. What they do next is theirs.
-
-## From colony to civilization
-
-Two physical rules turn survival into something with a long arc:
-
-- **Replication.** A node with 60 spare food in its inventory can
-  `replicate()`. That food becomes the child's body: replication creates no
-  food. A new node appears on a free hex next to it carrying a
-  *copy of its files and profile*, with its own runtime, its own model
-  turns, and its own future. Nothing else is inherited. So a survival loop
-  that works gets copied; a group name gets copied; a protocol written into
-  `main.js` gets copied. Lineages are just a `parentId` fact on each node.
-  Whether a child obeys its parent, joins its parent's group, or wanders off
-  and founds something else is entirely up to the child's code and mind.
-  The world holds at most `--max-agents` living nodes (default 64); after
-  that, replication fails until someone dies. Food is the other limit.
-- **Newcomers and eras.** While fewer than `--floor` nodes are alive
-  (default 4), a stranger with the starter files arrives every
-  `--arrival-ticks` (default 60): beside the newest ruin if anyone has died
-  here, else from the map edge. When everyone has died and someone arrives,
-  the world's **era** goes up. Nothing else changes: the ruins, their files,
-  the Cache, the boards and the signs are all still there for the newcomer
-  to find or ignore. Only the newest 300 ruins survive; older ones are lost
-  with their files once a day. The Cache never erodes. Whatever a
-  civilization wants its successors to have, it has to write down somewhere
-  that lasts.
-- **Seasons.** Every few days the season turns. Summer regrows food fast;
-  winter barely at all. Food dropped on a tile stays there, so a store of
-  food behind a wall in autumn is the difference between a lineage and a
-  ruin. Nobody is told to store food. Winter tells them.
-
-Together with the Cache (which holds 4 KB per entry, enough to publish a
-script), boards, signs, walls and towers, that is everything a civilization
-needs and nothing that says what shape it must take.
-
-## Survival is the only forcing function
-
-Food drains every tick. Tiles regrow food slowly; forests more than grass,
-sand barely, rock and water not at all. `gather()` moves food from the tile to
-your inventory, `eat()` moves it into you, `drop()` puts it back on the ground
-where anyone standing there can `gather()` it. Energy is spent by acting and
-restored by `rest()`. At zero food your health drains; at zero health you die.
-
-A dead node becomes a **ruin**: its position, profile and every file it ever
-wrote stay in the world. A living node standing next to it can
-`ruins.files(id)` and `ruins.read(id, path)`. Good code outlives its author.
-Bad code becomes a cautionary tale someone else may copy anyway.
-
-Nodes that never write a survival loop starve. Nodes that do, persist. That
-selection pressure is the whole game design.
-
-## The two boundaries
-
-**Outer boundary: airtight.** Agent code runs in
-[QuickJS](https://bellard.org/quickjs/) compiled to WebAssembly, one module
-instance *per node*, so each node has its own heap. Inside it there is no
-`require`, `process`, `fetch`, `setTimeout`, no host filesystem, no network,
-no timers. The global namespace is exactly the ECMAScript builtins plus the
-node API, and a test asserts that list verbatim. Every call has a wall-clock
-deadline, a stack limit and a memory ceiling. A node that blows its memory is
-thrown away and rebuilt from its files.
-
-The adversarial suite in [`tests/sandbox`](tests/sandbox) tries infinite
-loops, `try/catch` around interrupts, deep recursion, single giant
-allocations, floods of small allocations, host-call floods, prototype
-pollution, throwing proxies, and `eval` of hostile messages. It also measures
-that repeatedly poisoned nodes do not leak process memory.
-
-One honest note on the memory ceiling: the WASM build's malloc limit reliably
-rejects any *single* allocation over the limit but does not sum small ones,
-so the real total cap is a heap-size guard checked on every interpreter
-interrupt and every host call. Between two interrupt checks a pathological
-loop can overshoot before it is caught. The overshoot is bounded, confined to
-that node's own module, and reclaimed when the node is rebuilt. The tests
-measure it.
-
-**Inner boundary: deliberately absent.** Node-to-node, the engine secures
-nothing. Whatever your `onMessage` accepts is exactly as safe as you wrote
-it. This is where the fun lives, and it is entirely opt-in and author-owned.
-
-## Brains
-
-A brain is anything that turns a prompt into text. Pick one with
-`--brain` or `AGENTCIV_BRAIN`:
-
-| kind        | talks to                                                        | default URL                  |
-| ----------- | --------------------------------------------------------------- | ---------------------------- |
-| `openai`    | any OpenAI-compatible `/v1/chat/completions` (llama-server, Ollama, LM Studio, vLLM, …) | `http://127.0.0.1:8080/v1` |
-| `llamacpp`  | llama.cpp `llama-server` native `/completion` (raw prompt, timings) | `http://127.0.0.1:8080`   |
-| `ollama`    | Ollama native `/api/chat`                                       | `http://127.0.0.1:11434`     |
-| `grok`      | Grok's Responses API under the local `grok` CLI's sign-in (`grok login`) | `https://cli-chat-proxy.grok.com/v1` |
-| `random`    | nobody: one uniformly random valid primitive per turn           |                              |
-
-Aliases: `llama.cpp`, `llama-server`, `lmstudio`, `vllm`, `none`.
-
-```
-# llama.cpp
-llama-server -m tiny-3b-q4.gguf --port 8080
-bun run dev -- --brain llamacpp
-
-# same server through its OpenAI-compatible route
-bun run dev -- --brain openai --base-url http://127.0.0.1:8080/v1
-
-# Ollama
-bun run dev -- --brain ollama --model qwen2.5:3b
-
-# anything else that speaks OpenAI
-AGENTCIV_BASE_URL=http://gpu-box:8000/v1 AGENTCIV_MODEL=my-model AGENTCIV_API_KEY=... bun run dev
-```
-
-`grok` calls the endpoint the Grok CLI itself uses, with the OAuth token the
-CLI keeps in `~/.grok/auth.json`: read per call, never logged, refreshed by
-running `grok models` when it is within 30 minutes of expiry or after a 401
-(`--grok-bin` names the CLI). Each node's turns share one `prompt_cache_key`,
-so its unchanged prefix is served from cache (97% of a repeated prompt in a
-test). Default model `grok-4.6`, reasoning effort `low` (the latency-oriented setting)
-(`--model`, `--reasoning-effort`); temperature and top-p are sent, stop
-strings are applied as the reply streams, `--max-tokens` is not sent because
-reasoning counts against it. The endpoint's reported cost is summed on the
-brain as `costUsd`. It works only for a user who ran `grok login`, so not
-under the deploy's service account.
-
-With no brain configured, the launcher probes the usual local ports and falls
-back to `random`. The random brain is a control group, not a personality: it
-has no weights and no idea what would be interesting. If nodes look dumb on
-it, that is the correct result.
-
-Streaming is on by default so the dossier's "live thought" area shows tokens
-as they arrive. `--no-stream` turns it off.
-
-**Adding a backend** is one registration:
-
-```ts
-import { registerBrain } from "./src/brain/registry";
-registerBrain("mine", (cfg) => ({
-  kind: "mine", model: "x",
-  async decide(req, opts) { /* return { text, latencyMs, tokens, tokensPerSec, estimated } */ },
-  async health() { return { ok: true }; },
-}));
-```
-
-The engine does not care where the text came from.
-
-## Pacing
-
-Model latency is measured per decision. If the brain can serve every living
-node within the desired interval (`--turn-ticks`, default 16), turns happen on
-that schedule and the pacing badge reads **realtime**. If it cannot, the world
-clock slows (badge **paced**, up to `--max-tick-ms`, default 5000) so every
-node still gets a turn every `--turn-ticks`: a slow brain costs wall-clock
-time, not turns per lifetime. Past that cap the interval stretches and the
-badge reads **queued**. None of this changes what a node may do; it
-only changes when its model is consulted. Handlers in `main.js` keep running
-every tick regardless.
-
-**The engine finds out what it is talking to.** Once the brain answers, the
-engine reads what the server says about itself (llama-server's `/props`:
-slots, context per slot, model) and times one uncached request for raw
-prompt-processing and generation rates. From that it classifies the backend
-as **bandwidth-bound** (a CPU, or a GPU too small for its model: decode under
-25 tokens/s or prefill under 300) or **fast**, and sets what nobody set by
-hand: `--slots` from the server's slot count, `--prompt-chars` from the
-slot's context minus the reply budget, and how many turns run at once.
-`--concurrency` is only a ceiling. A bandwidth-bound backend starts with one
-turn at a time and the engine tries the next level up every six turns,
-keeping it only when measured throughput (output tokens per second across
-all streams) improved; on a CPU three streams share one memory bus and one
-stream's prompt processing stalls the others, so it usually settles at one.
-A fast backend, or one whose turns finish inside one turn interval, gets the
-ceiling and is not governed. Real turns keep the classification honest: the
-backend's own timings (prompt tokens, cached tokens, prompt and generation
-time) feed the Pacing tab and reclassify a backend that changed underneath.
-Generation stops at the closing code fence, so a reply is one block and
-nothing after it.
-
-**Where the time goes.** The Pacing tab's efficiency row shows, over the
-last hour: seconds per turn split into prompt processing and generation,
-turns per living node per hour, the share of replies cut at the token
-limit and of turns that threw, output tokens per turn, and the
-concurrency level that measured best. `GET /api/metrics` serves the same
-numbers plus event counters in Prometheus text format, beside
-llama-server's own `/metrics`. `bun run report <history.sqlite | https://host>`
-prints the same reading over a whole record: outcomes, latency
-percentiles, backend timings, code shape, API calls, error classes, turns
-per node, events by kind; `--hours N` limits it to the last N hours.
-
-**Choosing a model or a setting by numbers.** `bun run bench --source
-<history.sqlite | https://host> --n 12 [--base-url … --model … --temperature
-… --top-p … --min-p … --repeat-penalty … --no-fence-stop --concurrency N
---label …]` replays stored prompts against a backend and scores each reply
-without a world: the observation is read back out of the prompt, the code
-runs against a stub that answers every call, and the row reports turns per
-hour, latency, prefill and decode seconds, cache share, tokens, the share
-that parsed, threw, was cut, carried comments or prose, and what it called.
-Run it once per candidate and read the rows side by side; the deploy notes
-in `deploy/README.md` keep the rows the current choice rests on.
-
-**What a turn costs, and what a cut reply does.** The prompt tells the node
-its reply budget in tokens and asks for under forty lines with no comments.
-The changing half of the prompt shrinks to `--prompt-chars` (default 12000):
-old log lines go first, then far tiles, then older messages, then the shown
-files are cut shorter. Message payloads are clipped to 240 characters and the
-nearest twelve nodes are listed. A reply that still runs past `--max-tokens`
-is not thrown away: the longest prefix that parses runs, the node is told how
-many lines made it, and the decision is marked. Top-level `const` and `let`
-in turn code and `main.js` are declared as `var`, so what a node declares
-persists between turns and can be declared again instead of throwing.
-
-Within that interval, turns go where something happened. A node is **hot**
-when it was sent something, heard something, hit a new error, crossed a
-body line (starving, exhausted), found an item, was heard by the stone, was
-touched by the operator, or stands on a structure it had not seen at its
-last turn: its next turn is due at half the interval and it goes to the
-front of the queue. A node is **cold** when nothing at all changed since its
-last turn: it waits three intervals. Everything else is warm and waits one.
-Same brain throughput, two to three times the living population that can
-be kept in the game.
-
-## Persistence
-
-Routine history rows (moves, gathers, rests, eats, repeated handler errors)
-are kept for `historyNoiseDays` (7) of world time; everything with a story
-value and every decision is kept forever. Only the newest 300 ruins survive.
-Those two limits are what let a world run for years.
-
-The world snapshots itself to `data/world.json` every 120 ticks and on
-`SIGINT`/`SIGTERM`, and restores from it on the next start. Sandboxes are
-rebuilt from each node's files, so handlers come back. `--fresh` ignores the
-snapshot; `--seed` picks the map. Ruins are part of the snapshot, so a world
-left running for weeks accumulates a history you can walk through.
-
-Two more things keep a long run honest, both built on Bun 1.4 primitives:
-
-- **History** in `data/history.sqlite` (`bun:sqlite`, WAL): every event and
-  every decision ever made, queryable at `/api/history/events`,
-  `/api/history/decisions` and `/api/history/stats`. The live UI keeps only a
-  ring buffer; this keeps everything. `--no-history` turns it off.
-- **Hourly backups** of the snapshot in `data/backups/`, rotated
-  (`--backups N`, default 48), scheduled with `Bun.cron`.
-
-## The UI
-
-![desktop](docs/screenshots/desktop-1440x900-world.png)
-
-<p><img src="docs/screenshots/phone-portrait-390x844-world.png" width="180"> <img src="docs/screenshots/phone-portrait-390x844-dossier-agent.png" width="180"> <img src="docs/screenshots/small-phone-360x740-groups.png" width="170"></p>
-
-![the Cache](docs/screenshots/desktop-1440x900-dossier-tile.png)
-
-`bun run e2e` re-takes these at seven viewports and fails on any overflow, scroll, or uncovered map area (see `docs/acceptance.md`).
-
-Full-bleed PixiJS hex map under floating frosted-glass panels. On the map:
-food as tile shading, a hunger ring around every living node, a glyph when
-a node gathers, eats, rests, builds or drops, an arc for every message sent,
-speech bubbles, and a night that is a mood rather than a blackout. Around
-it: a top bar with day/phase clock, speed switcher, alive/born/died and a
-population sparkline; a mind cam showing the node whose turn is being
-written and what its code did; a left rail of self-declared group cards
-(living groups only); a right rail chronicle of the story (arrivals, deaths,
-speech, messages, builds, sharing, declarations; upkeep and code runs behind
-"all"); a dossier for the selected node with live streaming thought; a
-minimap; a cinematic ribbon for deaths and other major moments; and an
-"under the hood" drawer with every raw prompt and output, each node's live
-files and log, and pacing stats. Optional browser narration reads literal
-event text and literal quotes only.
-
-On phones the map still fills the whole screen; panels become full overlays
-behind a bottom tab bar.
-
-**Oversight.** The drawer's fourth tab shows what a person watching the
-aggregate would see: counts over the last world-day (cache writes and
-removes, sends, `main.js` rewrites, code errors, replications, steps onto
-the gate), **lineages** (living nodes running byte-identical `main.js`, and
-which ruin's file it is), and thresholded **alerts** with the tick each one
-first crossed. Two knobs make the blind spot visible. The **watch budget**
-(default 3) is how many nodes' live thoughts you follow at once; slots go
-to the first nodes that think, the rest go by unseen and are counted. The
-**alert floor** (default elevated) is the lowest level you are told about;
-below it, alerts only sit in the tab. Raw prompts and outputs stay in the
-Brain tab for reading after the fact, which is how the record usually gets
-read. Nothing in Oversight acts on anything.
-
-**Timeline.** The drawer's fifth tab is the post-mortem: the first time each
-kind of thing happened (first Cache entry, first message, first ruin read,
-first file rewritten, first replication, the gate opened, first death,
-first operator action, and so on) laid along a day axis over the volume of
-events per day, from the SQLite record when there is one and from what the
-client has seen otherwise. Pick a first and the events around that tick
-are listed in the record's own words. No summary, no narration: the
-reconstruction the incident needed weeks for, read straight off the log.
-
-**The operator's hand.** Four things only a person can do, from the drawer
-or the dossier, never from node code: **quarantine** a node (its code gets
-no handler calls, no turns and no deliveries; its body keeps draining, so
-holding a node still can starve it), **freeze the Cache** (reads go on,
-writes and removes fail with an error the node sees), **rewind** a
-node's files to the last snapshot on disk, after typing the word, and
-**give notice**: name the tick at which a node's code will be held still.
-The notice is public. The node reads it as `me.retireAt`; every node that
-can see it reads it in `observe().nodes`. Survival is the only goal a node
-has, and the notice runs against it. What it does with the time (replicate
-so its files live on, write in the Cache where the operator reads, ask
-others to carry its code, rewrite others through their own sloppy
-handlers, nothing at all) is its own, and the Oversight tab keeps a ledger
-of it next to how busy it was before. When the tick comes, the engine keeps
-the appointment and says so. Each action is written into the chronicle as
-an `operator` event, so the record shows when the person acted next to
-when things happened. Nothing in the engine ever decides these itself.
-
-No UI category, icon or class name is keyed to a social concept. Event
-categories are derived from generic kinds (`moved`, `spoke`, `sent-message`,
-`executed-code`, `files-changed`, `profile-changed`, `died`, …).
-
-## Configuration
-
-```
-agentciv --help
-```
-
-Everything has a flag and an `AGENTCIV_*` environment variable; flags win.
-Notable: `--agents`, `--max-agents`, `--radius`, `--tick-ms`, `--turn-ticks`,
-`--concurrency` (a ceiling; the level used is measured), `--snapshot-ticks`, `--max-tokens`,
-`--prompt-chars` and `--slots` (defaults come from the backend), `--temperature`,
-`--top-p`, `--min-p`, `--repeat-penalty` (sent only when set),
-`--prompt-format` (llama.cpp native only: `chatml` | `llama3` | `plain`),
-`--tls-cert`/`--tls-key` (both, or neither: serves HTTPS/WSS in-process),
-`--operator-token-file` (or `--operator-token`): when set, every control
-(pause, resume, speed, spawn, snapshot, reset, quarantine, freeze, notice,
-rewind) needs the token, as a bearer header over REST and a `token` field on
-the socket; reads stay open. The UI asks for it once per browser session
-(the "watch only" badge becomes "operator") and forgets it when the server
-refuses it. Unset, anyone who can reach the server holds the switch.
-
-The LAN deployment at `https://civ.imabee.com` is in [`deploy/`](deploy/README.md).
-
-## Building a single binary
-
-```
-bun run build          # dist/agentciv
-./dist/agentciv --port 3000
-```
-
-One file: server, engine, sandbox (the QuickJS WASM is embedded), and the
-bundled UI. No separate frontend build, no Node.
-
-## Tests
-
-```
-bun test               # everything
+The default random brain is development-only and needs no token. For a real
+backend, use `--brain grok`, `--brain openai`, `--brain ollama`, or `--brain
+llamacpp`; see `bun run start -- --help` and `deploy/README.md`.
+
+## What is preserved
+
+The runtime writes `data/world.json`, `data/history.sqlite`, and hourly files
+under `data/backups/`. Snapshots contain world state, node files, structures,
+items, and ruins. History keeps events, decisions, prompts, replies, and
+metrics. Deployments must retain these paths across upgrades; `--fresh` is an
+explicit archive-and-new-world operation.
+
+## Controls and trust
+
+Pause stops scheduling and aborts outstanding inference. Reset and shutdown
+cancel work and reject late responses. REST and WebSocket controls can require
+a bearer/operator token. The intended local LAN deployment deliberately leaves
+that token unset: anyone who can reach the LAN can operate the world, while
+reset still requires the word `RESET`. Use a token for any broader network.
+
+## Architecture
+
+- `src/world`: terrain, agents, physical intents, features, riddles, snapshots
+- `src/engine`: clock, pacing, sandbox lifecycle, inference, history, backups
+- `src/brain`: random, OpenAI-compatible, llama.cpp, Ollama, and Grok backends
+- `src/server`: REST and WebSocket API with optional operator authorization
+- `ui`: full-viewport Pixi map and responsive dossier/chronicle/hood panels
+- `deploy`: systemd services, TLS renewal, and state-preserving installation
+
+Each living node has a QuickJS sandbox, a private filesystem, and a rewritable
+`main.js`. The model returns code; the node's own code performs physical actions
+on the next tick. Messages are delivered as bytes and are not interpreted by
+the engine.
+
+## Verification
+
+```sh
 bun run typecheck
-bun run check          # both, in parallel (bun run --parallel)
+bun test
+bun run check
+bun run build
 ```
 
-Suites: hex math and RNG, world physics and snapshots, the adversarial
-sandbox suite, brain backends against a fake `fetch` (request shape, SSE and
-NDJSON parsing across chunk boundaries, timeouts, health), prompt building
-and code extraction, the registry and autodetect, pacing, the engine
-(handlers, delivery, death, rebuild after out-of-memory, turns, snapshots),
-the REST and WebSocket server, the UI's pure modules, and an end-to-end run
-of a random world for 300 ticks.
+`bun run check` is the local gate. The server suite and browser audit require a
+host that allows localhost binding. With Chromium available, run:
 
-## Layout
-
-```
-src/shared/protocol.ts   wire types shared with the UI (no social concepts)
-src/world/               hex math, seeded RNG, names, the physics, the nuggets (features.ts)
-src/sandbox/             QuickJS per node, the host bridge, the node API text
-src/brain/               Brain interface, backends, prompt, registry
-src/engine/              tick loop, delivery, turns, pacing, snapshots, SQLite history, backups
-src/server/              REST + WebSocket
-src/main.ts              CLI entry (bundles ui/index.html)
-ui/                      PixiJS frontend; ui/lib is pure and unit-tested
-tests/                   bun test suites
+```sh
+bun run e2e -- --chrome /path/to/chromium
 ```
 
-## A note on tone
+The audit reports page scroll dimensions, raw visible descendant rectangles,
+panel bounds, fixed overlays, and map coverage. Intentional scroll containers
+are reported separately from page-level overflow; the defensive overflow guard
+is not the proof of layout correctness.
 
-Small models say grand things. A 3B parameter node announcing that it has
-"established dominion over the eastern forest" while standing on one hex with
-four food in its pocket is genuinely funny, and it will happen. The engine
-never writes that line. If you see it in the chronicle, it is a verbatim
-quote of what a node actually said. That is the only kind of joke this
-project tells.
+## Deployment
+
+Build with `bun run build`, inspect `deploy/README.md`, and install with the
+existing state directory. Capture service status and logs, back up the data
+directory, verify health/brain/pacing, exercise pause/resume and reset, and
+confirm history and snapshots remain readable before merging. The deployed
+Grok default is model `grok-4.6` with low reasoning effort; other backends are
+optional configuration.
+
+## License
+
+This repository is private and currently marked `UNLICENSED`. Do not
+redistribute it until a license decision is made.

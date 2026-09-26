@@ -67,7 +67,13 @@ export function makeRiddle(rng: Rng, no: number, posed: number, facts: RiddleFac
     if (k === "far-plaque") return lastWord(facts.farPlaque) !== undefined;
     return facts.farStashFood !== undefined;
   });
-  const kind = rng.pick(pool.length ? pool : NEAR.filter((k) => k !== avoid));
+  // Old/restored worlds can temporarily have no shelf, plaque, or stash.
+  // Keep the stone answerable instead of asking the RNG to pick from [];
+  // "cache" is a stable fact of every feature-bearing world.
+  if (pool.length === 0) {
+    return { kind: "near-plaque", text: "What structure stands at the centre of the world?", answer: "cache", no, posed };
+  }
+  const kind = rng.pick(pool);
   const base = { kind, no, posed };
   switch (kind) {
     case "near-plaque":
@@ -87,15 +93,15 @@ export function makeRiddle(rng: Rng, no: number, posed: number, facts: RiddleFac
 export function answerOf(r: Riddle, facts: RiddleFacts): string | undefined {
   switch (r.kind) {
     case "near-plaque":
-      return lastWord(facts.nearPlaque);
+      return lastWord(facts.nearPlaque) ?? r.answer;
     case "shelf-name":
-      return facts.shelfName;
+      return facts.shelfName ?? r.answer;
     case "shelf-word":
-      return facts.shelfWord;
+      return facts.shelfWord ?? r.answer;
     case "far-plaque":
-      return lastWord(facts.farPlaque);
+      return lastWord(facts.farPlaque) ?? r.answer;
     case "far-stash":
-      return facts.farStashFood !== undefined ? String(Math.round(facts.farStashFood)) : undefined;
+      return facts.farStashFood !== undefined ? String(Math.round(facts.farStashFood)) : r.answer;
     default:
       return r.answer;
   }

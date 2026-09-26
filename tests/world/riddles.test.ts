@@ -44,6 +44,13 @@ describe("riddles", () => {
     expect(answerOf(farPlaque, facts)).toBeUndefined();
   });
 
+  test("empty and depleted facts still produce an answerable fallback", () => {
+    const r = makeRiddle(new Rng(4), 8, 20, {});
+    expect(r.answer).toBe("cache");
+    expect(answerOf(r, {})).toBe("cache");
+    expect(matches("the cache is here", answerOf(r, {})!)).toBe(true);
+  });
+
   test("matching is by whole word, case-insensitive, anywhere in what was said", () => {
     expect(tokens("The answer is 42!")).toEqual(["the", "answer", "is", "42"]);
     expect(matches("the answer is 42", "42")).toBe(true);
