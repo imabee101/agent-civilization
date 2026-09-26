@@ -217,9 +217,13 @@ export class NodeSandbox {
       if (typeof e === "string") return e;
       const name = e?.name ?? "Error";
       const message = e?.message ?? "";
-      const stackLine = (e?.stack ?? "").split("\n").find((l) => l.trim().length > 0)?.trim();
+      const lines = (e?.stack ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => /main\.js|turn|onTick|onMessage|onHear/.test(l))
+        .slice(0, 4);
       const text = `${name}: ${message}`;
-      return stackLine && !/^\s*at <eval>/.test(stackLine) ? `${text} (${stackLine.slice(0, 120)})` : text;
+      return lines.length ? `${text}\n${lines.join("\n")}` : text;
     } catch {
       return "Error: <unprintable>";
     }

@@ -35,7 +35,7 @@ Reply with exactly one fenced \`\`\`js code block holding the JavaScript you wan
 It runs once, immediately, inside your node. Only what main.js defines keeps running between your turns.
 Keep it short: under 40 lines, no comments, no prose. A reply longer than the token budget is cut off, and only the complete lines before the cut run. Do not restate handlers that already work; change only what must change.
 Names you declare at the top level persist between turns and may be declared again.
-Handlers you want to keep belong in main.js (fs.write). Turn code is for what happens now.
+Handlers you define in the block are kept. Do not quote them into a string.
 Do not explain. Code only.`;
 
 /** Generation stops before a closing fence: the reply is the one code block, nothing after it. */
@@ -50,8 +50,127 @@ const MAX_RUINS_SHOWN = 8;
 /** Roughly how many short lines of code a token budget holds; told to the model as a target. */
 const TOKENS_PER_LINE = 12;
 
+const HANDLER_FNS = ["onTick", "onMessage", "onHear"] as const;
+
+/** Drop comments and whitespace so two writings of the same loop compare equal. */
+export function normalizeScript(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/\s+/g, "");
+}
+
+/**
+ * The source of one `function name(...) { ... }` declaration, strings and
+ * comments skipped, or undefined when the block does not declare it.
+ * The last declaration wins.
+ */
+export function extractHandler(src: string, name: string): { start: number; end: number; text: string } | undefined {
+  let found: { start: number; end: number; text: string } | undefined;
+  const needle = `function ${name}`;
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i]!;
+    if (ch === "/" && src[i + 1] === "/") {
+      const nl = src.indexOf("\n", i);
+      i = nl < 0 ? src.length : nl + 1;
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipString(src, i);
+      continue;
+    }
+    if (src.startsWith(needle, i) && (i === 0 || /[\s;}]/.test(src[i - 1]!))) {
+      const after = i + needle.length;
+      if (after < src.length && /[A-Za-z0-9_]/.test(src[after]!)) {
+        i++;
+        continue;
+      }
+      const brace = src.indexOf("{", after);
+      if (brace < 0) break;
+      const end = matchBrace(src, brace);
+      if (end === undefined) break;
+      found = { start: i, end, text: src.slice(i, end) };
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return found;
+}
+
+function skipString(src: string, i: number): number {
+  const q = src[i]!;
+  i++;
+  while (i < src.length) {
+    if (src[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (q === "`" && src[i] === "$" && src[i + 1] === "{") {
+      const end = matchBrace(src, i + 1);
+      i = end ?? src.length;
+      continue;
+    }
+    if (src[i] === q) return i + 1;
+    i++;
+  }
+  return i;
+}
+
+function matchBrace(src: string, open: number): number | undefined {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]!;
+    if (ch === "/" && (src[i + 1] === "/" || src[i + 1] === "*")) {
+      i = skipStringishComment(src, i) - 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipString(src, i) - 1;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return undefined;
+}
+
+function skipStringishComment(src: string, i: number): number {
+  if (src[i + 1] === "/") {
+    const nl = src.indexOf("\n", i);
+    return nl < 0 ? src.length : nl + 1;
+  }
+  const end = src.indexOf("*/", i + 2);
+  return end < 0 ? src.length : end + 2;
+}
+
+/**
+ * Fold handler declarations from a turn block into the stored script.
+ * Only the functions the block declares are replaced. Returns null when
+ * the block declares none, so a one-shot turn leaves the script alone.
+ */
+export function mergeHandlers(existing: string, block: string): string | null {
+  let next = existing;
+  let changed = false;
+  for (const name of HANDLER_FNS) {
+    const fn = extractHandler(block, name);
+    if (!fn) continue;
+    changed = true;
+    const prev = extractHandler(next, name);
+    if (prev) next = next.slice(0, prev.start) + fn.text + next.slice(prev.end);
+    else next = `${next.replace(/\s*$/, "")}\n${fn.text}\n`;
+  }
+  return changed ? next.replace(/^\n/, "") : null;
+}
+
 /** Bound what can be unboundedly long in an observation: message payloads, and how many nodes and ruins are listed. */
-function compactObservation(o: Record<string, unknown>, limits = { inbox: 8, heard: 8 }): Record<string, unknown> {
+function compactObservation(o: Record<string, unknown>, limits = { inbox: 8, heard: 8, shelf: 5 }): Record<string, unknown> {
   const out: Record<string, unknown> = { ...o };
   const clip = (v: unknown): unknown => {
     const s = typeof v === "string" ? v : JSON.stringify(v);
@@ -67,6 +186,10 @@ function compactObservation(o: Record<string, unknown>, limits = { inbox: 8, hea
   if (Array.isArray(out.ruins) && out.ruins.length > MAX_RUINS_SHOWN) {
     out.ruins = [...(out.ruins as { dist?: number }[])].sort((a, b) => (a.dist ?? 0) - (b.dist ?? 0)).slice(0, MAX_RUINS_SHOWN);
     out.ruinsNotShown = (o.ruins as unknown[]).length - MAX_RUINS_SHOWN;
+  }
+  if (Array.isArray(out.shelf)) {
+    if (limits.shelf <= 0) delete out.shelf;
+    else if ((out.shelf as unknown[]).length > limits.shelf) out.shelf = (out.shelf as unknown[]).slice(0, limits.shelf);
   }
   return out;
 }
@@ -84,8 +207,9 @@ function tileLine(t: Record<string, unknown>): string {
  */
 export function buildUserPrompt(f: TurnFacts): string {
   // Shrink steps, applied in order until the prompt fits its budget: the least useful, most volatile facts go first.
-  let limits = { log: MAX_LOG_LINES, tileDist: Infinity, inbox: 8, heard: 8, file: MAX_FILE_CHARS };
+  let limits = { log: MAX_LOG_LINES, tileDist: Infinity, inbox: 8, heard: 8, file: MAX_FILE_CHARS, shelf: 5 };
   const steps: ((l: typeof limits) => typeof limits)[] = [
+    (l) => ({ ...l, shelf: 0 }),
     (l) => ({ ...l, log: 6 }),
     (l) => ({ ...l, tileDist: 2 }),
     (l) => ({ ...l, inbox: 4, heard: 4 }),
@@ -102,8 +226,14 @@ export function buildUserPrompt(f: TurnFacts): string {
   return text;
 }
 
-function render(f: TurnFacts, limits: { log: number; tileDist: number; inbox: number; heard: number; file: number }): string {
+function render(f: TurnFacts, limits: { log: number; tileDist: number; inbox: number; heard: number; file: number; shelf: number }): string {
   const parts: string[] = [];
+  const me = (f.observation as { me?: { name?: string; originNote?: string } }).me;
+  const num = f.files["number.txt"]?.trim();
+  if (me?.name) {
+    const beside = me.originNote ? ` Beside you: ${me.originNote}` : " Beside you: open ground.";
+    parts.push(`You are ${me.name}.${num ? ` Your number is ${num}.` : ""}${beside}`);
+  }
   const names = Object.keys(f.files).sort();
   if (names.length === 0) parts.push("FILES: none yet. You have no main.js, so nothing happens between your turns.");
   else {
@@ -136,7 +266,7 @@ function render(f: TurnFacts, limits: { log: number; tileDist: number; inbox: nu
     parts.push(`SINCE YOUR LAST TURN (${to.tick - from.tick} ticks): ${d("stomach")}, ${d("energy")}, ${d("health")}, carried food ${from.carried}->${to.carried}. Your events: ${happened}.`);
   }
   const { tiles, ...rest } = f.observation as { tiles?: Record<string, unknown>[] };
-  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(compactObservation(rest, { inbox: limits.inbox, heard: limits.heard }))}`);
+  parts.push(`SITUATION (observe(), tiles listed below):\n${JSON.stringify(compactObservation(rest, { inbox: limits.inbox, heard: limits.heard, shelf: limits.shelf }))}`);
   const shownTiles = tiles?.filter((t) => typeof t.dist !== "number" || t.dist <= limits.tileDist);
   if (shownTiles?.length) parts.push(`TILES IN VIEW (in code: observe().tiles, objects {q,r,terrain,food,dist,...}):\nq,r terrain food dist\n${shownTiles.map(tileLine).join("\n")}`);
   if (f.lastResult !== undefined) parts.push(`LAST TURN RESULT: ${f.lastResult}`);

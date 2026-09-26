@@ -5,6 +5,7 @@ export interface Transport {
   send(msg: ClientMessage): void;
   onMessage(cb: (msg: ServerMessage) => void): void;
   onStatus(cb: (connected: boolean) => void): void;
+  onDrop?(cb: (action: string) => void): void;
   close(): void;
 }
 
@@ -19,7 +20,9 @@ export function createWebSocketTransport(url = wsUrl()): Transport {
   let statusCb: (c: boolean) => void = () => {};
   let closed = false;
   let backoff = 500;
-  const queue: ClientMessage[] = [];
+  const queue: { msg: ClientMessage; at: number }[] = [];
+  let dropCb: (action: string) => void = () => {};
+  const late = new Set(["spawn", "retire", "quarantine", "rewind", "keeper-bite", "keeper-sign", "keeper-say", "keeper-summon"]);
 
   const connect = () => {
     if (closed) return;
@@ -32,7 +35,15 @@ export function createWebSocketTransport(url = wsUrl()): Transport {
     ws.onopen = () => {
       backoff = 500;
       statusCb(true);
-      while (queue.length) ws!.send(JSON.stringify(queue.shift()));
+      const now = Date.now();
+      while (queue.length) {
+        const item = queue.shift()!;
+        if (late.has(item.msg.type) && now - item.at > 3000) {
+          dropCb(item.msg.type);
+          continue;
+        }
+        ws!.send(JSON.stringify(item.msg));
+      }
     };
     ws.onmessage = (ev) => {
       try {
@@ -59,7 +70,11 @@ export function createWebSocketTransport(url = wsUrl()): Transport {
   return {
     send(msg) {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-      else if (queue.length < 20) queue.push(msg);
+      else if (queue.length < 20) queue.push({ msg, at: Date.now() });
+      else dropCb(msg.type);
+    },
+    onDrop(cb: (action: string) => void) {
+      dropCb = cb;
     },
     onMessage(cb) {
       msgCb = cb;

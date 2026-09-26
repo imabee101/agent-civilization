@@ -542,6 +542,15 @@ export class World {
     return s;
   }
 
+  /** A wash shared by every living node on the same loop. One node alone stays unmarked. */
+  private kinColor(a: AgentView): number | null {
+    if (!a.alive || !a.codeKey || !this.state) return null;
+    const n = this.state.agents.filter((x) => x.alive && x.codeKey === a.codeKey).length;
+    if (n < 2) return null;
+    const palette = [0x4fd1c5, 0xffcf6b, 0xf0a070, 0x9aa7ff, 0xe89bb8, 0xb7d98a];
+    return palette[parseInt(a.codeKey.slice(0, 2), 16) % palette.length] ?? palette[0]!;
+  }
+
   private drawBody(s: AgentSprite, a: AgentView): void {
     const g = s.body;
     g.clear();
@@ -551,6 +560,9 @@ export class World {
       g.circle(0, 0, r + 2).fill({ color: 0x0a0d14, alpha: 0.55 });
       g.circle(0, 0, r).fill({ color: s.color });
       g.circle(0, 0, r).stroke({ color: selected ? 0xffcf6b : 0xffffff, width: selected ? 2.5 : 1.2, alpha: selected ? 1 : 0.6 });
+      const kin = this.kinColor(a);
+      if (kin !== null) g.circle(0, 0, r + 6).stroke({ color: kin, width: 2, alpha: 0.9 });
+      if (a.lastError) g.circle(r * 0.7, -r * 0.7, 3.2).fill({ color: 0xff5c5c });
       // hunger ring: dark track, then food 0..100 clockwise from the top
       const level = hungerLevel(a.food);
       const fed = hungerFraction(a.food);
@@ -1046,6 +1058,13 @@ function drawStructure(g: Graphics, kind: StructureKind, locked: boolean): void 
         g.rect(-S * 0.34, -S * 0.56, S * 0.68, S * 0.1).fill({ color: col });
         g.rect(-S * 0.34, -S * 0.56, S * 0.68, S * 0.1).stroke({ color: INK, width: 1, alpha: 0.8 });
       }
+      break;
+    }
+    case "device":
+    case "well":
+    case "bell": {
+      g.circle(0, 0, S * 0.28).fill({ color: col });
+      g.circle(0, 0, S * 0.28).stroke({ color: INK, width: 1.4 });
       break;
     }
     case "spring": {

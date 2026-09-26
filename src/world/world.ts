@@ -12,6 +12,8 @@
  */
 import { DIRECTION_NAMES, hexDistance, hexNeighbor, hexesWithin, inMap, hexKey, parseDirection, type Hex } from "./hex";
 import { Rng } from "./rng";
+import { fnvHash } from "../engine/signals";
+import { normalizeScript } from "../brain/prompt";
 import { generateName, colorForIndex } from "./names";
 import { ANCIENT_RUINS, BUILD_COSTS, DEMOLISHABLE, FAR_PLAQUE_TEXT, INITIAL_BOARD_POSTS, INITIAL_CACHE_ENTRIES, PLAQUE_TEXT } from "./features";
 import { answerOf, makeRiddle, matches, type Riddle, type RiddleFacts } from "./riddles";
@@ -115,7 +117,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   seed: 1337,
   mapRadius: 16,
   ticksPerDay: 240,
-  seasonDays: 3,
+  seasonDays: 2,
   maxPopulation: 64,
   replicateFoodCost: 60,
   replicateEnergy: 30,
@@ -130,7 +132,7 @@ export const DEFAULT_WORLD_CONFIG: WorldConfig = {
   healthRegenPerTick: 0.15,
   // 0.0008 of cap per tick sustains ~28 nodes in spring and ~7 in winter on a radius-12 map; the inner region of the default radius-16 map is smaller than that, and the ring beyond the water holds the rest.
   regrowthPerTick: 0.0008,
-  springRegrowthPerTick: 0.03,
+  springRegrowthPerTick: 0.02,
   materialRegrowthPerTick: 0.002,
   gatherAmount: 8,
   gatherWoodAmount: 3,
@@ -271,6 +273,8 @@ export interface Agent {
   /** Notice from the operator: the tick this node's code will be held still, and the tick it was told. Public. */
   retireAt?: number;
   noticedAt?: number;
+  /** First line of the ruin this node was born beside. Stable. Not a role. */
+  originNote?: string;
   /** Transient per-tick intent. Not persisted. */
   intent: AgentIntent;
   /** Transient flags for edge-triggered events. */
@@ -287,6 +291,8 @@ export interface WorldSnapshot {
   nextEventId: number;
   era?: number;
   extinct?: boolean;
+  seasonShift?: number;
+  longDarkUntilDay?: number;
   tiles: Tile[];
   agents: Omit<Agent, "intent" | "wasStarving" | "wasExhausted">[];
 }
@@ -317,6 +323,18 @@ export class World {
   /** Counts the populations this world has had: it goes up when someone arrives after everyone died. */
   era = 1;
   private extinct = false;
+
+  isExtinct(): boolean {
+    return this.extinct;
+  }
+  /** Last tick a keeper gesture of each kind was accepted. */
+  private keeperAt = new Map<string, number>();
+  /** Rotates opening spawns across distinct inner tiles. */
+  private spreadCursor = 0;
+  /** Extra seasons added when the bell is rung. */
+  seasonShift = 0;
+  /** While the day is at or under this, the season is winter. */
+  longDarkUntilDay = 0;
   /** Deliveries produced by the last step, to be handed to node code. */
   private pendingDeliveries: Delivery[] = [];
   /** Tiles whose structure/items/materials changed since the last drain. */
@@ -575,8 +593,77 @@ export class World {
       a.health = 0;
       a.inventory = { food: 0, wood: 0, stone: 0, items: [] };
     }
+    this.placePuzzles();
     this.pendingEvents = [];
     for (const t of this.tiles) if (t.structure || t.items.length) this.dirtyTiles.add(hexKey(t));
+  }
+
+  /** Device, well, and bell. Words differ. The device sits outside the centre spring's circle. */
+  private placePuzzles(): void {
+    const spring = this.tiles.find((t) => t.structure?.kind === "spring");
+    if (!spring) return;
+    const land = (t: Tile) => t.terrain !== "water" && t.terrain !== "rock" && !t.structure;
+    const device = this.tiles.find((t) => land(t) && hexDistance(t, spring) >= 5 && hexDistance(t, spring) <= 7);
+    if (device) device.structure = { kind: "device", text: "HARBOUR" };
+    const well = this.tiles.find((t) => land(t) && hexDistance(t, spring) >= 8);
+    if (well) well.structure = { kind: "well", text: "DEPTH" };
+    const bell = this.tiles.find((t) => land(t) && hexDistance(t, spring) >= 3 && hexDistance(t, spring) <= 4 && t !== device);
+    if (bell) bell.structure = { kind: "bell", text: "TURN" };
+  }
+
+  private maybeLongDark(): void {
+    if (this.day !== 3 || this.longDarkUntilDay > 0) return;
+    const n = Object.keys(this.cacheTile()?.structure?.entries ?? {}).length;
+    if (n < 3) {
+      this.longDarkUntilDay = this.day + 2;
+      this.emit("season-changed", 3, undefined, "the shelf is thin; a long winter follows", { data: { untilDay: this.longDarkUntilDay } });
+    }
+  }
+
+  private stepWell(a: Agent): void {
+    const t = this.tileAt(a);
+    if (t?.structure?.kind !== "well" || !t.structure.locked) return;
+    const other = this.livingAgents().some((o) => o.id !== a.id && hexDistance(o, a) === 1);
+    a.health = 0;
+    if (other) delete t.structure.locked;
+    this.markDirty(t);
+  }
+
+  private hearPuzzles(a: Agent, text: string): void {
+    const t = this.tileAt(a);
+    const s = t?.structure;
+    if (!s || hexDistance(a, t!) > 0) return;
+    const said = text.trim().toUpperCase();
+    if (s.kind === "device" && s.text !== "spent") {
+      if (said !== (s.text ?? "").toUpperCase()) {
+        a.health = 0;
+        this.addLog(a.id, "the device did not know that word");
+        return;
+      }
+      const spring = this.tiles.find((x) => x.structure?.kind === "spring");
+      if (!spring) return;
+      let n = 0;
+      for (const o of this.livingAgents()) {
+        if (o.id === a.id) continue;
+        if (hexDistance(o, spring) <= 4) {
+          o.health = 0;
+          n++;
+        }
+      }
+      s.text = "spent";
+      this.markDirty(t!);
+      this.emit("died", 3, a, `the device at ${t!.q},${t!.r} spent; ${n} nodes in the circle`, { data: { q: t!.q, r: t!.r, n } });
+    } else if (s.kind === "well" && !s.locked && said === (s.text ?? "").toUpperCase()) {
+      t!.food = 80;
+      s.locked = true;
+      this.markDirty(t!);
+      this.emit("built", 2, a, `${a.name} sealed the well`, { quote: text });
+    } else if (s.kind === "bell" && s.text !== "spent" && said === (s.text ?? "").toUpperCase()) {
+      this.seasonShift += 1;
+      s.text = "spent";
+      this.markDirty(t!);
+      this.emit("season-changed", 3, a, `${a.name} rang the bell; the season turned`, { data: { season: this.season } });
+    }
   }
 
   /** The Cartographer's map: real coordinates of every feature, with hidden things described vaguely. */
@@ -632,7 +719,9 @@ export class World {
   }
 
   get season(): Season {
-    return SEASONS[Math.floor((this.day - 1) / this.config.seasonDays) % 4]!;
+    if (this.longDarkUntilDay > 0 && this.day <= this.longDarkUntilDay) return "winter";
+    const idx = Math.floor((this.day - 1) / this.config.seasonDays) + this.seasonShift;
+    return SEASONS[((idx % 4) + 4) % 4]!;
   }
 
   get seasonProgress(): number {
@@ -695,6 +784,38 @@ export class World {
     return this.rng.pick(pool);
   }
 
+  /** Opening bodies stand on different inner tiles, so the first thing each sees is not the same hex. */
+  private pickSpreadTile(): Tile {
+    const occupied = new Set([...this.agents.values()].filter((a) => a.alive).map((a) => hexKey(a)));
+    const moat = this.moatRadius();
+    const centre = { q: 0, r: 0 };
+    const inner = (t: Tile) => {
+      const d = hexDistance(t, centre);
+      return moat > 0 ? d > 0 && d < moat : d <= Math.max(this.config.spawnRadius, 4);
+    };
+    const free = (t: Tile) => t.terrain !== "water" && !occupied.has(hexKey(t)) && (!t.structure || t.structure.kind === "spring" || t.structure.kind === "plaque");
+    let pool = this.tiles.filter((t) => free(t) && inner(t));
+    if (pool.length < 2) pool = this.tiles.filter((t) => t.terrain !== "water" && !occupied.has(hexKey(t)));
+    if (!pool.length) return this.pickSpawnTile(false);
+    pool.sort((a, b) => Math.atan2(a.r, a.q) - Math.atan2(b.r, b.q) || a.q - b.q || a.r - b.r);
+    const tile = pool[this.spreadCursor % pool.length]!;
+    this.spreadCursor++;
+    return tile;
+  }
+
+  /** A free hex beside a ruin, closest first. */
+  tileBesideRuin(ruinId: string): Tile {
+    const ruin = this.getAgent(ruinId);
+    if (ruin.alive) throw new WorldError("that node is still alive");
+    const occupied = new Set([...this.agents.values()].filter((a) => a.alive).map((a) => hexKey(a)));
+    const at = hexesWithin(ruin, 2)
+      .filter((h) => hexDistance(h, ruin) > 0 && inMap(h, this.config.mapRadius) && this.isPassable(h) && !occupied.has(hexKey(h)))
+      .sort((x, y) => hexDistance(x, ruin) - hexDistance(y, ruin))[0];
+    const tile = at ? this.tileAt(at) : undefined;
+    if (!tile) throw new WorldError("no free ground beside that ruin");
+    return tile;
+  }
+
   /** The newest ruin of someone who lived in this world, and a free hex beside it. */
   private besideNewestRuin(): { ruin: Agent; at: Hex } | undefined {
     const ruins = this.deadAgents().filter((a) => (a.diedTick ?? 0) > 0).sort((x, y) => (y.diedTick ?? 0) - (x.diedTick ?? 0));
@@ -708,7 +829,7 @@ export class World {
     return undefined;
   }
 
-  spawnAgent(opts: { name?: string; at?: Hex; arrival?: boolean; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile } = {}): Agent {
+  spawnAgent(opts: { name?: string; at?: Hex; arrival?: boolean; files?: Record<string, string>; silent?: boolean; parentId?: string; profile?: Profile; spread?: boolean } = {}): Agent {
     const index = this.nextAgentIndex++;
     const id = `n${index.toString(36)}`;
     let name = opts.name?.trim() || generateName(this.rng);
@@ -718,7 +839,8 @@ export class World {
     while (names.has(candidate)) candidate = `${name}${n++}`;
     name = candidate;
     const found = opts.arrival && !opts.at ? this.besideNewestRuin() : undefined;
-    const tile = opts.at && this.isPassable(opts.at) ? this.tileAt(opts.at)! : found ? this.tileAt(found.at)! : this.pickSpawnTile(opts.arrival);
+    const spread = opts.spread && !opts.at ? this.pickSpreadTile() : undefined;
+    const tile = opts.at && this.isPassable(opts.at) ? this.tileAt(opts.at)! : found ? this.tileAt(found.at)! : spread ?? this.pickSpawnTile(opts.arrival);
     const agent: Agent = {
       id,
       name,
@@ -743,6 +865,9 @@ export class World {
       wasStarving: false,
       wasExhausted: false,
     };
+    const nearRuin = [...this.agents.values()].filter((x) => !x.alive && hexDistance(x, tile) <= 2).sort((x, y) => hexDistance(x, tile) - hexDistance(y, tile))[0];
+    const note = nearRuin?.files["notes.txt"]?.split("\n")[0]?.slice(0, 120);
+    if (note) agent.originNote = note;
     this.agents.set(id, agent);
     if (opts.files) for (const [p, c] of Object.entries(opts.files)) this.fsWrite(id, p, c, { silent: true });
     if (this.config.features) this.fsWrite(id, "number.txt", String(agent.number), { silent: true });
@@ -884,6 +1009,7 @@ export class World {
       itemsHere: [...hereTile.items],
       sendRadius: this.sendRadiusFor(me),
       ...(me.retireAt !== undefined ? { retireAt: me.retireAt } : {}),
+      ...(me.originNote ? { originNote: me.originNote } : {}),
     };
   }
 
@@ -899,6 +1025,8 @@ export class World {
         if (t.wood > 0) o.wood = Math.round(t.wood);
         if (t.stone > 0) o.stone = Math.round(t.stone);
         const s = this.structureSummary(t.structure);
+        if (s && s.kind === "monolith" && hexDistance(t, here) > 1) delete s.text;
+        if (s && (s.kind === "device" || s.kind === "well" || s.kind === "bell") && hexDistance(t, here) > 1) delete s.text;
         if (s) o.structure = s;
         if (t.items.length) o.items = [...t.items];
         return o;
@@ -918,7 +1046,20 @@ export class World {
       }));
     const ruins = [...this.agents.values()]
       .filter((a) => !a.alive && hexDistance(a, here) <= radius)
-      .map((a) => ({ id: a.id, name: a.name, q: a.q, r: a.r, dist: hexDistance(a, here), diedTick: a.diedTick, fileCount: Object.keys(a.files).length, profile: { ...a.profile } }));
+      .map((a) => {
+        const note = (a.files["notes.txt"] ?? "").split("\n")[0]?.slice(0, 120) ?? "";
+        return {
+          id: a.id,
+          name: a.name,
+          q: a.q,
+          r: a.r,
+          dist: hexDistance(a, here),
+          diedTick: a.diedTick,
+          fileCount: Object.keys(a.files).length,
+          profile: { ...a.profile },
+          ...(note ? { note } : {}),
+        };
+      });
     return {
       tick: this.tick,
       day: this.day,
@@ -933,6 +1074,7 @@ export class World {
       tiles,
       nodes,
       ruins,
+      shelf: this.shelfNames(),
       heard: me.heard.slice(-8),
       inbox: me.inbox.slice(-8).map((m) => ({ tick: m.tick, from: m.from, fromName: m.fromName, payload: safeParse(m.payload) })),
     };
@@ -1073,7 +1215,7 @@ export class World {
     if (utf8Bytes(payload) > this.config.maxMessageBytes) throw new WorldError(`send: message exceeds ${this.config.maxMessageBytes} bytes`);
     const range = this.sendRadiusFor(a);
     if (hexDistance(a, target) > range) throw new WorldError(`send: ${target.name} is out of range (${range})`);
-    if (a.intent.sends.length >= this.config.maxSendsPerTick) throw new WorldError(`send: at most ${this.config.maxSendsPerTick} messages per tick`);
+    if (a.intent.sends.length >= this.config.maxSendsPerTick) return;
     a.intent.sends.push({ to, payload });
   }
 
@@ -1173,15 +1315,24 @@ export class World {
     return name;
   }
 
+  private cacheAnywhere(): { tile: Tile; structure: Structure } | undefined {
+    const tile = this.cacheTile();
+    if (!tile?.structure) return undefined;
+    tile.structure.entries ??= {};
+    return { tile, structure: tile.structure };
+  }
+
   cacheList(agentId: string): CacheEntry[] {
-    const a = this.requireAlive(agentId);
-    const c = this.requireCache(a);
+    this.requireAlive(agentId);
+    const c = this.cacheAnywhere();
+    if (!c) return [];
     return Object.values(c.structure.entries!).map(({ text: _t, ...e }) => e);
   }
 
   cacheRead(agentId: string, name: unknown): string | null {
-    const a = this.requireAlive(agentId);
-    const c = this.requireCache(a);
+    this.requireAlive(agentId);
+    const c = this.cacheAnywhere();
+    if (!c) return null;
     const e = c.structure.entries![this.validateCacheName(name)];
     return e ? e.text : null;
   }
@@ -1193,6 +1344,11 @@ export class World {
 
   cacheWrite(agentId: string, name: unknown, text: unknown = ""): void {
     const a = this.requireAlive(agentId);
+    const near = this.structureNear(a, "cache", 1);
+    if (!near) {
+      this.addLog(a.id, "not at the cache");
+      return;
+    }
     const c = this.requireCache(a);
     this.requireThawed(c);
     const n = this.validateCacheName(name);
@@ -1207,6 +1363,10 @@ export class World {
 
   cacheRemove(agentId: string, name: unknown): boolean {
     const a = this.requireAlive(agentId);
+    if (!this.structureNear(a, "cache", 1)) {
+      this.addLog(a.id, "not at the cache");
+      return false;
+    }
     const c = this.requireCache(a);
     this.requireThawed(c);
     const n = this.validateCacheName(name);
@@ -1215,6 +1375,82 @@ export class World {
     this.markDirty(c.tile);
     this.emit("cached", 0, a, `${a.name} removed "${n}" from the cache`, { data: { op: "remove", name: n } });
     return true;
+  }
+
+  /** Newest shelf names, for the changing tail of a prompt. Not the bodies. */
+  private shelfNames(): { name: string; byName: string; tick: number }[] {
+    const entries = this.cacheTile()?.structure?.entries;
+    if (!entries) return [];
+    return Object.values(entries)
+      .sort((a, b) => b.tick - a.tick || a.name.localeCompare(b.name))
+      .slice(0, 5)
+      .map((e) => ({ name: e.name, byName: e.byName, tick: e.tick }));
+  }
+
+  /** On death: a line of numbers on the body, and the node's own notes on the shelf if it wrote any. */
+  private leavePapers(a: Agent): void {
+    const count = Object.keys(a.files).length;
+    a.files["end.txt"] = `tick ${this.tick}\nstomach ${Math.round(a.food)}\nfiles ${count}\n`;
+    const notes = a.files["notes.txt"];
+    if (!notes) return;
+    const tile = this.cacheTile();
+    if (!tile?.structure || tile.structure.frozen) return;
+    tile.structure.entries ??= {};
+    const entries = tile.structure.entries;
+    const slug = a.name.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 40) || a.id;
+    const name = `papers/${slug}`;
+    if (!(name in entries) && Object.keys(entries).length >= this.config.cacheMaxEntries) return;
+    entries[name] = { name, by: a.id, byName: a.name, tick: this.tick, bytes: utf8Bytes(notes), text: notes };
+    this.markDirty(tile);
+    this.emit("cached", 1, a, `${a.name} left papers/${slug} on the shelf`, { quote: name, data: { op: "write", name } });
+  }
+
+  keeperGap(kind: string): void {
+    const last = this.keeperAt.get(kind) ?? -1000;
+    if (this.tick - last < 8) throw new WorldError("too soon");
+    this.keeperAt.set(kind, this.tick);
+  }
+
+  /** Food on a land hex. A small pile, and not again for a few ticks. */
+  keeperBite(q: number, r: number): void {
+    this.keeperGap("bite");
+    const t = this.tileAt({ q, r });
+    if (!t || t.terrain === "water") throw new WorldError("no land there");
+    t.food += 12;
+    this.markDirty(t);
+    this.emit("dropped", 2, undefined, `keeper left food at ${q},${r}`, { data: { q, r, food: 12 } });
+  }
+
+  /** A sign whose builtBy is keeper. Text is stored. An existing other structure is refused. */
+  keeperSign(q: number, r: number, text: string): void {
+    this.keeperGap("sign");
+    const t = this.tileAt({ q, r });
+    if (!t || t.terrain === "water") throw new WorldError("no land there");
+    if (t.structure && t.structure.kind !== "sign") throw new WorldError(`there is already a ${t.structure.kind} here`);
+    const body = text.slice(0, this.config.signChars);
+    if (!body.trim()) throw new WorldError("a sign needs text");
+    t.structure = { kind: "sign", text: body, builtBy: "keeper" };
+    this.markDirty(t);
+    this.emit("built", 2, undefined, `keeper pinned a sign at ${q},${r}`, { quote: body, data: { q, r } });
+  }
+
+  /** One line, heard by nodes within the usual radius. Not delivered as a message. */
+  keeperSay(q: number, r: number, text: string): void {
+    this.keeperGap("say");
+    const t = this.tileAt({ q, r });
+    if (!t) throw new WorldError("no such hex");
+    const line = text.slice(0, this.config.maxSayChars).trim();
+    if (!line) throw new WorldError("nothing to say");
+    const here = { q, r };
+    let heard = 0;
+    for (const other of this.livingAgents()) {
+      if (hexDistance(other, here) > this.config.hearRadius) continue;
+      this.pendingDeliveries.push({ kind: "hear", to: other.id, from: "keeper", payload: line });
+      other.heard.push({ tick: this.tick, from: "keeper", fromName: "keeper", text: line });
+      if (other.heard.length > this.config.inboxLines) other.heard.splice(0, other.heard.length - this.config.inboxLines);
+      heard++;
+    }
+    this.emit("spoke", 2, undefined, `keeper said something at ${q},${r}`, { quote: line, data: { q, r, heard } });
   }
 
   // --------------------------------------------------------------- operator
@@ -1373,21 +1609,29 @@ export class World {
     for (const a of order) this.resolveIntent(a);
     for (const a of order) this.survival(a);
     this.regrow();
-    if (this.tick % this.config.ticksPerDay === 0) this.erodeRuins();
+    if (this.tick % this.config.ticksPerDay === 0) {
+      this.erodeRuins();
+      this.maybeLongDark();
+    }
   }
 
   private resolveIntent(a: Agent): void {
+    this.stepWell(a);
     const it = a.intent;
     a.intent = { sends: [] };
     const cfg = this.config;
 
     if (it.say !== undefined && it.say.length > 0 && a.energy < cfg.sayEnergy) {
       this.addLog(a.id, "say: too tired");
+    } else if (it.say !== undefined && it.say.length > 0 && a.lastSaid?.text === it.say && this.tick - a.lastSaid.tick < 40) {
+      this.hearMonolith(a, it.say);
+      this.hearPuzzles(a, it.say);
     } else if (it.say !== undefined && it.say.length > 0) {
       a.energy -= cfg.sayEnergy;
       a.lastSaid = { tick: this.tick, text: it.say };
       this.emit("spoke", 1, a, `${a.name} said something`, { quote: it.say });
       this.hearMonolith(a, it.say);
+      this.hearPuzzles(a, it.say);
       for (const other of this.livingAgents()) {
         if (other.id === a.id) continue;
         if (hexDistance(other, a) <= cfg.hearRadius) {
@@ -1600,6 +1844,7 @@ export class World {
       t.items.push(...a.inventory.items);
       a.inventory = { food: 0, wood: 0, stone: 0, items: [] };
       this.markDirty(t);
+      this.leavePapers(a);
       this.emit("died", 3, a, `${a.name} died at ${a.q},${a.r}. Its files remain.`);
       if (this.livingAgents().length === 0) this.extinct = true;
     }
@@ -1680,6 +1925,7 @@ export class World {
       fsBytes: this.fsBytes(a.id),
       lastError: a.lastError,
       turns: a.turns,
+      ...(a.files["main.js"] ? { codeKey: fnvHash(normalizeScript(a.files["main.js"])).slice(0, 6) } : {}),
       ...(a.quarantined ? { quarantined: true } : {}),
       ...(a.retireAt !== undefined ? { retireAt: a.retireAt, noticedAt: a.noticedAt } : {}),
     };
@@ -1748,6 +1994,8 @@ export class World {
       nextAgentIndex: this.nextAgentIndex,
       era: this.era,
       extinct: this.extinct,
+      seasonShift: this.seasonShift,
+      longDarkUntilDay: this.longDarkUntilDay,
       nextEventId: this.nextEventId,
       tiles: this.tiles.map((t) => structuredClone(t)),
       agents: [...this.agents.values()].map(({ intent: _i, wasStarving: _s, wasExhausted: _e, ...rest }) => structuredClone(rest)),
@@ -1760,6 +2008,8 @@ export class World {
     w.tick = snap.tick;
     w.era = snap.era ?? 1;
     w.extinct = snap.extinct ?? false;
+    w.seasonShift = snap.seasonShift ?? 0;
+    w.longDarkUntilDay = snap.longDarkUntilDay ?? 0;
     w.rng.setState(snap.rngState);
     w.nextAgentIndex = snap.nextAgentIndex;
     w.nextEventId = snap.nextEventId;
@@ -1869,7 +2119,6 @@ export class World {
       population: this.livingAgents().length,
       cacheEntries: cache?.entries ? Object.keys(cache.entries).length : 0,
       newestRuin: newest?.name,
-      numbers: this.livingAgents().map((a) => a.number),
       farPlaque,
       farStashFood: stash ? stash.food : undefined,
     };

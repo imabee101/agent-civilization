@@ -140,4 +140,15 @@ describe("GrokBrain", () => {
     expect(p?.kind).toBe("fast");
     expect(f.captured[0]!.body.prompt_cache_key).toBeUndefined();
   });
+
+  test("speak calls the voice endpoint once, and only when asked", async () => {
+    const f = fakeFetch([[completed()]]);
+    const b = new GrokBrain({ kind: "grok", fetch: f.fetch, ...authStub([{ token: "T", expiresAt: hourFromNow() }]) });
+    expect(f.captured).toHaveLength(0);
+    const res = await b.speak("hello there", "ara");
+    expect(res.ok).toBe(true);
+    expect(f.captured).toHaveLength(1);
+    expect(f.captured[0]!.url).toBe("https://api.x.ai/v1/tts");
+    expect(f.captured[0]!.body).toMatchObject({ text: "hello there", voice_id: "ara", language: "en" });
+  });
 });

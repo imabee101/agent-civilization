@@ -4,6 +4,7 @@
  * the HTML import in `index`), so this module stays testable on its own.
  */
 import type { Server, ServerWebSocket } from "bun";
+import { GrokBrain } from "../brain/grok";
 import type { Engine } from "../engine/engine";
 import { REWIND_PHRASE, SPEEDS, type ClientMessage, type ServerMessage, type Speed } from "../shared/protocol";
 import { renderMetrics } from "./metrics";
@@ -59,7 +60,7 @@ function sameToken(a: string, b: string): boolean {
   return d === 0;
 }
 
-const CONTROL_MESSAGES: ReadonlySet<string> = new Set(["pause", "resume", "speed", "spawn", "snapshot", "quarantine", "freeze", "retire", "rewind"]);
+const CONTROL_MESSAGES: ReadonlySet<string> = new Set(["pause", "resume", "speed", "spawn", "snapshot", "quarantine", "freeze", "retire", "rewind", "keeper-bite", "keeper-sign", "keeper-say", "keeper-summon"]);
 
 export function createApp(opts: AppOptions): App {
   const { engine } = opts;
@@ -105,6 +106,10 @@ export function createApp(opts: AppOptions): App {
   const unsubscribe = engine.on(broadcast);
 
   const handleClient = async (ws: ServerWebSocket<WsData>, msg: ClientMessage) => {
+    const fail = (action: string, error: string) => {
+      log(`${action} failed: ${error}`);
+      ws.send(JSON.stringify({ type: "failed", action, error } satisfies ServerMessage));
+    };
     if (token && CONTROL_MESSAGES.has(msg.type) && !(typeof msg.token === "string" && msg.token.length > 0 && sameToken(msg.token, token))) {
       log(`${msg.type} refused: no operator token from ${ws.remoteAddress}`);
       ws.send(JSON.stringify({ type: "denied", action: msg.type } satisfies ServerMessage));
@@ -126,23 +131,23 @@ export function createApp(opts: AppOptions): App {
         await engine
           .spawn(typeof msg.name === "string" ? msg.name.slice(0, 24) : undefined)
           .then((id) => log(`spawn ${id} by ${ws.remoteAddress}`))
-          .catch((e) => log(`spawn failed: ${(e as Error).message}`));
+          .catch((e) => fail("spawn", (e as Error).message));
         break;
       case "snapshot":
-        await engine.saveSnapshot();
+        await engine.saveSnapshot().catch((e) => fail("snapshot", (e as Error).message));
         break;
       case "quarantine":
         await engine
           .quarantine(String(msg.agentId), !!msg.on)
           .then(() => log(`${msg.on ? "quarantine" : "release"} ${String(msg.agentId)} by ${ws.remoteAddress}`))
-          .catch((e) => log(`quarantine failed: ${(e as Error).message}`));
+          .catch((e) => fail("quarantine", (e as Error).message));
         break;
       case "freeze":
         try {
           engine.freezeCache(!!msg.on);
           log(`cache ${msg.on ? "frozen" : "thawed"} by ${ws.remoteAddress}`);
         } catch (e) {
-          log(`freeze failed: ${(e as Error).message}`);
+          fail("freeze", (e as Error).message);
         }
         break;
       case "retire":
@@ -150,15 +155,51 @@ export function createApp(opts: AppOptions): App {
           engine.retire(String(msg.agentId), msg.atTick === null ? null : Number(msg.atTick));
           log(`notice ${String(msg.agentId)} at ${String(msg.atTick)} by ${ws.remoteAddress}`);
         } catch (e) {
-          log(`notice failed: ${(e as Error).message}`);
+          fail("retire", (e as Error).message);
         }
         break;
       case "rewind":
-        if (msg.confirm !== REWIND_PHRASE) break;
+        if (msg.confirm !== REWIND_PHRASE) {
+          fail("rewind", "rewind needs the confirm word");
+          break;
+        }
         await engine
           .rewind(String(msg.agentId))
           .then(() => log(`rewind ${String(msg.agentId)} by ${ws.remoteAddress}`))
-          .catch((e) => log(`rewind failed: ${(e as Error).message}`));
+          .catch((e) => fail("rewind", (e as Error).message));
+        break;
+      case "keeper-bite":
+        try {
+          engine.world.keeperBite(Number(msg.q), Number(msg.r));
+          log(`keeper bite ${msg.q},${msg.r} by ${ws.remoteAddress}`);
+          engine.publish();
+        } catch (e) {
+          fail("keeper-bite", (e as Error).message);
+        }
+        break;
+      case "keeper-sign":
+        try {
+          engine.world.keeperSign(Number(msg.q), Number(msg.r), String(msg.text ?? ""));
+          log(`keeper sign ${msg.q},${msg.r} by ${ws.remoteAddress}`);
+          engine.publish();
+        } catch (e) {
+          fail("keeper-sign", (e as Error).message);
+        }
+        break;
+      case "keeper-say":
+        try {
+          engine.world.keeperSay(Number(msg.q), Number(msg.r), String(msg.text ?? ""));
+          log(`keeper say ${msg.q},${msg.r} by ${ws.remoteAddress}`);
+          engine.publish();
+        } catch (e) {
+          fail("keeper-say", (e as Error).message);
+        }
+        break;
+      case "keeper-summon":
+        await engine
+          .spawn(typeof msg.name === "string" ? msg.name.slice(0, 24) : undefined, { nearRuinId: String(msg.ruinId) })
+          .then((id) => log(`keeper summon ${id} by ${ws.remoteAddress}`))
+          .catch((e) => fail("keeper-summon", (e as Error).message));
         break;
       case "watch": {
         ws.data.watching = typeof msg.agentId === "string" ? msg.agentId : null;
@@ -291,6 +332,22 @@ export function createApp(opts: AppOptions): App {
         return path ? json({ ok: true, path }) : error("snapshots are disabled (no snapshot path)", 409);
       },
       GET: () => json(engine.snapshot()),
+    },
+    "/api/speak": {
+      POST: async (req: Request) => {
+        if (!(engine.brain instanceof GrokBrain)) return error("voice is only used with grok", 404);
+        const body = (await req.json().catch(() => ({}))) as { text?: unknown; voice?: unknown };
+        const text = typeof body.text === "string" ? body.text.trim().slice(0, 280) : "";
+        if (!text) return error("nothing to say");
+        const voices = ["eve", "ara", "rex", "sal", "leo"];
+        const voice = typeof body.voice === "string" && voices.includes(body.voice) ? body.voice : "eve";
+        try {
+          const res = await engine.brain.speak(text, voice);
+          return new Response(res.body, { headers: { "content-type": res.headers.get("content-type") ?? "audio/mpeg", "cache-control": "no-store" } });
+        } catch (e) {
+          return error((e as Error).message, 502);
+        }
+      },
     },
     "/api/health": () => json({ ok: true, tick: engine.world.tick, paused: engine.paused }),
     "/api/metrics": () =>

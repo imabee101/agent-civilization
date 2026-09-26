@@ -9,7 +9,7 @@
 export const API_DOC = `You control one node in a shared hex world. Your code runs in a sandboxed JavaScript interpreter (no modules, no timers, no network, no host filesystem). These globals exist:
 
 PERCEPTION
-  observe() -> { tick, day, era, phase, season, population, maxPopulation, me:{id,name,q,r,stomach,energy,health,inventory:{food,wood,stone,items:[...]},profile,tileFood,terrain,structure,itemsHere,sendRadius}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
+  observe() -> { tick, day, era, phase, season, population, maxPopulation, me:{id,name,q,r,stomach,energy,health,inventory:{food,wood,stone,items:[...]},profile,tileFood,terrain,structure,itemsHere,sendRadius}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount,note}], shelf:[{name,byName,tick}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
 
 BODY (one of move/gather/drop/rest/build/demolish/plant/replicate per tick, the last call wins; eat is extra)
   move(dir)            dir is 0..5 or "e","ne","nw","w","sw","se". Costs energy. Water, walls and the map edge block.
@@ -44,7 +44,7 @@ FILES (your private storage; survives your death as a readable ruin)
   fs.read(path) -> string|null   fs.write(path, text)   fs.append(path, text)   fs.list() -> [{path,bytes}]   fs.remove(path)
   notes.txt, if you keep one, is shown to you each turn (its first 600 characters).
   ruins.files(ruinId)  ruins.read(ruinId, path)    only for a dead node on an adjacent hex. Old ruins hold old code.
-  turn.js is written by the world: the code your last turn ran. It runs again after main.js whenever your node is rebuilt, and your ruin keeps it.
+  turn.js is written by the world: the code your last turn ran. It is kept so you can read it. It does not run again. Your ruin keeps it.
 
 HELPERS (pure functions)
   hex.distance(a, b)   hex.neighbors({q,r})   hex.toward(from, to) -> direction 0..5
@@ -58,7 +58,7 @@ SELF
   log(...args)         write to your private log (shown to you next turn).
 
 PERSISTENT BEHAVIOUR
-  Anything you define as a global function persists between your turns while you are alive. Save code in fs.write("main.js", src): main.js is re-run when it changes and after a restart, so put your handlers there:
+  Anything you define as a global function persists between your turns while you are alive. A handler function you define in your reply is kept in main.js for you. main.js is re-run when it changes and after a restart:
     function onTick() {}                 // called every world tick (~ several per second)
     function onMessage(fromId, msg) {}   // called when a node sends you something
     function onHear(fromId, text) {}     // called when a nearby node says something

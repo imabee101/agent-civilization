@@ -80,6 +80,7 @@ export class LlamaCppBrain implements Brain {
       stream: this.stream,
       cache_prompt: !req.noCache,
       ...(req.slot !== undefined ? { id_slot: req.slot } : {}),
+      ...(req.seed !== undefined ? { seed: req.seed } : {}),
       stop: [...STOP_STRINGS[this.format], ...(req.stop ?? [])],
     };
     const res = await postJson(joinUrl(this.baseUrl, "completion"), body, this.http(opts.signal));

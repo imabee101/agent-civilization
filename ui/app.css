@@ -861,6 +861,9 @@ pre.raw.plain { border-color: var(--line); }
 .op-row .tbtn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
 .chip.held { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
+.scene-strip { font-size: 13px; line-height: 1.35; max-width: 52ch; color: var(--ink, #e6e9ef); }
+.status-chips { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.status-chips .chip { font-size: 12px; padding: 4px 8px; border-radius: 999px; background: rgba(255, 92, 92, 0.16); color: #ffb4b4; max-width: 42ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #toast {
   position: fixed;
   left: 50%;

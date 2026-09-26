@@ -270,7 +270,8 @@ describe("World speech and messages", () => {
     expect(() => w.intentSend(a.id, "zzz", '"x"')).toThrow(/no living node/);
     w.intentSend(a.id, b.id, '"1"');
     w.intentSend(a.id, b.id, '"2"');
-    expect(() => w.intentSend(a.id, b.id, '"3"')).toThrow(/at most 2/);
+    w.intentSend(a.id, b.id, '"3"');
+    expect(a.intent.sends).toHaveLength(2);
     b.alive = false;
     expect(() => w.intentSend(a.id, b.id, '"x"')).toThrow(/no living node/);
   });
@@ -471,7 +472,8 @@ describe("no engine-authored social rules", () => {
     const b = w.spawnAgent({ at: { q: 1, r: 0 } });
     w.intentSend(a.id, b.id, "1");
     w.intentSend(a.id, b.id, "2");
-    expect(() => w.intentSend(a.id, b.id, "3")).toThrow(/at most 2/);
+    w.intentSend(a.id, b.id, "3");
+    expect(a.intent.sends).toHaveLength(2);
   });
 
   test("reset rebuilds the physics from the defaults plus overrides; restore keeps a snapshot's", () => {

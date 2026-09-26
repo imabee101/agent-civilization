@@ -130,7 +130,7 @@ describe("Engine ticks and handlers", () => {
     for (let i = 0; i < 4; i++) await e.tick();
     expect(e.world.livingAgents().length).toBe(0);
     const later = await e.spawn("Later");
-    expect(e.nodes.get(later)!.slot).toBe(0);
+    expect(e.nodes.get(later)!.slot).toBeUndefined();
     const none = await mk(new ScriptedBrain(), { initialAgents: 1 });
     expect(none.nodes.get(none.world.livingAgents()[0]!.id)!.slot).toBeUndefined();
   });
@@ -302,12 +302,13 @@ describe("Engine turns", () => {
     const [a] = e.world.livingAgents();
     await e.runTurn(a!.id);
     expect(a!.files["turn.js"]).toBe(code);
+    expect(a!.files["main.js"]).toContain("function onTick");
     await e.tick();
     expect(a!.profile.n).toBe("1");
     await e.runTurn(a!.id);
-    expect(brain.requests[1]!.user).toContain("turn.js (the code your last turn ran");
-    expect(brain.requests[1]!.user).toContain(code);
-    expect(a!.files["turn.js"]).toBe("rest()"); // the second turn's code replaced it
+    expect(brain.requests[1]!.user).toContain("function onTick");
+    expect(a!.files["turn.js"]).toBe("rest()");
+    expect(a!.files["main.js"]).toContain("function onTick");
   });
 
   test("an output with no code is recorded as such", async () => {
@@ -821,14 +822,15 @@ describe("Engine snapshots", () => {
     const e = await mk(new ScriptedBrain([js(code)]), { world: { seed: 11, mapRadius: 6, foodDrainPerTick: 100, starveHealthPerTick: 100, features: false } });
     const [a] = e.world.livingAgents();
     await e.runTurn(a!.id);
-    expect(a!.files["main.js"]).toBe(STARTER_MAIN_JS);
+    expect(a!.files["main.js"]).toContain("function onHear");
+    expect(a!.files["turn.js"]).toBe(code);
     const snap: EngineSnapshot = JSON.parse(JSON.stringify(e.snapshot()));
     await e.shutdown();
     engines.pop();
     const e2 = await Engine.fromSnapshot(snap, new ScriptedBrain(), { healthEveryMs: 0, snapshotEveryTicks: 0 });
     engines.push(e2);
     expect(e2.nodes.get(a!.id)!.sandbox.handlers()).toEqual(["onHear"]);
-    expect(e2.world.getAgent(a!.id).log.some((l) => l.includes("turn.js replayed (onHear)"))).toBe(true);
+    expect(e2.world.getAgent(a!.id).log.some((l) => l.includes("main.js loaded (onHear)"))).toBe(true);
     for (let i = 0; i < 4; i++) await e2.tick();
     const ruin = e2.world.getAgent(a!.id);
     expect(ruin.alive).toBe(false);

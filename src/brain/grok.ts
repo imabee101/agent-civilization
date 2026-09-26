@@ -98,6 +98,18 @@ export class GrokBrain implements Brain {
     return this.refreshing;
   }
 
+  /** Speak one line. Called only when a viewer has the voice toggle on. */
+  async speak(text: string, voiceId = "eve"): Promise<Response> {
+    const token = await this.token();
+    const res = await this.fetchImpl("https://api.x.ai/v1/tts", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "audio/mpeg" },
+      body: JSON.stringify({ text: text.slice(0, 280), voice_id: voiceId, language: "en" }),
+    });
+    if (!res.ok) throw new BrainError(`tts failed (${res.status})`, res.status);
+    return res;
+  }
+
   private async token(force = false): Promise<string> {
     let a = await this.auth();
     if (force || !a || a.expiresAt - Date.now() < REFRESH_MARGIN_MS) {

@@ -184,7 +184,7 @@ describe("turn.js placement", () => {
   });
 
   test("the answer rules say where handlers belong, and the stop string is a closing fence", () => {
-    expect(SYSTEM_PROMPT).toContain("Handlers you want to keep belong in main.js (fs.write).");
+    expect(SYSTEM_PROMPT).toContain("Handlers you define in the block are kept. Do not quote them into a string.");
     expect(FENCE_STOP).toBe("\n```");
     // A reply cut at the fence is a lone opening block; the extractor takes it whole.
     expect(extractCode("```js\nrest()")).toBe("rest()");
