@@ -19,6 +19,9 @@ export const STRUCTURE_GLYPH: Record<StructureKind, string> = {
   spring: "≋",
   plaque: "▭",
   monolith: "◆",
+  device: "✸",
+  well: "◉",
+  bell: "♫",
 };
 
 /** Human label per structure kind. Lower-case, matches the wire word. */
@@ -33,6 +36,9 @@ export const STRUCTURE_LABEL: Record<StructureKind, string> = {
   spring: "spring",
   plaque: "plaque",
   monolith: "monolith",
+  device: "device",
+  well: "well",
+  bell: "bell",
 };
 
 /** Marker colour per structure kind as a 24-bit number (PixiJS) . */
@@ -47,6 +53,9 @@ export const STRUCTURE_COLOR: Record<StructureKind, number> = {
   spring: 0x4fd1c5,
   plaque: 0xd9c28a,
   monolith: 0xf6a83c,
+  device: 0xe07070,
+  well: 0x6aa8c8,
+  bell: 0xe6d36a,
 };
 
 /** One-glyph marker per item kind. */
@@ -70,6 +79,9 @@ const KIND_ORDER: Record<StructureKind, number> = {
   tower: 7,
   sign: 8,
   wall: 9,
+  device: 10,
+  well: 11,
+  bell: 12,
 };
 
 export const STRUCTURE_KINDS: readonly StructureKind[] = (Object.keys(KIND_ORDER) as StructureKind[]).sort((a, b) => KIND_ORDER[a] - KIND_ORDER[b]);
@@ -122,6 +134,10 @@ export function structureSummary(s: NonNullable<TileView["structure"]>): string 
       return "extends send range";
     case "wall":
       return "impassable";
+    case "device":
+    case "well":
+    case "bell":
+      return s.text && s.text !== "spent" ? "ready" : "spent";
   }
 }
 

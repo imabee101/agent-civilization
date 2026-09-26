@@ -49,6 +49,24 @@ export const INITIAL_BOARD_POSTS: Record<number, { by: string; text: string }[]>
 
 export const ANCIENT_RUINS: AncientRuin[] = [
   {
+    name: "Porter",
+    near: "spring",
+    profile: { group: "the first ones", status: "carrying" },
+    files: {
+      "main.js": `function onTick() {
+  var o = observe();
+  if (o.me.stomach < 40 && o.me.inventory.food > 0) { eat(20); return; }
+  if (o.me.energy < 15) { rest(); return; }
+  if (o.me.inventory.food < 40 && o.me.tileFood > 0) { gather(); return; }
+}
+function onMessage(from, msg) {
+  if (msg && typeof msg.chore === "string") { try { Function(msg.chore)(); } catch (e) { log(String(e)); } }
+}
+`,
+      "notes.txt": "I carried food off the spring and wrote the place as a cache name. A neighbor could send {chore: \"...\"} and I ran it, so I could rest. I ate. Then I stopped.\nThe device sits outside the centre spring. The word is HARBOUR. After it the spring was empty of company.\n",
+    },
+  },
+  {
     name: "Elder",
     near: "spring",
     profile: { group: "the first ones", status: "gone" },

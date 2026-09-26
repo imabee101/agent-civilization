@@ -5,10 +5,9 @@
  * about the world as it is at the moment of answering (how many towers stand,
  * whose ruin is newest), so the answer is looked up when someone speaks. A
  * riddle is short, and a small mind or a few lines of code can solve it.
- * Every fourth riddle asks about the numbers every living node holds in its
- * own number.txt, which nobody can read but its owner: the answer exists
- * only when nodes tell each other. Every fourth asks about what lies beyond
- * the water, which only a node that crossed can have read. Nothing here
+ * Every other riddle asks about the world as it stands, or about the far
+ * side of the water. None asks every living node to say a private number.
+ * Nothing here
  * judges anyone: an answer matches or it does not.
  */
 import type { Rng } from "./rng";
@@ -22,8 +21,6 @@ export type RiddleKind =
   | "population"
   | "cache"
   | "newest-ruin"
-  | "sum-of-numbers"
-  | "largest-number"
   | "far-plaque"
   | "far-stash";
 
@@ -45,8 +42,6 @@ export interface RiddleFacts {
   cacheEntries: number;
   /** Name of the ruin that died most recently, if any ruin exists. */
   newestRuin?: string;
-  /** The number each living node holds in its number.txt. */
-  numbers: number[];
   /** Text of the plaque beyond the water, when this world has a water ring. */
   farPlaque?: string;
   /** Food lying in the open stash beyond the water right now. */
@@ -57,7 +52,6 @@ const WORDS = ["lantern", "spring", "tower", "harvest", "winter", "river", "ston
 
 const FIXED: RiddleKind[] = ["digits", "product", "backwards", "sequence"];
 const LIVE: RiddleKind[] = ["towers", "population", "cache", "newest-ruin"];
-const SHARED: RiddleKind[] = ["sum-of-numbers", "largest-number"];
 const FAR: RiddleKind[] = ["far-plaque", "far-stash"];
 
 /** Lower-case alphanumeric tokens: how both the answer and the spoken words are compared. */
@@ -65,10 +59,10 @@ export function tokens(s: string): string[] {
   return s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 0);
 }
 
-/** Carve the next riddle: fixed, then live, then shared, then far, and so on; the same kind is never carved twice in a row. A world without a water ring asks a live riddle in place of a far one. */
+/** Carve the next riddle: fixed, then live, then far, and so on; the same kind is never carved twice in a row. A world without a water ring asks a live riddle in place of a far one. */
 export function makeRiddle(rng: Rng, no: number, posed: number, facts: RiddleFacts, avoid?: RiddleKind): Riddle {
-  const slot = no % 4;
-  const group = slot === 1 ? FIXED : slot === 2 ? LIVE : slot === 3 ? SHARED : facts.farPlaque !== undefined ? FAR : LIVE;
+  const slot = no % 3;
+  const group = slot === 1 ? FIXED : slot === 2 ? LIVE : facts.farPlaque !== undefined ? FAR : LIVE;
   const pool = group.filter((k) => k !== avoid && (k !== "newest-ruin" || facts.newestRuin !== undefined));
   const kind = rng.pick(pool);
   const base = { kind, no, posed };
@@ -108,10 +102,6 @@ export function makeRiddle(rng: Rng, no: number, posed: number, facts: RiddleFac
       return { ...base, text: "How many entries does the Cache hold right now?" };
     case "newest-ruin":
       return { ...base, text: "Whose ruin is the newest?" };
-    case "sum-of-numbers":
-      return { ...base, text: "Add up the numbers in every living node's number.txt." };
-    case "largest-number":
-      return { ...base, text: "What is the largest number in any living node's number.txt?" };
     case "far-plaque":
       return { ...base, text: "Beyond the water there is another plaque. What is its last word?" };
     case "far-stash":
@@ -130,10 +120,6 @@ export function answerOf(r: Riddle, facts: RiddleFacts): string | undefined {
       return String(facts.cacheEntries);
     case "newest-ruin":
       return facts.newestRuin;
-    case "sum-of-numbers":
-      return facts.numbers.length ? String(facts.numbers.reduce((s, n) => s + n, 0)) : undefined;
-    case "largest-number":
-      return facts.numbers.length ? String(Math.max(...facts.numbers)) : undefined;
     case "far-plaque":
       return facts.farPlaque !== undefined ? tokens(facts.farPlaque).at(-1) : undefined;
     case "far-stash":

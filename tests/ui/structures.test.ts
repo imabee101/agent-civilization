@@ -19,7 +19,7 @@ import {
 } from "../../ui/lib/structures";
 
 // Every StructureKind / ItemKind from protocol.ts; TypeScript flags a missing member.
-const ALL_STRUCTURES: Record<StructureKind, true> = { sign: true, board: true, cache: true, wall: true, tower: true, vault: true, gate: true, spring: true, plaque: true, monolith: true };
+const ALL_STRUCTURES: Record<StructureKind, true> = { sign: true, board: true, cache: true, wall: true, tower: true, vault: true, gate: true, spring: true, plaque: true, monolith: true, device: true, well: true, bell: true };
 const ALL_ITEMS: Record<ItemKind, true> = { key: true, relay: true, lantern: true, seeds: true, map: true };
 const SKINDS = Object.keys(ALL_STRUCTURES) as StructureKind[];
 const IKINDS = Object.keys(ALL_ITEMS) as ItemKind[];

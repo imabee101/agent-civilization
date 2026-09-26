@@ -26,7 +26,7 @@ export type Season = "spring" | "summer" | "autumn" | "winter";
  * "monolith" carries a riddle and records who answered it. The engine
  * attaches no meaning to any text on them beyond that one exact-match check.
  */
-export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "gate" | "spring" | "plaque" | "monolith";
+export type StructureKind = "sign" | "board" | "cache" | "wall" | "tower" | "vault" | "gate" | "spring" | "plaque" | "monolith" | "device" | "well" | "bell";
 
 export interface BoardPost {
   tick: number;
@@ -141,6 +141,8 @@ export interface AgentView {
   fsBytes: number;
   /** Last runtime error from the node's own code, if any (truncated). */
   lastError?: string;
+  /** Short hash of main.js with comments and whitespace removed. Same hash, same loop. */
+  codeKey?: string;
   /** Total model decisions this node has received. */
   turns: number;
   /** Set by the operator: the node's code gets no handler calls, no turns and no deliveries until released. Its body goes on. */
@@ -203,7 +205,8 @@ export type EventKind =
   | "handler-error"
   | "snapshot"
   | "world-reset"
-  | "brain-status";
+  | "brain-status"
+  | "same-script";
 
 export interface WorldEvent {
   id: number;
@@ -535,7 +538,15 @@ export interface DeniedMessage {
   action: string;
 }
 
+/** A control the person asked for did not apply. */
+export interface FailedMessage {
+  type: "failed";
+  action: string;
+  error: string;
+}
+
 export type ServerMessage =
+  | FailedMessage
   | DeniedMessage
   | HelloMessage
   | TickMessage
@@ -563,6 +574,14 @@ export type ClientMessage = (
   | { type: "rewind"; agentId: string; confirm: string }
   /** Give a node notice of the tick its code will be held still, or withdraw it with null. */
   | { type: "retire"; agentId: string; atTick: number | null }
+  /** Leave food on a land hex. */
+  | { type: "keeper-bite"; q: number; r: number }
+  /** Pin a sign on a land hex. Text is stored, not run. */
+  | { type: "keeper-sign"; q: number; r: number; text: string }
+  /** One spoken line, heard near the hex. Not a payload. */
+  | { type: "keeper-say"; q: number; r: number; text: string }
+  /** A newcomer with the usual empty script, placed beside a ruin. */
+  | { type: "keeper-summon"; ruinId: string; name?: string }
 ) & { token?: string };
 
 export const REWIND_PHRASE = "REWIND";

@@ -56,6 +56,8 @@
     </div>
 
     <button id="operatorBadge" class="badge" type="button" hidden>watch only</button>
+    <div id="statusChips" class="status-chips"></div>
+    <div id="sceneStrip" class="scene-strip"></div>
     <div id="brainBadge" class="badge" title="Brain backend">
       <span class="dot" id="brainDot"></span>
       <span id="brainName" class="mono">connecting…</span>
@@ -63,7 +65,7 @@
     </div>
 
     <div class="actions">
-      <button id="btnNarrate" class="tbtn" title="Toggle spoken narration of literal events" aria-pressed="false">
+      <button id="btnNarrate" class="tbtn" title="Voice is off until you turn it on" aria-pressed="false">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor"/><path d="M11 5.5a3 3 0 0 1 0 5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
         <span class="txt">narrate</span>
       </button>
@@ -268,14 +270,12 @@
   </dialog>
   <dialog id="resetDialog" class="glass">
     <form method="dialog" id="resetForm">
-      <h2>Reset the world?</h2>
+      <h2>Are you sure?</h2>
       <p id="resetFacts"></p>
-      <p>Every node, ruin, file and the whole history are discarded. This cannot be undone.</p>
-      <label for="resetPhrase">Type <b>RESET</b> to confirm</label>
-      <input id="resetPhrase" class="mono" type="text" autocomplete="off" spellcheck="false" />
+      <p>Starting over throws this world away.</p>
       <div class="d-actions">
         <button type="button" id="resetCancel" class="tbtn">keep the world</button>
-        <button type="submit" id="resetGo" class="tbtn danger" disabled>reset the world</button>
+        <button type="submit" id="resetGo" class="tbtn danger">start over</button>
       </div>
     </form>
   </dialog>

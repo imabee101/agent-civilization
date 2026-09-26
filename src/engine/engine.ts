@@ -5,14 +5,14 @@
  * It contains no rules about what nodes may do to each other. It moves
  * bytes and time forward. That's it.
  */
-import { FENCE_STOP, SYSTEM_PROMPT, buildUserPrompt, extractCode, longestParsingPrefix, relaxTopLevelDeclarations } from "../brain/prompt";
+import { FENCE_STOP, SYSTEM_PROMPT, buildUserPrompt, extractCode, longestParsingPrefix, mergeHandlers, normalizeScript, relaxTopLevelDeclarations } from "../brain/prompt";
 import { classifyBackend, type BackendProfile, type Brain } from "../brain/types";
 import { NodeSandbox, type SandboxLimits } from "../sandbox/sandbox";
 import type { HandlerName } from "../sandbox/api";
 import type { BrainStatus, DecisionRecord, HelloMessage, NodeDetail, PacingStats, ServerMessage, SignalsView, Speed, WorldEvent } from "../shared/protocol";
 import { World, type Agent, type WorldConfig, type WorldSnapshot, type Delivery } from "../world/world";
 import { makeBridge } from "./bridge";
-import { Signals } from "./signals";
+import { fnvHash, Signals } from "./signals";
 import type { HistoryStore } from "./history";
 import { Pacing, dueIn, type PacingConfig, type Urgency } from "./pacing";
 
@@ -104,8 +104,12 @@ interface NodeRuntime {
   inFlight: boolean;
   /** Backend slot this node's turns run in, for the life of the node. */
   slot?: number;
+  /** Sampling temperature drawn once, within 0.1 of the configured value. */
+  temperature: number;
   /** Last error recorded per handler, so a loop that throws the same thing every tick is written down once. */
   lastHandlerError: Partial<Record<HandlerName, string>>;
+  /** The error string we already spent the one retry on. */
+  retryError?: string;
 }
 
 type Listener = (msg: ServerMessage) => void;
@@ -138,6 +142,10 @@ export class Engine {
   speed: Speed = 1;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private ticking = false;
+  /** The empty map has already been held once for this quiet age. */
+  private quietHeld = false;
+  /** Hashes of main.js that have already been noted as shared. */
+  private sharedScripts = new Set<string>();
   private events: WorldEvent[] = [];
   private decisions: DecisionRecord[] = [];
   private nextDecisionId = 1;
@@ -184,7 +192,7 @@ export class Engine {
     for (const a of this.world.livingAgents()) await this.attachSandbox(a.id);
     // A fresh world may already contain ancient ruins; only living nodes count as a population.
     if (this.world.livingAgents().length === 0 && this.world.tick === 0) {
-      for (let i = 0; i < this.cfg.initialAgents; i++) await this.spawn();
+      for (let i = 0; i < this.cfg.initialAgents; i++) await this.spawn(undefined, { ruinIndex: i });
     }
     this.flushEvents();
     await this.checkBrain();
@@ -265,10 +273,17 @@ export class Engine {
 
   // ----------------------------------------------------------------- nodes
 
-  /** Lowest backend slot no living node holds; undefined when none is configured or all are taken. */
+  /** Slots already given to a node. Never handed to a second node. */
+  private reservedSlots = new Set<number>();
+
+  /** A slot no living node holds and that has never been given out. */
   private freeSlot(): number | undefined {
     const taken = new Set([...this.nodes.values()].map((n) => n.slot));
-    for (let i = 0; i < this.cfg.slots; i++) if (!taken.has(i)) return i;
+    for (let i = 0; i < this.cfg.slots; i++) {
+      if (taken.has(i) || this.reservedSlots.has(i)) continue;
+      this.reservedSlots.add(i);
+      return i;
+    }
     return undefined;
   }
 
@@ -276,29 +291,18 @@ export class Engine {
     const existing = this.nodes.get(agentId);
     if (existing) existing.sandbox.dispose();
     const sandbox = await NodeSandbox.create(makeBridge(this.world, agentId), this.cfg.sandbox);
-    const rt: NodeRuntime = { sandbox, loadedScript: undefined, nextTurnTick: this.world.tick, inFlight: existing?.inFlight ?? false, lastHandlerError: {} };
+    const rt: NodeRuntime = {
+      sandbox,
+      loadedScript: undefined,
+      nextTurnTick: this.world.tick,
+      inFlight: existing?.inFlight ?? false,
+      lastHandlerError: {},
+      temperature: existing?.temperature ?? nodeTemperature(this.cfg.temperature, agentId, this.world.config.seed),
+    };
     rt.slot = existing?.slot ?? this.freeSlot();
     this.nodes.set(agentId, rt);
     this.loadScriptIfChanged(agentId, rt);
-    this.replayTurnScript(agentId, rt);
     return rt;
-  }
-
-  /** A fresh sandbox holds only main.js; the node's last turn code (turn.js) ran on top of it, so it runs again. */
-  private replayTurnScript(agentId: string, rt: NodeRuntime): void {
-    const agent = this.world.agents.get(agentId);
-    const src = agent?.alive && !agent.quarantined ? agent.files["turn.js"] : undefined;
-    if (!agent || src === undefined || rt.sandbox.poisoned) return;
-    const r = rt.sandbox.eval(relaxTopLevelDeclarations(src), "turn.js");
-    this.pacing.sandboxCalls++;
-    if (r.ok) {
-      const handlers = rt.sandbox.handlers();
-      this.world.addLog(agentId, `turn.js replayed (${handlers.length ? handlers.join(", ") : "no handlers"})`);
-    } else {
-      agent.lastError = `turn.js: ${r.error}`;
-      this.world.addLog(agentId, `turn.js failed to replay: ${r.error}`);
-      this.world.record("code-error", 1, agentId, `${agent.name}'s turn.js failed to replay`, { data: { error: r.error } });
-    }
   }
 
   private loadScriptIfChanged(agentId: string, rt: NodeRuntime): void {
@@ -332,9 +336,29 @@ export class Engine {
     await this.attachSandbox(agentId);
   }
 
-  async spawn(name?: string, opts: { arrival?: boolean } = {}): Promise<string> {
+  /** Push world events produced outside a tick (a keeper gesture) to listeners. */
+  publish(): void {
+    this.flushTiles();
+    this.flushEvents();
+    this.emitTick();
+  }
+
+  async spawn(name?: string, opts: { arrival?: boolean; spread?: boolean; nearRuinId?: string; ruinIndex?: number } = {}): Promise<string> {
     if (this.world.livingAgents().length >= this.cfg.maxAgents) throw new Error(`at most ${this.cfg.maxAgents} living nodes`);
-    const a = this.world.spawnAgent({ name, arrival: opts.arrival, files: this.cfg.starterFiles });
+    if (opts.nearRuinId) this.world.keeperGap("summon");
+    let at = opts.nearRuinId ? this.world.tileBesideRuin(opts.nearRuinId) : undefined;
+    if (at === undefined && opts.ruinIndex !== undefined) {
+      const ruins = [...this.world.agents.values()].filter((a) => !a.alive);
+      const ruin = ruins.length ? ruins[opts.ruinIndex % ruins.length] : undefined;
+      if (ruin) {
+        try {
+          at = this.world.tileBesideRuin(ruin.id);
+        } catch {
+          at = undefined;
+        }
+      }
+    }
+    const a = this.world.spawnAgent({ name, arrival: opts.arrival, spread: opts.spread, at, files: this.cfg.starterFiles });
     await this.attachSandbox(a.id);
     this.flushEvents();
     this.emitTick();
@@ -451,8 +475,20 @@ export class Engine {
     this.decisions = [];
     this.signals = new Signals(this.world.config.ticksPerDay);
     this.history?.clear();
+    this.reservedSlots.clear();
     for (let i = 0; i < this.cfg.initialAgents; i++) {
       const a = this.world.spawnAgent({ files: this.cfg.starterFiles });
+      try {
+        const ruins = [...this.world.agents.values()].filter((x) => !x.alive);
+        const ruin = ruins[i % Math.max(1, ruins.length)];
+        if (ruin) {
+          const tile = this.world.tileBesideRuin(ruin.id);
+          a.q = tile.q;
+          a.r = tile.r;
+        }
+      } catch {
+        /* stay where spawn put them */
+      }
       await this.attachSandbox(a.id);
     }
     this.flushEvents();
@@ -521,6 +557,12 @@ export class Engine {
         await this.saveSnapshot();
         this.history?.prune(this.cfg.historyNoiseDays * this.world.config.ticksPerDay);
       }
+      this.noteSharedCode();
+      if (this.world.isExtinct() && !this.quietHeld) {
+        this.quietHeld = true;
+        this.pause();
+      }
+      if (!this.world.isExtinct()) this.quietHeld = false;
       this.pumpTurns();
     } finally {
       this.ticking = false;
@@ -554,11 +596,24 @@ export class Engine {
       const agent = this.world.agents.get(agentId);
       const key = `${name}: ${r.error}`;
       if (agent) agent.lastError = key;
+      if (rt.lastHandlerError[name] !== r.error) this.offerRetry(agentId, rt, key);
       if (rt.lastHandlerError[name] === r.error) return;
       rt.lastHandlerError[name] = r.error;
       this.world.addLog(agentId, `${name} error: ${r.error}`);
       this.world.record("handler-error", 0, agentId, `${agent?.name ?? agentId}'s ${name} threw: ${r.error.slice(0, 120)}`, { data: { error: r.error } });
-    } else delete rt.lastHandlerError[name];
+    } else {
+      delete rt.lastHandlerError[name];
+      const agent = this.world.agents.get(agentId);
+      if (agent?.lastError?.startsWith(`${name}:`)) agent.lastError = undefined;
+    }
+  }
+
+  /** One extra model turn for a new error. The same text does not ask again. */
+  private offerRetry(agentId: string, rt: NodeRuntime, error: string): void {
+    if (rt.retryError === error) return;
+    rt.retryError = error;
+    rt.nextTurnTick = this.world.tick;
+    this.world.addLog(agentId, "one retry");
   }
 
   // ------------------------------------------------------------- turns
@@ -585,6 +640,24 @@ export class Engine {
     const small = (a: number, b: number) => Math.abs(a - b) < 15;
     if (!acted && small(agent.food, last.stomach) && small(agent.energy, last.energy) && Math.round(agent.health) === last.health) return "cold";
     return "warm";
+  }
+
+  /** Once, when two living nodes first share a normalized main.js. */
+  private noteSharedCode(): void {
+    const groups = new Map<string, string[]>();
+    for (const a of this.world.livingAgents()) {
+      const src = a.files["main.js"];
+      if (!src) continue;
+      const key = fnvHash(normalizeScript(src));
+      const names = groups.get(key) ?? [];
+      names.push(a.name);
+      groups.set(key, names);
+    }
+    for (const [key, names] of groups) {
+      if (names.length < 2 || this.sharedScripts.has(key)) continue;
+      this.sharedScripts.add(key);
+      this.world.record("same-script", 2, undefined, `${names.length} living nodes run the same main.js (${names.slice(0, 4).join(", ")})`, { data: { count: names.length } });
+    }
   }
 
   /** Start model turns for nodes that are due, hottest first, up to the concurrency limit. */
@@ -649,7 +722,17 @@ export class Engine {
     let record: DecisionRecord | undefined;
     let succeeded = false;
     try {
-      const req = { system: SYSTEM_PROMPT, user, maxTokens: this.cfg.maxTokens, temperature: this.cfg.temperature, slot: rt.slot, cacheKey: agentId, stop: [FENCE_STOP], context: { visibleNodeIds } };
+      const req = {
+        system: SYSTEM_PROMPT,
+        user,
+        maxTokens: this.cfg.maxTokens,
+        temperature: rt.temperature,
+        seed: samplerSeed(this.world.config.seed, agentId, agent.turns + 1),
+        slot: rt.slot,
+        cacheKey: agentId,
+        stop: [FENCE_STOP],
+        context: { visibleNodeIds },
+      };
       const opts = {
         signal: abort.signal,
         onToken: (chunk: string) => {
@@ -739,13 +822,19 @@ export class Engine {
               agent.lastError = `your reply was cut off at the ${this.cfg.maxTokens}-token limit; ${cut.slice(cut.indexOf(";") + 2)}`;
               this.world.addLog(agentId, `turn reply cut off at ${this.cfg.maxTokens} tokens; ran the complete lines before the cut`);
               this.world.record("code-error", 1, agentId, `${agent.name}'s reply was cut off at the token limit; the complete lines before the cut ran`, { data: { error: cut } });
-            } else agent.lastError = undefined;
+            } else {
+              agent.lastError = undefined;
+              rt.retryError = undefined;
+            }
             this.world.keepTurnScript(agentId, toRun);
+            const merged = mergeHandlers(agent.files["main.js"] ?? "", toRun);
+            if (merged !== null && merged !== (agent.files["main.js"] ?? "")) this.world.fsWrite(agentId, "main.js", merged);
             this.world.record("executed-code", 1, agentId, `${agent.name} ran ${toRun.split("\n").length} line(s) of code`, { data: { result: r.value.slice(0, 120), ...(cut ? { partial: true } : {}) } });
           } else {
             record.error = r.error;
             rt.lastResult = undefined;
             agent.lastError = r.error;
+            this.offerRetry(agentId, rt, r.error);
             this.world.addLog(agentId, `turn code error: ${r.error}`);
             this.world.record("code-error", 1, agentId, `${agent.name}'s code threw: ${r.error.slice(0, 80)}`, { data: { error: r.error } });
             if (r.fatal) await this.rebuildNode(agentId, r.error);
@@ -754,6 +843,7 @@ export class Engine {
         } else if (!result.truncated) {
           record.error = "no code in output";
           agent.lastError = "your reply contained no code";
+          this.offerRetry(agentId, rt, agent.lastError);
           this.world.addLog(agentId, "turn produced no code");
         }
       }
@@ -1014,4 +1104,16 @@ export class Engine {
       return undefined;
     }
   }
+}
+
+/** Stable per node: ±0.1 around the configured temperature, from the world seed and the id. */
+function nodeTemperature(base: number, agentId: string, worldSeed: number): number {
+  const n = parseInt(fnvHash(`${worldSeed}:${agentId}`).slice(0, 8), 16);
+  const delta = ((n % 21) - 10) / 100;
+  return Math.round((base + delta) * 100) / 100;
+}
+
+/** Changes with the turn, so a retry is not the same sample. */
+function samplerSeed(worldSeed: number, agentId: string, turn: number): number {
+  return parseInt(fnvHash(`${worldSeed}:${agentId}:${turn}`).slice(0, 8), 16);
 }

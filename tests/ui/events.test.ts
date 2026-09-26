@@ -53,6 +53,7 @@ const ALL_KINDS: Record<EventKind, true> = {
   snapshot: true,
   "world-reset": true,
   "brain-status": true,
+  "same-script": true,
 };
 const KINDS = Object.keys(ALL_KINDS) as EventKind[];
 

@@ -190,8 +190,11 @@ function onMessage(m: ServerMessage): void {
       // The server refused a control: no token, or the wrong one. Forget it and ask again.
       storeOperatorToken("");
       renderBadge();
-      toast(`${m.action}: the operator token is required`);
+      toast(`${m.action}: the operator token is required`, true);
       openTokenDialog();
+      break;
+    case "failed":
+      toast(`${m.action}: ${m.error}`, true);
       break;
     case "signals": {
       const fresh = newAlertIds(S.signals?.alerts, m.signals.alerts, S.alertFloor);
@@ -233,6 +236,7 @@ function applyHello(h: HelloMessage): void {
   S.tileIndex = indexTiles(h.tiles);
   S.state = h.state;
   S.events = h.events.slice(-MAX_EVENTS);
+  renderScene();
   S.decisions = h.decisions.slice(-MAX_DECISIONS);
   S.systemPrompt = h.systemPrompt;
   S.operatorTokenRequired = h.operatorTokenRequired;
@@ -297,6 +301,13 @@ function renderBadge(): void {
   const thinking = S.state?.agents.filter((a) => a.alive && a.thinking).length ?? 0;
   $("brainName").textContent = !on ? (S.connected ? "brain down · world holds" : "offline") : thinking ? `${thinking} thinking` : "minds idle";
   $("brainBadge").title = b?.lastError ? `last error: ${b.lastError}` : b ? `${b.kind} · ${b.model}` : "brain backend";
+  const chips = $("statusChips");
+  chips.replaceChildren();
+  if (!S.connected) chips.appendChild(el("span", "chip", "connection lost — retrying"));
+  if (b && !b.connected) {
+    const c = el("span", "chip", b.lastError ? `brain down · ${b.lastError.slice(0, 80)}` : "brain down");
+    chips.appendChild(c);
+  }
   $("pacingMode").textContent = S.pacing?.mode ?? "idle";
   const lock = $("operatorBadge");
   lock.hidden = !S.operatorTokenRequired;
@@ -406,6 +417,7 @@ function addEvent(e: WorldEvent, opts: { replay?: boolean } = {}): void {
   if (!opts.replay) {
     S.events.push(e);
     if (S.events.length > MAX_EVENTS) S.events.splice(0, S.events.length - MAX_EVENTS);
+    renderScene();
   }
   if (S.showAll || isStory(e)) {
     if (lastRow && lastRow.el.isConnected && sameStory(lastRow.event, e)) {
@@ -453,12 +465,65 @@ function showRibbon(e: WorldEvent): void {
 }
 
 // ---------- narration (literal text only) ----------
+const VOICES = ["eve", "ara", "rex", "sal", "leo"] as const;
+let speakCtl: AbortController | null = null;
+let speakAudio: HTMLAudioElement | null = null;
+
+function voiceFor(id?: string): (typeof VOICES)[number] {
+  if (!id) return "eve";
+  let h = 0;
+  for (const c of id) h = (h + c.charCodeAt(0)) % VOICES.length;
+  return VOICES[h]!;
+}
+
+function stopSpeech(): void {
+  speakCtl?.abort();
+  speakCtl = null;
+  if (speakAudio) {
+    speakAudio.pause();
+    speakAudio.src = "";
+    speakAudio = null;
+  }
+  window.speechSynthesis?.cancel();
+}
+
 function narrate(e: WorldEvent): void {
-  const synth = window.speechSynthesis;
-  if (!synth) return;
+  if (!S.narrate) return;
   const text = utteranceFor(e);
   if (!text) return;
-  if (synth.pending && synth.speaking) return; // don't pile up a backlog
+  if (S.brain?.kind === "grok") {
+    if (speakAudio && !speakAudio.paused && !speakAudio.ended) return;
+    speakCtl?.abort();
+    const ctl = new AbortController();
+    speakCtl = ctl;
+    void fetch("/api/speak", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...operatorHeaders() },
+      body: JSON.stringify({ text, voice: voiceFor(e.agentId) }),
+      signal: ctl.signal,
+    })
+      .then(async (r) => {
+        if (!S.narrate || ctl.signal.aborted) return;
+        if (!r.ok) {
+          toast("voice unavailable");
+          return;
+        }
+        const blob = await r.blob();
+        if (!S.narrate || ctl.signal.aborted) return;
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        speakAudio = audio;
+        audio.onended = () => URL.revokeObjectURL(url);
+        void audio.play();
+      })
+      .catch((err: unknown) => {
+        if ((err as { name?: string }).name === "AbortError") return;
+      });
+    return;
+  }
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  if (synth.pending && synth.speaking) return;
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.05;
   synth.speak(u);
@@ -699,6 +764,7 @@ function renderTileDossier(t: TileView): void {
     return r;
   });
   if (d.frozen !== null) kvRows.push(operatorRow([{ label: d.frozen ? "thaw the cache" : "freeze the cache", danger: !d.frozen, onClick: () => send({ type: "freeze", on: !d.frozen }) }]));
+  kvRows.push(keeperRow(t.q, t.r));
   $("dKV").replaceChildren(...kvRows);
   const textSec = $("dTileText");
   textSec.hidden = d.text === null;
@@ -984,11 +1050,11 @@ function renderNodeDetail(): void {
     stats.appendChild(t);
   }
   const parts: HTMLElement[] = [stats];
+  if (!a.alive) parts.push(operatorRow([{ label: "wake beside this ruin", onClick: () => send({ type: "keeper-summon", ruinId: a.id }) }]));
   if (a.alive) {
     parts.push(
       operatorRow([
         { label: a.quarantined ? "release" : "quarantine", danger: !a.quarantined, onClick: () => send({ type: "quarantine", agentId: a.id, on: !a.quarantined }) },
-        { label: "rewind files", danger: true, onClick: () => openRewind(a) },
       ]),
     );
     if (a.quarantined) parts.push(el("div", "empty-note", "quarantined: its code gets no handler calls, no turns and no deliveries. Its body goes on."));
@@ -1291,27 +1357,18 @@ $("operatorBadge").addEventListener("click", () => {
 });
 loadOperatorToken();
 
-// Reset: opens a dialog, and the reset button stays disabled until the word is typed.
+// Starting over asks "Are you sure?" The start-over button is the answer.
 const resetDialog = $("resetDialog") as HTMLDialogElement;
-const resetPhrase = $("resetPhrase") as HTMLInputElement;
-const resetGo = $("resetGo") as HTMLButtonElement;
 $("btnReset").addEventListener("click", () => {
   const st = S.state;
   const living = st?.agents.filter((a) => a.alive).length ?? 0;
   const ruins = (st?.ruins.length ?? 0) + (st?.agents.filter((a) => !a.alive).length ?? 0);
   $("resetFacts").textContent = st ? `Day ${st.day}: ${living} living node${living === 1 ? "" : "s"}, ${ruins} ruin${ruins === 1 ? "" : "s"}.` : "";
-  resetPhrase.value = "";
-  resetGo.disabled = true;
   resetDialog.showModal();
-  resetPhrase.focus();
-});
-resetPhrase.addEventListener("input", () => {
-  resetGo.disabled = resetPhrase.value !== "RESET";
 });
 $("resetCancel").addEventListener("click", () => resetDialog.close());
 $("resetForm").addEventListener("submit", (ev) => {
   ev.preventDefault();
-  if (resetPhrase.value !== "RESET") return;
   resetDialog.close();
   void fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json", ...operatorHeaders() }, body: JSON.stringify({ confirm: "RESET" }) }).then(async (r) => {
     if (r.status === 401) {
@@ -1354,8 +1411,8 @@ for (const b of $("nerdTabs").querySelectorAll<HTMLButtonElement>("button")) b.a
 $("btnNarrate").addEventListener("click", () => {
   S.narrate = !S.narrate;
   $("btnNarrate").setAttribute("aria-pressed", String(S.narrate));
-  if (!S.narrate) window.speechSynthesis?.cancel();
-  else if (!window.speechSynthesis) toast("speech synthesis is not available in this browser");
+  if (!S.narrate) stopSpeech();
+  else if (S.brain?.kind !== "grok" && !window.speechSynthesis) toast("speech is not available in this browser");
 });
 $("chkAll").addEventListener("change", (e) => {
   S.showAll = (e.target as HTMLInputElement).checked;
@@ -1408,12 +1465,56 @@ window.matchMedia(MOBILE_MQ).addEventListener("change", (e) => {
 
 // ---------- toast ----------
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
-function toast(text: string): void {
+function renderScene(): void {
+  const strip = document.getElementById("sceneStrip");
+  if (!strip || !S.state) return;
+  const recent = S.events.filter((e) => e.tick >= S.state!.tick - 80);
+  const quotes = recent.filter((e) => e.kind === "spoke" && e.quote);
+  const distinct = new Set(quotes.map((e) => e.quote)).size;
+  const keys = new Map<string, number>();
+  for (const a of S.state.agents) if (a.alive && a.codeKey) keys.set(a.codeKey, (keys.get(a.codeKey) ?? 0) + 1);
+  const shared = Math.max(0, ...keys.values());
+  const notable = [...S.events].reverse().find((e) => e.importance >= 2 || e.kind === "spoke" || e.kind === "died" || e.kind === "same-script");
+  const err = S.state.agents.find((a) => a.alive && a.lastError);
+  const lines = [
+    notable ? `${notable.text}${notable.quote ? ` — ${String(notable.quote).slice(0, 80)}` : ""}` : "quiet",
+    `${S.state.agents.filter((a) => a.alive).length} living, ${distinct} different sentences, ${shared > 1 ? shared + " share a loop" : "no shared loop"}`,
+    err ? `${err.name}: ${err.lastError}` : "",
+  ].filter(Boolean);
+  strip.textContent = lines.join(" · ");
+}
+
+function toast(text: string, sticky = false): void {
   const t = $("toast");
   t.textContent = text;
   t.hidden = false;
   if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 2200);
+  toastTimer = sticky ? null : setTimeout(() => (t.hidden = true), 2200);
+}
+
+function askLine(label: string): string | null {
+  const t = window.prompt(label);
+  return t && t.trim() ? t.trim() : null;
+}
+
+function keeperRow(q: number, r: number): HTMLElement {
+  return operatorRow([
+    { label: "leave food", onClick: () => send({ type: "keeper-bite", q, r }) },
+    {
+      label: "pin a sign",
+      onClick: () => {
+        const text = askLine("Sign text");
+        if (text) send({ type: "keeper-sign", q, r, text });
+      },
+    },
+    {
+      label: "speak here",
+      onClick: () => {
+        const text = askLine("One line, heard nearby");
+        if (text) send({ type: "keeper-say", q, r, text });
+      },
+    },
+  ]);
 }
 
 // ---------- stable dev API for automated checks (window.__llmwar) ----------
@@ -1453,8 +1554,8 @@ async function boot(): Promise<void> {
   transport.onStatus((c) => {
     S.connected = c;
     renderBadge();
-    if (!c) toast("connection lost — retrying…");
   });
+  transport.onDrop?.((action) => toast(`${action} was not sent`, true));
   transport.onMessage(onMessage);
   renderBadge();
   const screenPos = (q: number, r: number) => {

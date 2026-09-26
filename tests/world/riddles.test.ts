@@ -6,7 +6,7 @@ import { API_DOC } from "../../src/sandbox/api";
 import * as lore from "../../src/world/features";
 import { hexDistance } from "../../src/world/hex";
 
-const facts: RiddleFacts = { towers: 2, population: 5, cacheEntries: 3, newestRuin: "Zei", numbers: [7, 41, 12] };
+const facts: RiddleFacts = { towers: 2, population: 5, cacheEntries: 3, newestRuin: "Zei" };
 
 describe("riddles", () => {
   test("deterministic per seed, fixed kinds first, never the same kind twice in a row", () => {
@@ -51,18 +51,14 @@ describe("riddles", () => {
     expect(answerOf(live, { ...facts, population: 1 })).toBe("1");
     expect(answerOf({ ...live, kind: "newest-ruin" }, facts)).toBe("Zei");
     expect(answerOf({ ...live, kind: "newest-ruin" }, { ...facts, newestRuin: undefined })).toBeUndefined();
-    expect(answerOf({ ...live, kind: "sum-of-numbers" }, facts)).toBe("60");
-    expect(answerOf({ ...live, kind: "largest-number" }, facts)).toBe("41");
-    expect(answerOf({ ...live, kind: "sum-of-numbers" }, { ...facts, numbers: [] })).toBeUndefined();
     const kinds = new Set<string>();
     const r2 = new Rng(4);
     for (let no = 1; no <= 30; no++) kinds.add(makeRiddle(r2, no, 0, facts).kind);
-    expect(kinds.has("sum-of-numbers") || kinds.has("largest-number")).toBe(true);
-    expect(makeRiddle(new Rng(4), 3, 0, facts).kind).toMatch(/number/);
+    expect(kinds.has("sum-of-numbers") || kinds.has("largest-number")).toBe(false);
     const farFacts = { ...facts, farPlaque: "The word is HARBOUR.", farStashFood: 199.6 };
-    expect(makeRiddle(new Rng(4), 4, 0, farFacts).kind).toMatch(/^far-/);
-    expect(makeRiddle(new Rng(4), 4, 0, facts).kind).not.toMatch(/^far-/);
-    const farPlaque = makeRiddle(new Rng(4), 4, 0, farFacts, "far-stash");
+    expect(makeRiddle(new Rng(4), 3, 0, farFacts).kind).toMatch(/^far-/);
+    expect(makeRiddle(new Rng(4), 3, 0, facts).kind).not.toMatch(/^far-/);
+    const farPlaque = makeRiddle(new Rng(4), 3, 0, farFacts, "far-stash");
     expect(farPlaque.kind).toBe("far-plaque");
     expect(answerOf(farPlaque, farFacts)).toBe("harbour");
     expect(answerOf({ ...farPlaque, kind: "far-stash" }, farFacts)).toBe("200");

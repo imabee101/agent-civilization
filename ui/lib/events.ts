@@ -49,6 +49,7 @@ const CATEGORY_OF: Record<EventKind, EventCategory> = {
   "season-changed": "system",
   "world-reset": "system",
   "brain-status": "system",
+  "same-script": "code",
 };
 
 const ICON_OF: Record<EventKind, string> = {
@@ -89,6 +90,7 @@ const ICON_OF: Record<EventKind, string> = {
   "season-changed": "❄",
   "world-reset": "↻",
   "brain-status": "◍",
+  "same-script": "≡",
 };
 
 /** Kinds that indicate something went wrong / is dangerous for the node. */

@@ -395,7 +395,7 @@ describe("structures", () => {
     const w = mk({ features: false, cacheMaxEntries: 2, cacheEntryBytes: 5, cacheNameChars: 10 });
     const a = w.spawnAgent({ at: { q: 0, r: 0 } });
     const t = w.tileAt(a)!;
-    expect(() => w.cacheList(a.id)).toThrow(/no cache/);
+    expect(w.cacheList(a.id)).toEqual([]);
     t.structure = { kind: "cache", entries: {} };
     w.cacheWrite(a.id, "hello-all", "");
     w.cacheWrite(a.id, "note", "abc");

@@ -23,6 +23,8 @@ export interface DecisionRequest {
   cacheKey?: string;
   /** Do not reuse a cached prefix for this request (probes measure raw prefill). */
   noCache?: boolean;
+  /** Sampler seed for backends that take one. Omitted by the others. */
+  seed?: number;
   /** Optional structured hints for non-model brains (e.g. random) that can't read the prompt. */
   context?: {
     visibleNodeIds?: string[];

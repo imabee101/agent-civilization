@@ -87,6 +87,7 @@ export class OpenAICompatibleBrain implements Brain {
       // llama-server: reuse the slot's KV cache for the common prefix, and keep one node in one slot.
       cache_prompt: !req.noCache,
       ...(req.slot !== undefined ? { id_slot: req.slot } : {}),
+      ...(req.seed !== undefined ? { seed: req.seed } : {}),
       ...(this.stream ? { stream_options: { include_usage: true } } : {}),
     };
     const res = await postJson(joinUrl(this.baseUrl, "chat/completions"), body, this.http(opts.signal));
