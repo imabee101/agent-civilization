@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Issue civ.imabee.com from the AppSynergy Intermediate CA (Vault k2 pki_int,
-# role agent-civ) when the installed leaf has under 30 days left, then restart
-# the game. Not ACME: the name resolves to an RFC1918 address.
+# Issue $DOMAIN from the Intermediate CA at $VAULT_ADDR (pki_int, role
+# agent-civ) when the installed leaf has under 30 days left, then restart the
+# game. Not ACME: the name resolves to an RFC1918 address. DOMAIN and
+# VAULT_ADDR come from /etc/agent-civ/install.env.
 #
 # The AppRole in /etc/agent-civ/approle.env (root, 0600) may only issue this one
 # name. It is node-bound because a timer cannot unlock secd. Values reach curl
 # on stdin and are never echoed.
 set -euo pipefail
 
-VAULT=https://k2.imabee.com:8200/v1
-NAME=civ.imabee.com
 DIR=/etc/agent-civ/tls
 RENEW_BELOW_DAYS=${RENEW_BELOW_DAYS:-30}
 
 die() { echo "renew-tls: $*" >&2; exit 1; }
+. /etc/agent-civ/install.env
+[[ -n "${DOMAIN:-}" && -n "${VAULT_ADDR:-}" ]] || die "DOMAIN and VAULT_ADDR must be set in /etc/agent-civ/install.env"
+VAULT=$VAULT_ADDR
+NAME=$DOMAIN
 . /etc/agent-civ/approle.env
 [[ -n "${VAULT_ROLE_ID:-}" && -n "${VAULT_SECRET_ID:-}" ]] || die "no AppRole in /etc/agent-civ/approle.env"
 

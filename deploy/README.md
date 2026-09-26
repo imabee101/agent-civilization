@@ -1,13 +1,24 @@
-# LAN deployment: https://civ.imabee.com
+# LAN deployment
 
-Runs on the workstation `192.168.101.7` (`local.imabee.com`), reachable from the LAN.
+One box runs the game and its brain as two systemd units. Nothing tracked here names the box: every
+host value lives in `/etc/agent-civ/install.env` (untracked, root, no secrets), which `install.sh` reads.
+
+| Variable | Meaning |
+|---|---|
+| `HOST`, `PORT` | address the game binds (default port 443) |
+| `DOMAIN` | the TLS name; `renew-tls.sh` issues it from Vault |
+| `VAULT_ADDR` | Vault base URL including `/v1`; needs `pki_int/issue/agent-civ` for this name and the AppRole in `approle.env` |
+| `LLAMA_DIR` | a llama.cpp build with `bin/` and `lib/` |
+| `MODEL` | the GGUF to copy into `/opt/agent-civ/models` |
+| `MODEL_ALIAS` | what the game calls it (default: the file name, lower case) |
+| `GAME_FLAGS` | `--max-agents`, `--concurrency` (a ceiling), `--max-tokens`, `--temperature` |
+| `SLOTS`, `CTX_PER_SLOT` | llama-server slots (one per node) and context each (defaults 12, 6144) |
 
 | Piece | Where |
 |---|---|
-| Name | unbound on the NUC (`.253`/`::44`), `local-data` in nuc-k3s `apps/dns/10-configmap.yaml`. LAN-only, no Cloudflare record |
-| TLS | Leaf from the AppSynergy Intermediate CA, Vault k2 `pki_int/issue/agent-civ` (this name only, EC, 1 year) |
-| Game | `agent-civ.service`: `/opt/agent-civ/agentciv` on `192.168.101.7:443`, state in `/var/lib/agent-civ` |
-| Brain | `agent-civ-llm.service`: llama-server on `127.0.0.1:8080`, `huihui-ai/Huihui-Qwen3-4B-Instruct-2507-abliterated` i1-Q4_0, 12 slots of 6144 ctx (one per node). Flags in `/etc/agent-civ/llm.env`, written by `install.sh` from the compute it finds: a GPU with room for the model takes every layer, otherwise the performance cores decode with a q8 KV cache |
+| TLS | Leaf from a Vault Intermediate CA, `pki_int/issue/agent-civ` (the one name, EC, 1 year) |
+| Game | `agent-civ.service`: `/opt/agent-civ/agentciv` on `$HOST:$PORT`, state in `/var/lib/agent-civ`, flags in `/etc/agent-civ/game.env` (rendered) |
+| Brain | `agent-civ-llm.service`: llama-server on `127.0.0.1:8080`. Flags in `/etc/agent-civ/llm.env`, written by `install.sh` from the compute it finds: a GPU with room for the model takes every layer, otherwise the performance cores decode with a q8 KV cache |
 | Renewal | `agent-civ-renew.timer`, daily; reissues under 30 days left and restarts the game |
 | CPU | both services run in `agentciv.slice` (`CPUWeight=200`): about half the CPU when your builds saturate the box, nothing extra when it is idle |
 | History | `/var/lib/agent-civ/history.sqlite`: routine rows (moves, gathers, rests) kept 7 days; everything else and every prompt/reply kept forever |
@@ -22,13 +33,12 @@ journalctl -u agent-civ -u agent-civ-llm -f
 
 ## Gotchas
 
-- Bind is `192.168.101.7` only: `.130` on the same NIC is the apsy edge's `:443`.
 - `install.sh` stops both services before it copies anything: a mapped binary replaced under a running
   process dies with SIGBUS (it happened once, 85 s into a shutdown that had hung). The game exits within
   10 s of SIGTERM on its own; `TimeoutStopSec=30` is the backstop.
-- `/etc/agent-civ/approle.env` (root, 0600) holds the AppRole. It is node-bound
-  because a timer cannot unlock secd. To rebuild the Vault side after a restore:
-  `secd run --with vault=local/nuc/vault/k2 -- sudo --preserve-env=VAULT_TOKEN bash -c 'set -a; . /etc/agent-civ/approle.env; set +a; exec python3 <nuc-k3s>/scripts/vault-approle.py --addr k2.imabee.com --name agent-civ --domains civ.imabee.com --no-subdomains --ttl 8760h --key-type ec --role-id-env VAULT_ROLE_ID --secret-id-env VAULT_SECRET_ID'`
+- `/etc/agent-civ/approle.env` (root, 0600) holds the AppRole that may issue `$DOMAIN` and nothing
+  else. It is node-bound because a timer cannot unlock secd. How it was made belongs in `install.env`'s
+  comments on the box, not here.
 - Model: on the neutral prompt (no example strategy) Qwen3-4B-2507 wrote coherent, varied code on 6/6
   turns; Qwen3-1.7B 2/6 (placeholders), Llama-3.2-3B mostly invalid JS, Qwen2.5-3B 2/6.
 - Bench rows the current choice rests on (`bun run bench`, 8 stored prompts each, Qwen3-4B-2507 abliterated
@@ -43,9 +53,9 @@ journalctl -u agent-civ -u agent-civ-llm -f
   | three at once (warm) | 113 | 96 s | 16.8 s | 73.7 s | 13% | 0% | 10% |
   | `--spec-type ngram-map-k` (cold, second server) | 51 | 80 s | 39.7 s | 31.3 s | 13% | 0% | 6% |
 
-  Deployed: this model at temperature 0.4 with the fence stop (the unit sets it). N-gram speculation loses on this CPU. Three at once wins only with a warm cache, which is why the engine
+  Deployed: this model at temperature 0.4 with the fence stop (`GAME_FLAGS` sets it). N-gram speculation loses on this CPU. Three at once wins only with a warm cache, which is why the engine
   measures the level instead of fixing it. Not yet measured: a 1.7B draft model, Q4_K_M (stock and
-  abliterated), Qwen3-Coder-30B-A3B; the files are in `/home/imma/projects/llm/models`. Measure them one
+  abliterated), Qwen3-Coder-30B-A3B; the files sit beside `MODEL` on the deploy box. Measure them one
   at a time with `agent-civ-llm` stopped: a second server beside the deployed one (19.5 GB with its idle
   KV and prompt cache) runs the box out of memory.
 - Concurrency: on this CPU (i9-12900K, no GPU) one stream decodes at 17 tok/s and prefills at 110 to 130

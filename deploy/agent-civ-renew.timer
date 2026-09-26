@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily lapse net for the civ.imabee.com certificate
+Description=Daily lapse net for the game's TLS certificate
 
 [Timer]
 OnCalendar=daily
