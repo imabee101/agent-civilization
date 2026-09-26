@@ -304,6 +304,17 @@ prints the same reading over a whole record: outcomes, latency
 percentiles, backend timings, code shape, API calls, error classes, turns
 per node, events by kind; `--hours N` limits it to the last N hours.
 
+**Choosing a model or a setting by numbers.** `bun run bench --source
+<history.sqlite | https://host> --n 12 [--base-url … --model … --temperature
+… --top-p … --min-p … --repeat-penalty … --no-fence-stop --concurrency N
+--label …]` replays stored prompts against a backend and scores each reply
+without a world: the observation is read back out of the prompt, the code
+runs against a stub that answers every call, and the row reports turns per
+hour, latency, prefill and decode seconds, cache share, tokens, the share
+that parsed, threw, was cut, carried comments or prose, and what it called.
+Run it once per candidate and read the rows side by side; the deploy notes
+in `deploy/README.md` keep the rows the current choice rests on.
+
 **What a turn costs, and what a cut reply does.** The prompt tells the node
 its reply budget in tokens and asks for under forty lines with no comments.
 The changing half of the prompt shrinks to `--prompt-chars` (default 12000):

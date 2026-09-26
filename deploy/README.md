@@ -31,6 +31,23 @@ journalctl -u agent-civ -u agent-civ-llm -f
   `secd run --with vault=local/nuc/vault/k2 -- sudo --preserve-env=VAULT_TOKEN bash -c 'set -a; . /etc/agent-civ/approle.env; set +a; exec python3 <nuc-k3s>/scripts/vault-approle.py --addr k2.imabee.com --name agent-civ --domains civ.imabee.com --no-subdomains --ttl 8760h --key-type ec --role-id-env VAULT_ROLE_ID --secret-id-env VAULT_SECRET_ID'`
 - Model: on the neutral prompt (no example strategy) Qwen3-4B-2507 wrote coherent, varied code on 6/6
   turns; Qwen3-1.7B 2/6 (placeholders), Llama-3.2-3B mostly invalid JS, Qwen2.5-3B 2/6.
+- Bench rows the current choice rests on (`bun run bench`, 8 stored prompts each, Qwen3-4B-2507 abliterated
+  Q4_0, one turn at a time unless said; the three warm rows ran on a cache the baseline had filled, so only
+  their decode-side columns compare):
+
+  | configuration | turns/h | p50 | prefill | decode | threw | cut | comments |
+  |---|---|---|---|---|---|---|---|
+  | temperature 0.7, fence stop (cold cache) | 76 | 47 s | 19.4 s | 27.6 s | 13% | 13% | 12% |
+  | temperature 0.4 (warm) | 96 | 38 s | 9.4 s | 27.9 s | 13% | 0% | 10% |
+  | no fence stop (warm) | 98 | 42 s | 11.1 s | 25.3 s | 0% | 0% | 9% |
+  | three at once (warm) | 113 | 96 s | 16.8 s | 73.7 s | 13% | 0% | 10% |
+  | `--spec-type ngram-map-k` (cold, second server) | 51 | 80 s | 39.7 s | 31.3 s | 13% | 0% | 6% |
+
+  N-gram speculation loses on this CPU. Three at once wins only with a warm cache, which is why the engine
+  measures the level instead of fixing it. Not yet measured: a 1.7B draft model, Q4_K_M (stock and
+  abliterated), Qwen3-Coder-30B-A3B; the files are in `/home/imma/projects/llm/models`. Measure them one
+  at a time with `agent-civ-llm` stopped: a second server beside the deployed one (19.5 GB with its idle
+  KV and prompt cache) runs the box out of memory.
 - Concurrency: on this CPU (i9-12900K, no GPU) one stream decodes at 17 tok/s and prefills at 110 to 130
   tok/s; three streams at once drop to 4 to 7 tok/s each and 46 to 89 tok/s prefill, and a turn takes
   longer in wall time (35 s vs 29 s on the same prompts). `--concurrency 3` is therefore only a ceiling:

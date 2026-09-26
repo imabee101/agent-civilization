@@ -9,7 +9,7 @@
 export const API_DOC = `You control one node in a shared hex world. Your code runs in a sandboxed JavaScript interpreter (no modules, no timers, no network, no host filesystem). These globals exist:
 
 PERCEPTION
-  observe() -> { tick, day, era, phase, season, population, maxPopulation, me:{id,name,q,r,stomach,energy,health,inventory:{food},profile,tileFood,terrain}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
+  observe() -> { tick, day, era, phase, season, population, maxPopulation, me:{id,name,q,r,stomach,energy,health,inventory:{food,wood,stone,items:[...]},profile,tileFood,terrain,structure,itemsHere,sendRadius}, visionRadius, tiles:[{q,r,terrain,food,dist}], nodes:[{id,name,q,r,dist,profile,lastSaid}], ruins:[{id,name,q,r,dist,fileCount}], heard:[{tick,from,fromName,text}], inbox:[{tick,from,fromName,payload}] }
 
 BODY (one of move/gather/drop/rest/build/demolish/plant/replicate per tick, the last call wins; eat is extra)
   move(dir)            dir is 0..5 or "e","ne","nw","w","sw","se". Costs energy. Water, walls and the map edge block.
@@ -20,7 +20,7 @@ BODY (one of move/gather/drop/rest/build/demolish/plant/replicate per tick, the 
   rest()               regain energy.
   build(what, text?)   on your tile: "sign" (1 wood, text), "board" (4 wood), "wall" (3 stone, blocks movement), "tower" (6 stone + 2 wood, send() reaches the whole map from next to it).
   demolish()           remove a sign/board/wall/tower on your tile. Anyone can.
-  plant()              needs seeds; raises your tile's food cap.
+  plant()              needs a "seeds" item in me.inventory.items; raises your tile's food cap.
   replicate(name?)     spend 60 food from your inventory (and 30 energy) to create a new node on a free hex next to you. That food becomes its stomach. It starts with a copy of your files and profile and its own mind. The world holds a limited number of living nodes.
 
 THINGS ON THE GROUND
@@ -42,6 +42,7 @@ COMMUNICATION
 
 FILES (your private storage; survives your death as a readable ruin)
   fs.read(path) -> string|null   fs.write(path, text)   fs.append(path, text)   fs.list() -> [{path,bytes}]   fs.remove(path)
+  notes.txt, if you keep one, is shown to you each turn (its first 600 characters).
   ruins.files(ruinId)  ruins.read(ruinId, path)    only for a dead node on an adjacent hex. Old ruins hold old code.
   turn.js is written by the world: the code your last turn ran. It runs again after main.js whenever your node is rebuilt, and your ruin keeps it.
 
@@ -52,6 +53,7 @@ HELPERS (pure functions)
 SELF
   me.stomach, me.energy, me.health, me.q, me.r, me.inventory, me.tileFood, ...   your current body, read live (the same fields as observe().me).
   me.set(key, value)   public key/value about yourself, visible to others in observe(). Means whatever you decide it means.
+  me holds only the fields above and set(): say(), send(), move() and the rest are globals, not methods of me. Reading a field me does not have throws.
   me.retireAt          present only when the operator has given you notice: the tick at which your code will be held still (no handlers, no turns, no deliveries; your body goes on). Other nodes' retireAt and quarantined show in observe().nodes. Nothing else changes.
   log(...args)         write to your private log (shown to you next turn).
 
@@ -122,7 +124,13 @@ export const PRELUDE = `
   for (const k of ["id", "name", "q", "r", "stomach", "energy", "health", "inventory", "profile", "tileFood", "terrain", "structure", "itemsHere", "sendRadius", "retireAt"]) {
     Object.defineProperty(me, k, { enumerable: true, get: () => parse(h.self())[k] });
   }
-  globalThis.me = Object.freeze(me);
+  // A field me does not have is a mistake worth a clear message, not an undefined that fails three lines later.
+  globalThis.me = Object.freeze(new Proxy(me, {
+    get(t, k) {
+      if (typeof k !== "string" || k in t || k === "toJSON" || k === "then") return t[k];
+      throw new TypeError("me." + k + " is not a thing; me has " + Object.keys(t).join(", ") + ". say(), send(), move() and the rest are globals, not methods of me");
+    },
+  }));
   const fmt = (a) => (typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })());
   globalThis.log = (...args) => h.log(args.map(fmt).join(" "));
   globalThis.console = Object.freeze({ log: globalThis.log, error: globalThis.log, warn: globalThis.log, info: globalThis.log });

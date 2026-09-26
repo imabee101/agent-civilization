@@ -42,6 +42,7 @@ Do not explain. Code only.`;
 export const FENCE_STOP = "\n```";
 
 const MAX_FILE_CHARS = 3000;
+const MAX_NOTES_CHARS = 600;
 const MAX_LOG_LINES = 14;
 const MAX_INBOX_PAYLOAD_CHARS = 240;
 const MAX_NODES_SHOWN = 12;
@@ -115,6 +116,8 @@ function render(f: TurnFacts, limits: { log: number; tileDist: number; inbox: nu
       parts.push(`${label}\n\`\`\`js\n${shown}\n\`\`\``);
     };
     show("main.js", "main.js:");
+    const notes = f.files["notes.txt"];
+    if (notes !== undefined) parts.push(`notes.txt (yours; the first ${MAX_NOTES_CHARS} characters):\n${notes.slice(0, MAX_NOTES_CHARS)}`);
   }
   parts.push(`ACTIVE HANDLERS: ${f.handlers.length ? f.handlers.join(", ") : "none"}`);
   // turn.js changes every turn, so it sits after everything that does not: a backend caching the prefix keeps main.js.
