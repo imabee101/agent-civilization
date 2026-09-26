@@ -5,6 +5,7 @@
  *
  * then run with AGENTCIV_BRAIN=mine. Nothing else in the engine cares.
  */
+import { GrokBrain } from "./grok";
 import { LlamaCppBrain } from "./llamacpp";
 import { OllamaBrain } from "./ollama";
 import { OpenAICompatibleBrain } from "./openai";
@@ -27,6 +28,7 @@ registerBrain("openai", (cfg) => new OpenAICompatibleBrain(cfg));
 registerBrain("llamacpp", (cfg) => new LlamaCppBrain(cfg));
 registerBrain("ollama", (cfg) => new OllamaBrain(cfg));
 registerBrain("random", (cfg) => new RandomBrain(cfg));
+registerBrain("grok", (cfg) => new GrokBrain(cfg));
 // Friendly aliases.
 registerBrain("llama.cpp", (cfg) => new LlamaCppBrain(cfg));
 registerBrain("llama-server", (cfg) => new LlamaCppBrain(cfg));
@@ -57,6 +59,8 @@ export function brainConfigFromEnv(env: Record<string, string | undefined> = pro
     repeatPenalty: num(env.AGENTCIV_REPEAT_PENALTY),
     stream: bool(env.AGENTCIV_STREAM),
     timeoutMs: num(env.AGENTCIV_TIMEOUT_MS),
+    command: env.AGENTCIV_GROK_BIN || undefined,
+    reasoningEffort: env.AGENTCIV_REASONING_EFFORT || undefined,
     promptFormat: format === "chatml" || format === "llama3" || format === "plain" ? format : undefined,
   };
 }
