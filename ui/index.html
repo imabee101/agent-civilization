@@ -37,14 +37,14 @@
     </div>
 
     <div class="playback">
-      <button id="btnPause" class="ibtn" title="Pause / resume" aria-label="Pause or resume">
+      <button id="btnPause" class="ibtn" type="button" title="Pause / resume" aria-label="Pause or resume" aria-pressed="true">
         <svg class="ic-pause" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" rx="1" fill="currentColor"/><rect x="9.5" y="2" width="3.5" height="12" rx="1" fill="currentColor"/></svg>
         <svg class="ic-play" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 2.5 L13.5 8 L4 13.5 Z" fill="currentColor"/></svg>
       </button>
       <div class="seg" id="speedSeg" role="group" aria-label="Speed">
-        <button data-speed="1" class="active">1×</button>
-        <button data-speed="2">2×</button>
-        <button data-speed="4">4×</button>
+        <button type="button" data-speed="1" class="active" aria-pressed="true">1×</button>
+        <button type="button" data-speed="2" aria-pressed="false">2×</button>
+        <button type="button" data-speed="4" aria-pressed="false">4×</button>
       </div>
     </div>
 
@@ -91,7 +91,7 @@
   </div>
 
   <!-- Mind cam: the node whose turn is being written right now, then what its code did. Agent text is literal. -->
-  <section id="mindcam" class="glass" aria-label="Mind cam" aria-live="off" hidden>
+  <section id="mindcam" class="glass" role="button" tabindex="0" aria-label="Open the node currently writing code" aria-live="off" hidden>
     <div class="mc-head">
       <span class="mc-dot" id="mcDot"></span>
       <span class="mc-name" id="mcName">—</span>
@@ -186,16 +186,16 @@
   <section id="nerd" class="panel-strong" aria-label="Under the hood">
     <div class="n-head">
       <div class="pills" id="nerdTabs" role="tablist">
-        <button data-tab="brain" class="active" role="tab">Brain</button>
-        <button data-tab="nodes" role="tab">Nodes</button>
-        <button data-tab="pacing" role="tab">Pacing</button>
-        <button data-tab="oversight" role="tab">Oversight</button>
-        <button data-tab="timeline" role="tab">Timeline</button>
+        <button id="tab-brain" data-tab="brain" class="active" role="tab" aria-selected="true" aria-controls="tabBrain" tabindex="0">Brain</button>
+        <button id="tab-nodes" data-tab="nodes" role="tab" aria-selected="false" aria-controls="tabNodes" tabindex="-1">Nodes</button>
+        <button id="tab-pacing" data-tab="pacing" role="tab" aria-selected="false" aria-controls="tabPacing" tabindex="-1">Pacing</button>
+        <button id="tab-oversight" data-tab="oversight" role="tab" aria-selected="false" aria-controls="tabOversight" tabindex="-1">Oversight</button>
+        <button id="tab-timeline" data-tab="timeline" role="tab" aria-selected="false" aria-controls="tabTimeline" tabindex="-1">Timeline</button>
       </div>
       <button class="close" id="nerdClose" aria-label="Close">×</button>
     </div>
     <div class="n-body">
-      <div class="n-tab" data-tab="brain" id="tabBrain">
+      <div class="n-tab" data-tab="brain" id="tabBrain" role="tabpanel" aria-labelledby="tab-brain" tabindex="0">
         <div class="n-cols">
           <div class="dlist" id="decisionList"></div>
           <div class="ddetail" id="decisionDetail">
@@ -203,7 +203,7 @@
           </div>
         </div>
       </div>
-      <div class="n-tab" data-tab="nodes" id="tabNodes" hidden>
+      <div class="n-tab" data-tab="nodes" id="tabNodes" role="tabpanel" aria-labelledby="tab-nodes" tabindex="0" hidden>
         <div class="n-cols">
           <div class="dlist" id="nodeList"></div>
           <div class="ddetail" id="nodeDetail">
@@ -211,10 +211,10 @@
           </div>
         </div>
       </div>
-      <div class="n-tab" data-tab="pacing" id="tabPacing" hidden>
+      <div class="n-tab" data-tab="pacing" id="tabPacing" role="tabpanel" aria-labelledby="tab-pacing" tabindex="0" hidden>
         <div class="tiles" id="pacingTiles"></div>
       </div>
-      <div class="n-tab" data-tab="oversight" id="tabOversight" hidden>
+      <div class="n-tab" data-tab="oversight" id="tabOversight" role="tabpanel" aria-labelledby="tab-oversight" tabindex="0" hidden>
         <div class="ov-controls" id="oversightControls"></div>
         <div class="tiles" id="signalTiles"></div>
         <div class="ov-cols">
@@ -222,7 +222,7 @@
           <div class="ov-list" id="lineageList"></div>
         </div>
       </div>
-      <div class="n-tab" data-tab="timeline" id="tabTimeline" hidden>
+      <div class="n-tab" data-tab="timeline" id="tabTimeline" role="tabpanel" aria-labelledby="tab-timeline" tabindex="0" hidden>
         <div class="tl-head" id="tlHead"></div>
         <svg id="tlAxis" class="tl-axis" viewBox="0 0 1000 140" aria-label="Firsts along the days"></svg>
         <div class="ov-cols">
@@ -242,9 +242,9 @@
   </nav>
 
   <div id="toast" class="glass" hidden></div>
-  <dialog id="tokenDialog" class="glass">
+  <dialog id="tokenDialog" class="glass" aria-labelledby="tokenTitle" aria-describedby="tokenFacts">
     <form method="dialog" id="tokenForm">
-      <h2>Operator token</h2>
+      <h2 id="tokenTitle">Operator token</h2>
       <p id="tokenFacts">This world's controls need the operator token. It is on the server in <code>/etc/agent-civ/operator-token</code>.</p>
       <label for="tokenValue">Token</label>
       <input id="tokenValue" class="mono" type="password" autocomplete="off" spellcheck="false" />
@@ -254,11 +254,11 @@
       </div>
     </form>
   </dialog>
-  <dialog id="resetDialog" class="glass">
+  <dialog id="resetDialog" class="glass" aria-labelledby="resetTitle" aria-describedby="resetFacts resetWarning">
     <form method="dialog" id="resetForm">
-      <h2>Are you sure?</h2>
+      <h2 id="resetTitle">Are you sure?</h2>
       <p id="resetFacts"></p>
-      <p>Starting over throws this world away.</p>
+      <p id="resetWarning">Starting over throws this world away.</p>
       <div class="d-actions">
         <button type="button" id="resetCancel" class="tbtn">keep the world</button>
         <button type="submit" id="resetGo" class="tbtn danger">start over</button>

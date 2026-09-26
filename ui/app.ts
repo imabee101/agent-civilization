@@ -319,8 +319,11 @@ function renderBadge(): void {
 function renderPlayback(): void {
   const p = S.pacing;
   document.body.classList.toggle("paused", !!p?.paused);
+  $("btnPause").setAttribute("aria-pressed", String(!!p?.paused));
   for (const btn of $("speedSeg").querySelectorAll<HTMLButtonElement>("button")) {
-    btn.classList.toggle("active", Number(btn.dataset.speed) === (p?.speed ?? 1));
+    const selected = Number(btn.dataset.speed) === (p?.speed ?? 1);
+    btn.classList.toggle("active", selected);
+    btn.setAttribute("aria-pressed", String(selected));
   }
 }
 
@@ -398,7 +401,17 @@ function eventRow(e: WorldEvent): HTMLElement {
   row.appendChild(txt);
   if (e.agentId) {
     row.style.cursor = "pointer";
-    row.addEventListener("click", () => selectAgent(e.agentId!));
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", `Open ${e.agentName ?? "node"}`);
+    const open = () => selectAgent(e.agentId!);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        open();
+      }
+    });
   }
   return row;
 }
@@ -570,8 +583,15 @@ function renderMindCam(): void {
   res.className = `mc-result${d?.error ? " err" : ""}`;
   res.textContent = streaming || !d ? "" : d.error ? `threw: ${truncate(d.error, 140)}` : `ran ${lines(d.code ? d.code.split("\n").length : 0)}${d.result && d.result !== "undefined" ? ` → ${truncate(d.result, 60)}` : ""}`;
 }
-mindcam.addEventListener("click", () => {
+const openMindCam = () => {
   if (S.mind) selectAgent(S.mind.agentId);
+};
+mindcam.addEventListener("click", openMindCam);
+mindcam.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    openMindCam();
+  }
 });
 
 // ---------- explainer ----------
@@ -885,7 +905,12 @@ function openNerd(open: boolean): void {
 }
 function setNerdTab(tab: typeof S.nerdTab): void {
   S.nerdTab = tab;
-  for (const b of $("nerdTabs").querySelectorAll<HTMLButtonElement>("button")) b.classList.toggle("active", b.dataset.tab === tab);
+  for (const b of $("nerdTabs").querySelectorAll<HTMLButtonElement>("button")) {
+    const selected = b.dataset.tab === tab;
+    b.classList.toggle("active", selected);
+    b.setAttribute("aria-selected", String(selected));
+    b.tabIndex = selected ? 0 : -1;
+  }
   for (const p of document.querySelectorAll<HTMLElement>("#nerd .n-tab")) p.hidden = p.dataset.tab !== tab;
   renderNerd();
 }
@@ -1377,7 +1402,7 @@ $("resetForm").addEventListener("submit", (ev) => {
       openTokenDialog();
     }
     if (!r.ok) toast(`reset refused: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
-  });
+  }).catch(() => toast("reset failed: connection lost", true));
 });
 window.addEventListener("resize", () => {
   if (S.nerdTab === "timeline" && document.body.classList.contains("nerd-open") && S.timeline) renderTimeline();
@@ -1417,7 +1442,11 @@ function setMobileTab(tab: typeof S.mobileTab, syncNerd = true): void {
   S.mobileTab = tab;
   document.body.classList.remove("tab-world", "tab-groups", "tab-chronicle", "tab-hood");
   document.body.classList.add(`tab-${tab}`);
-  for (const b of $("tabbar").querySelectorAll<HTMLButtonElement>("button")) b.classList.toggle("active", b.dataset.tab === tab);
+  for (const b of $("tabbar").querySelectorAll<HTMLButtonElement>("button")) {
+    const selected = b.dataset.tab === tab;
+    b.classList.toggle("active", selected);
+    b.setAttribute("aria-selected", String(selected));
+  }
   if (syncNerd) {
     const open = tab === "hood";
     document.body.classList.toggle("nerd-open", open);
@@ -1501,10 +1530,10 @@ function keeperRow(q: number, r: number): HTMLElement {
   ]);
 }
 
-// ---------- stable dev API for automated checks (window.__llmwar) ----------
+// ---------- stable dev API for automated checks (window.__agentciv) ----------
 declare global {
   interface Window {
-    __llmwar?: {
+    __agentciv?: {
       world: World;
       /** Latest WorldState (live getter). */
       readonly state: WorldState | null;
@@ -1546,7 +1575,7 @@ async function boot(): Promise<void> {
     const p = hexToPixel(q, r, HEX_SIZE);
     return { x: (p.x - world.cam.cx) * world.cam.zoom + world.viewportW / 2, y: (p.y - world.cam.cy) * world.cam.zoom + world.viewportH / 2 };
   };
-  window.__llmwar = {
+  window.__agentciv = {
     world,
     get state() {
       return S.state;

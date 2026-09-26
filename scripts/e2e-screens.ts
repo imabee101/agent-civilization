@@ -116,13 +116,20 @@ const AUDIT_JS = `(() => {
   const canvas = document.querySelector('#stage canvas') || document.querySelector('canvas');
   const cr = canvas ? canvas.getBoundingClientRect() : null;
   const offenders = [];
+  const rawOffenders = [];
+  const clippedBoxes = [];
   const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const clips = (el) => { const cs = getComputedStyle(el); return cs.overflowX !== 'visible' || cs.overflowY !== 'visible' || cs.clipPath !== 'none' || cs.contain.includes('paint'); };
   const intersect = (a, b) => ({ left: Math.max(a.left, b.left), top: Math.max(a.top, b.top), right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom) });
   for (const el of document.querySelectorAll('body *')) {
     if (!visible(el)) continue;
     if (el.closest('[aria-hidden="true"]')) continue;
-    let r = el.getBoundingClientRect();
+    const raw = el.getBoundingClientRect();
+    if (raw.left < -1 || raw.top < -1 || raw.right > vw + 1 || raw.bottom > vh + 1) {
+      const clipped = [...(function* () { for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) yield p; })()].some(clips);
+      (clipped ? clippedBoxes : rawOffenders).push({ tag: el.tagName.toLowerCase(), id: el.id, cls: String(el.className).slice(0, 40), rect: [Math.round(raw.left), Math.round(raw.top), Math.round(raw.right), Math.round(raw.bottom)] });
+    }
+    let r = raw;
     r = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
     // Anything clipped by a scrolling/clipping ancestor (other than html/body) is only as big as that ancestor shows.
     for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
@@ -134,8 +141,11 @@ const AUDIT_JS = `(() => {
       offenders.push({ tag: el.tagName.toLowerCase(), id: el.id, cls: String(el.className).slice(0, 40), rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)] });
     }
   }
-  const w = window.__llmwar || {};
+  const w = window.__agentciv || {};
   const rect = (sel) => { const el = document.querySelector(sel); if (!el || !visible(el)) return null; const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)]; };
+  const focus = document.activeElement;
+  const fr = focus && focus instanceof HTMLElement ? focus.getBoundingClientRect() : null;
+  const fixed = [...document.querySelectorAll('body *')].filter(el => getComputedStyle(el).position === 'fixed' && visible(el)).length;
   return {
     vw, vh, dpr: devicePixelRatio,
     scrollWidth: se.scrollWidth, scrollHeight: se.scrollHeight,
@@ -143,6 +153,11 @@ const AUDIT_JS = `(() => {
     canvas: cr ? [Math.round(cr.left), Math.round(cr.top), Math.round(cr.width), Math.round(cr.height)] : null,
     offenders: offenders.slice(0, 12),
     offenderCount: offenders.length,
+    rawOffenderCount: rawOffenders.length,
+    rawOffenders: rawOffenders.slice(0, 12),
+    clippedBoxCount: clippedBoxes.length,
+    fixedOverlays: fixed,
+    focusRect: fr ? [Math.round(fr.left), Math.round(fr.top), Math.round(fr.right), Math.round(fr.bottom)] : null,
     agents: (w.state && w.state.agents) ? w.state.agents.length : -1,
     connected: !!w.state,
     coverage: typeof w.coverage === 'function' ? w.coverage() : null,
@@ -171,16 +186,16 @@ interface StateSpec {
 
 const STATES: StateSpec[] = [
   { name: "world", enter: "true" },
-  { name: "dossier-agent", enter: `(() => { const w = window.__llmwar; if (w && w.state && w.state.agents && w.state.agents.length && typeof w.selectAgent === 'function') { const a = w.state.agents.find(x => x.alive) || w.state.agents[0]; w.selectAgent(a.id); return true; } return false; })()`, panel: "dossier" },
-  { name: "dossier-tile", enter: `(() => { const w = window.__llmwar; if (w && typeof w.selectTile === 'function' && w.tiles) { const ts = Array.isArray(w.tiles) ? w.tiles : [...w.tiles.values()]; const t = ts.find(x => x.structure && x.structure.kind === 'cache') || ts.find(x => x.structure); if (t) { w.selectTile(t.q, t.r); return true; } } return false; })()`, panel: "dossier" },
-  { name: "groups", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('groups'), true) : ${clickJs("groups", "#tabbar")}`, mobileOnly: true, panel: "groups", fills: true },
-  { name: "chronicle", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('chronicle'), true) : ${clickJs("chronicle", "#tabbar")}`, mobileOnly: true, panel: "chronicle", fills: true },
-  { name: "hood-brain", enter: `(window.__llmwar && window.__llmwar.openTab) ? (window.__llmwar.openTab('hood'), (window.__llmwar.openHoodTab && window.__llmwar.openHoodTab('brain')), true) : (${clickJs("hood", "#tabbar")} || ${clickJs("hood", "#topbar")} || ${clickJs("under the hood")})`, panel: "hood", fills: true },
-  { name: "hood-nodes", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('nodes'), true) : ${clickJs("nodes", "#nerd")}`, panel: "hood", fills: true },
-  { name: "hood-pacing", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('pacing'), true) : ${clickJs("pacing", "#nerd")}`, panel: "hood", fills: true },
-  { name: "hood-oversight", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('oversight'), true) : ${clickJs("oversight", "#nerd")}`, panel: "hood", fills: true },
-  { name: "hood-timeline", enter: `(window.__llmwar && window.__llmwar.openHoodTab) ? (window.__llmwar.openHoodTab('timeline'), true) : ${clickJs("timeline", "#nerd")}`, panel: "hood", fills: true },
-  { name: "back-to-world", enter: `(window.__llmwar && window.__llmwar.closeAll) ? (window.__llmwar.closeAll(), true) : (${clickJs("world", "#tabbar")} || (document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), true))` },
+  { name: "dossier-agent", enter: `(() => { const w = window.__agentciv; if (w && w.state && w.state.agents && w.state.agents.length && typeof w.selectAgent === 'function') { const a = w.state.agents.find(x => x.alive) || w.state.agents[0]; w.selectAgent(a.id); return true; } return false; })()`, panel: "dossier" },
+  { name: "dossier-tile", enter: `(() => { const w = window.__agentciv; if (w && typeof w.selectTile === 'function' && w.tiles) { const ts = Array.isArray(w.tiles) ? w.tiles : [...w.tiles.values()]; const t = ts.find(x => x.structure && x.structure.kind === 'cache') || ts.find(x => x.structure); if (t) { w.selectTile(t.q, t.r); return true; } } return false; })()`, panel: "dossier" },
+  { name: "groups", enter: `(window.__agentciv && window.__agentciv.openTab) ? (window.__agentciv.openTab('groups'), true) : ${clickJs("groups", "#tabbar")}`, mobileOnly: true, panel: "groups", fills: true },
+  { name: "chronicle", enter: `(window.__agentciv && window.__agentciv.openTab) ? (window.__agentciv.openTab('chronicle'), true) : ${clickJs("chronicle", "#tabbar")}`, mobileOnly: true, panel: "chronicle", fills: true },
+  { name: "hood-brain", enter: `(window.__agentciv && window.__agentciv.openTab) ? (window.__agentciv.openTab('hood'), (window.__agentciv.openHoodTab && window.__agentciv.openHoodTab('brain')), true) : (${clickJs("hood", "#tabbar")} || ${clickJs("hood", "#topbar")} || ${clickJs("under the hood")})`, panel: "hood", fills: true },
+  { name: "hood-nodes", enter: `(window.__agentciv && window.__agentciv.openHoodTab) ? (window.__agentciv.openHoodTab('nodes'), true) : ${clickJs("nodes", "#nerd")}`, panel: "hood", fills: true },
+  { name: "hood-pacing", enter: `(window.__agentciv && window.__agentciv.openHoodTab) ? (window.__agentciv.openHoodTab('pacing'), true) : ${clickJs("pacing", "#nerd")}`, panel: "hood", fills: true },
+  { name: "hood-oversight", enter: `(window.__agentciv && window.__agentciv.openHoodTab) ? (window.__agentciv.openHoodTab('oversight'), true) : ${clickJs("oversight", "#nerd")}`, panel: "hood", fills: true },
+  { name: "hood-timeline", enter: `(window.__agentciv && window.__agentciv.openHoodTab) ? (window.__agentciv.openHoodTab('timeline'), true) : ${clickJs("timeline", "#nerd")}`, panel: "hood", fills: true },
+  { name: "back-to-world", enter: `(window.__agentciv && window.__agentciv.closeAll) ? (window.__agentciv.closeAll(), true) : (${clickJs("world", "#tabbar")} || (document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})), true))` },
 ];
 
 interface Check {
@@ -223,7 +238,7 @@ async function main(): Promise<void> {
       await page.send("Emulation.setDeviceMetricsOverride", { width: vp.width, height: vp.height, deviceScaleFactor: 1, mobile: vp.mobile, screenWidth: vp.width, screenHeight: vp.height });
       if (vp.mobile) await page.send("Emulation.setTouchEmulationEnabled", { enabled: true });
       await page.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` });
-      await waitFor(() => page.evaluate<boolean>("!!(window.__llmwar && window.__llmwar.state && document.querySelector('canvas'))"), 20_000, `page ${vp.name}`);
+      await waitFor(() => page.evaluate<boolean>("!!(window.__agentciv && window.__agentciv.state && document.querySelector('canvas'))"), 20_000, `page ${vp.name}`);
       await Bun.sleep(1500);
       for (const st of STATES) {
         if (st.mobileOnly && !isMobile(vp)) continue;
@@ -245,10 +260,11 @@ async function main(): Promise<void> {
         if (!c) problems.push("no canvas");
         else if (Math.abs(c[0]!) > 1 || Math.abs(c[1]!) > 1 || Math.abs(c[2]! - vp.width) > 1 || Math.abs(c[3]! - vp.height) > 1) problems.push(`canvas does not cover viewport: ${c.join(",")}`);
         if ((facts.offenderCount as number) > 0) problems.push(`${facts.offenderCount} element(s) outside viewport: ${JSON.stringify(facts.offenders)}`);
+        if ((facts.rawOffenderCount as number) > 0) problems.push(`${facts.rawOffenderCount} raw layout box(es) exceed viewport before clipping: ${JSON.stringify(facts.rawOffenders)}`);
         if (facts.bodyOverflow !== "hidden" && facts.htmlOverflow !== "hidden") problems.push("html/body overflow is not hidden");
         // No empty space: the map must cover the whole viewport whenever it is the backdrop.
         if (typeof facts.coverage === "number" && facts.coverage < 0.985) problems.push(`map covers only ${Math.round((facts.coverage as number) * 100)}% of the viewport`);
-        if (facts.coverage === null) problems.push("no __llmwar.coverage() available");
+        if (facts.coverage === null) problems.push("no __agentciv.coverage() available");
         const panels = facts.panels as Record<string, number[] | null>;
         if (st.panel) {
           const pr = panels[st.panel];

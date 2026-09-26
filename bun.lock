@@ -3,15 +3,15 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "llm-war",
+      "name": "agent-civilization",
       "dependencies": {
-        "@jitl/quickjs-singlefile-cjs-release-sync": "^0.31.0",
-        "pixi.js": "^8.6.6",
-        "quickjs-emscripten-core": "^0.31.0",
+        "@jitl/quickjs-singlefile-cjs-release-sync": "0.31.0",
+        "pixi.js": "8.21.0",
+        "quickjs-emscripten-core": "0.31.0",
       },
       "devDependencies": {
-        "@types/bun": "^1.2.0",
-        "typescript": "^5.7.0",
+        "@types/bun": "1.4.2",
+        "typescript": "5.9.3",
       },
     },
   },
