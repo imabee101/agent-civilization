@@ -56,6 +56,32 @@ describe("Engine lifecycle", () => {
     e.setSpeed(4);
     expect(e.pacingStats().speed).toBe(4);
   });
+
+  test("pause aborts in-flight inference and discards a late reply", async () => {
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => (releaseStarted = resolve));
+    class BlockingBrain extends ScriptedBrain {
+      override async decide(_req: DecisionRequest, opts: DecideOptions = {}) {
+        releaseStarted();
+        await new Promise<void>((resolve, reject) => {
+          if (opts.signal?.aborted) return reject(new Error("aborted"));
+          opts.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          setTimeout(resolve, 500);
+        });
+        return { text: js("say('late')"), latencyMs: 500, tokens: 3, tokensPerSec: 6, estimated: false };
+      }
+    }
+    const brain = new BlockingBrain();
+    const e = await mk(brain, { initialAgents: 1 });
+    e.paused = false;
+    e.pumpTurns();
+    await started;
+    expect(e.pacingStats().inFlight).toBe(1);
+    e.pause();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(e.pacingStats().inFlight).toBe(0);
+    expect(e.recentDecisions()).toEqual([]);
+  });
 });
 
 describe("Engine ticks and handlers", () => {
