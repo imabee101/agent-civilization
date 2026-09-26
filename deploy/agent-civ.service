@@ -10,7 +10,7 @@ ExecStart=/opt/agent-civ/agentciv --host 192.168.101.7 --port 443 \
   --data /var/lib/agent-civ \
   --tls-cert ${CREDENTIALS_DIRECTORY}/fullchain.pem --tls-key ${CREDENTIALS_DIRECTORY}/key.pem \
   --operator-token-file ${CREDENTIALS_DIRECTORY}/operator-token \
-  --max-agents 12 --concurrency 3 --max-tokens 600 \
+  --max-agents 12 --concurrency 3 --max-tokens 600 --temperature 0.4 \
   --brain openai --base-url http://127.0.0.1:8080/v1 --model qwen3-4b-2507-abliterated
 # --concurrency is a ceiling: the engine measures the backend and picks the
 # level itself. Slots and the prompt budget come from the server's /props.
