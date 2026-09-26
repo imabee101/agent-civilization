@@ -66,8 +66,9 @@ usage: agentciv [options]
   --min-p <x>           min-p sampling, sent only when set (env AGENTCIV_MIN_P)
   --repeat-penalty <x>  repetition penalty, sent only when set (env AGENTCIV_REPEAT_PENALTY)
   --prompt-format <f>   chatml | llama3 | plain — llama.cpp native only
-  --reasoning-effort <e> low | medium | high — grok only (default low, env AGENTCIV_REASONING_EFFORT)
-  --grok-bin <path>     the grok CLI (default: grok on PATH, env AGENTCIV_GROK_BIN)
+  --reasoning-effort <e> minimal | low | medium | high — grok only (default minimal, env AGENTCIV_REASONING_EFFORT)
+  --grok-bin <path>     the grok CLI that refreshes the sign-in (default: grok on PATH, env AGENTCIV_GROK_BIN)
+  --grok-auth-file <p>  grok: read the token from this file, kept fresh elsewhere; the CLI is not run (env AGENTCIV_GROK_AUTH_FILE)
   --no-stream           disable streaming
   -h, --help            this text
 
@@ -142,6 +143,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   if (pf === "chatml" || pf === "llama3" || pf === "plain") brain.promptFormat = pf;
   if (get("reasoning-effort")) brain.reasoningEffort = get("reasoning-effort");
   if (get("grok-bin")) brain.command = get("grok-bin");
+  if (get("grok-auth-file")) brain.authFile = get("grok-auth-file");
   if (has("no-stream")) brain.stream = false;
   if (brain.maxTokens === undefined && engine.maxTokens !== undefined) brain.maxTokens = engine.maxTokens;
 

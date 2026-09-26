@@ -1,17 +1,20 @@
 [Unit]
 Description=Agent Civilization
-After=network-online.target agent-civ-llm.service
-Wants=network-online.target agent-civ-llm.service
+After=network-online.target agent-civ-llm.service agent-civ-grok-token.service
+# The local brain is wanted through a drop-in install.sh writes only when the game uses it.
+Wants=network-online.target
 
 [Service]
-# HOST, PORT, MODEL_ALIAS and GAME_FLAGS are written by deploy/install.sh from
+# HOST, PORT, BRAIN_FLAGS and GAME_FLAGS are written by deploy/install.sh from
 # /etc/agent-civ/install.env, the one untracked file that knows which box this is.
 EnvironmentFile=/etc/agent-civ/game.env
 ExecStart=/opt/agent-civ/agentciv --host ${HOST} --port ${PORT} \
   --data /var/lib/agent-civ \
   --tls-cert ${CREDENTIALS_DIRECTORY}/fullchain.pem --tls-key ${CREDENTIALS_DIRECTORY}/key.pem \
   --operator-token-file ${CREDENTIALS_DIRECTORY}/operator-token \
-  --brain openai --base-url http://127.0.0.1:8080/v1 --model ${MODEL_ALIAS} $GAME_FLAGS
+  $BRAIN_FLAGS $GAME_FLAGS
+# BRAIN_FLAGS: the local llama-server, or Grok through the token that
+# agent-civ-grok-token.service keeps in /run/agent-civ-grok (BRAIN in install.env).
 # GAME_FLAGS holds --max-agents, --concurrency (a ceiling: the engine measures
 # the backend and picks the level itself), --max-tokens, --temperature. Slots
 # and the prompt budget come from the server's /props.
@@ -20,6 +23,8 @@ LoadCredential=fullchain.pem:/etc/agent-civ/tls/fullchain.pem
 LoadCredential=key.pem:/etc/agent-civ/tls/key.pem
 LoadCredential=operator-token:/etc/agent-civ/operator-token
 DynamicUser=yes
+# Reads /run/agent-civ-grok/auth.json when BRAIN=grok; the group owns nothing else.
+SupplementaryGroups=agentciv-grok
 StateDirectory=agent-civ
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE

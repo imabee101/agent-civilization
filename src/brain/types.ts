@@ -19,6 +19,8 @@ export interface DecisionRequest {
   repeatPenalty?: number;
   /** Strings at which generation stops; the text stops before them. */
   stop?: string[];
+  /** Stable per node: hosted backends keep a node's turns under this key so its unchanged prefix is served from cache. */
+  cacheKey?: string;
   /** Do not reuse a cached prefix for this request (probes measure raw prefill). */
   noCache?: boolean;
   /** Optional structured hints for non-model brains (e.g. random) that can't read the prompt. */
@@ -105,8 +107,10 @@ export interface BrainConfig {
   seed?: number;
   /** Executable for CLI backends (grok). */
   command?: string;
-  /** Reasoning effort for backends that take one (grok: low | medium | high). */
+  /** Reasoning effort for backends that take one (grok: minimal | low | medium | high). */
   reasoningEffort?: string;
+  /** grok: a token file kept fresh by someone else (the deploy's refresh timer); read on every call, the CLI is never run. */
+  authFile?: string;
 }
 
 export class BrainError extends Error {

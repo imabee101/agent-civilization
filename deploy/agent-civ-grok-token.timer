@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew the borrowed Grok sign-in every 20 minutes (a token lives 6 h; the CLI renews under 1 h)
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=20min
+
+[Install]
+WantedBy=timers.target

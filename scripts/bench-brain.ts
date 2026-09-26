@@ -77,7 +77,7 @@ async function one(d: DecisionRecord, slot: number): Promise<ReplyScore> {
   const sb = await NodeSandbox.create(bridge);
   try {
     if (files["main.js"]) sb.loadScript(files["main.js"]);
-    const r = await brain.decide({ system: has("stored-system") ? d.prompt.system : SYSTEM_PROMPT, user: d.prompt.user, maxTokens: num("max-tokens", 600), slot, ...(has("no-fence-stop") ? {} : { stop: [FENCE_STOP] }) });
+    const r = await brain.decide({ system: has("stored-system") ? d.prompt.system : SYSTEM_PROMPT, user: d.prompt.user, cacheKey: d.agentId, maxTokens: num("max-tokens", 600), slot, ...(has("no-fence-stop") ? {} : { stop: [FENCE_STOP] }) });
     bridge.calls.length = 0;
     const parses = (code: string) => {
       const p = sb.eval(`(function(s){ try { new Function(s); return "ok"; } catch (e) { return "no"; } })(${JSON.stringify(code)})`);
