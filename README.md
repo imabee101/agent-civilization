@@ -221,6 +221,7 @@ A brain is anything that turns a prompt into text. Pick one with
 | `openai`    | any OpenAI-compatible `/v1/chat/completions` (llama-server, Ollama, LM Studio, vLLM, …) | `http://127.0.0.1:8080/v1` |
 | `llamacpp`  | llama.cpp `llama-server` native `/completion` (raw prompt, timings) | `http://127.0.0.1:8080`   |
 | `ollama`    | Ollama native `/api/chat`                                       | `http://127.0.0.1:11434`     |
+| `grok`      | the local `grok` CLI, headless, under its own sign-in (`grok login`) | `--grok-bin`, default `grok` on PATH |
 | `random`    | nobody: one uniformly random valid primitive per turn           |                              |
 
 Aliases: `llama.cpp`, `llama-server`, `lmstudio`, `vllm`, `none`.
@@ -239,6 +240,14 @@ bun run dev -- --brain ollama --model qwen2.5:3b
 # anything else that speaks OpenAI
 AGENTCIV_BASE_URL=http://gpu-box:8000/v1 AGENTCIV_MODEL=my-model AGENTCIV_API_KEY=... bun run dev
 ```
+
+`grok` runs one single-turn `grok -p` per decision with our system prompt in
+place of Grok's and every tool, memory and web search off (a tool call would
+end the turn with no text). Default model `grok-4.7-build-fast`, reasoning
+effort `low` (`--model`, `--reasoning-effort`); `--temperature`, `--max-tokens`
+and stop strings do not reach it. The CLI's reported cost is summed on the
+brain as `costUsd`. It only works for the user who signed in, so not under the
+deploy's service account, and every turn leaves a session in `~/.grok/sessions`.
 
 With no brain configured, the launcher probes the usual local ports and falls
 back to `random`. The random brain is a control group, not a personality: it

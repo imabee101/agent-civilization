@@ -55,7 +55,7 @@ usage: agentciv [options]
   --concurrency <n>     most brain calls in flight (default 1); the level used is measured, up to this
   --slots <n>           backend slots to pin nodes to, one per living node (default: what the backend reports)
   --snapshot-ticks <n>  ticks between snapshots (default 120, 0 disables)
-  --brain <kind>        openai | llamacpp | ollama | random | lmstudio | vllm (env AGENTCIV_BRAIN)
+  --brain <kind>        openai | llamacpp | ollama | grok | random | lmstudio | vllm (env AGENTCIV_BRAIN)
   --base-url <url>      backend base URL (env AGENTCIV_BASE_URL)
   --model <name>        model name (env AGENTCIV_MODEL)
   --api-key <key>       bearer token if the backend needs one (env AGENTCIV_API_KEY)
@@ -66,6 +66,8 @@ usage: agentciv [options]
   --min-p <x>           min-p sampling, sent only when set (env AGENTCIV_MIN_P)
   --repeat-penalty <x>  repetition penalty, sent only when set (env AGENTCIV_REPEAT_PENALTY)
   --prompt-format <f>   chatml | llama3 | plain — llama.cpp native only
+  --reasoning-effort <e> low | medium | high — grok only (default low, env AGENTCIV_REASONING_EFFORT)
+  --grok-bin <path>     the grok CLI (default: grok on PATH, env AGENTCIV_GROK_BIN)
   --no-stream           disable streaming
   -h, --help            this text
 
@@ -138,6 +140,8 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   if (num(get("repeat-penalty")) !== undefined) brain.repeatPenalty = num(get("repeat-penalty"));
   const pf = get("prompt-format");
   if (pf === "chatml" || pf === "llama3" || pf === "plain") brain.promptFormat = pf;
+  if (get("reasoning-effort")) brain.reasoningEffort = get("reasoning-effort");
+  if (get("grok-bin")) brain.command = get("grok-bin");
   if (has("no-stream")) brain.stream = false;
   if (brain.maxTokens === undefined && engine.maxTokens !== undefined) brain.maxTokens = engine.maxTokens;
 

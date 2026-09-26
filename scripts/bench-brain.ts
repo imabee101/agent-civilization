@@ -7,7 +7,7 @@
  *   bun scripts/bench-brain.ts --source https://civ.imabee.com --insecure --base-url http://127.0.0.1:8081/v1 --temperature 0.4 --label "t0.4"
  *
  * Options: --source <sqlite|url> (required)  --n <prompts, default 12>  --offset <skip, default 0>
- *          --base-url (default http://127.0.0.1:8080/v1)  --model  --max-tokens (600)  --temperature (0.7)
+ *          --brain (openai | grok, default openai)  --reasoning-effort (grok)  --base-url (default http://127.0.0.1:8080/v1)  --model  --max-tokens (600)  --temperature (0.7)
  *          --top-p  --min-p  --repeat-penalty  --no-fence-stop  --stored-system (use each prompt's own system text)
  *          --concurrency <1..n, default 1>  --slot-base <first id_slot, default 8>  --label <row name>  --json
  *
@@ -58,7 +58,7 @@ if (!picked.length) {
   process.exit(1);
 }
 const brain = createBrain({
-  kind: "openai",
+  kind: opt("brain") ?? "openai",
   baseUrl: opt("base-url") ?? "http://127.0.0.1:8080/v1",
   model: opt("model"),
   maxTokens: num("max-tokens", 600),
@@ -66,6 +66,7 @@ const brain = createBrain({
   topP: num("top-p"),
   minP: num("min-p"),
   repeatPenalty: num("repeat-penalty"),
+  reasoningEffort: opt("reasoning-effort"),
   timeoutMs: 600_000,
 });
 

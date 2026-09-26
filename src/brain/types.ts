@@ -82,7 +82,7 @@ export interface Brain {
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface BrainConfig {
-  /** Registered backend kind: "openai" | "llamacpp" | "ollama" | "random" | custom. */
+  /** Registered backend kind: "openai" | "llamacpp" | "ollama" | "grok" | "random" | custom. */
   kind: string;
   baseUrl?: string;
   model?: string;
@@ -103,6 +103,10 @@ export interface BrainConfig {
   fetch?: FetchLike;
   /** Seed for deterministic non-model brains. */
   seed?: number;
+  /** Executable for CLI backends (grok). */
+  command?: string;
+  /** Reasoning effort for backends that take one (grok: low | medium | high). */
+  reasoningEffort?: string;
 }
 
 export class BrainError extends Error {
