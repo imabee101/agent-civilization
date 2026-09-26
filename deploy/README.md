@@ -43,7 +43,7 @@ journalctl -u agent-civ -u agent-civ-llm -f
   | three at once (warm) | 113 | 96 s | 16.8 s | 73.7 s | 13% | 0% | 10% |
   | `--spec-type ngram-map-k` (cold, second server) | 51 | 80 s | 39.7 s | 31.3 s | 13% | 0% | 6% |
 
-  N-gram speculation loses on this CPU. Three at once wins only with a warm cache, which is why the engine
+  Deployed: this model at temperature 0.4 with the fence stop (the unit sets it). N-gram speculation loses on this CPU. Three at once wins only with a warm cache, which is why the engine
   measures the level instead of fixing it. Not yet measured: a 1.7B draft model, Q4_K_M (stock and
   abliterated), Qwen3-Coder-30B-A3B; the files are in `/home/imma/projects/llm/models`. Measure them one
   at a time with `agent-civ-llm` stopped: a second server beside the deployed one (19.5 GB with its idle
