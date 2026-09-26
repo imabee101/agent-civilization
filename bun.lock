@@ -5,9 +5,9 @@
     "": {
       "name": "agent-civilization",
       "dependencies": {
-        "@jitl/quickjs-singlefile-cjs-release-sync": "0.31.0",
+        "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
         "pixi.js": "8.21.0",
-        "quickjs-emscripten-core": "0.31.0",
+        "quickjs-emscripten-core": "0.32.0",
       },
       "devDependencies": {
         "@types/bun": "1.4.2",
@@ -16,9 +16,9 @@
     },
   },
   "packages": {
-    "@jitl/quickjs-ffi-types": ["@jitl/quickjs-ffi-types@0.31.0", "", {}, "sha512-1yrgvXlmXH2oNj3eFTrkwacGJbmM0crwipA3ohCrjv52gBeDaD7PsTvFYinlAnqU8iPME3LGP437yk05a2oejw=="],
+    "@jitl/quickjs-ffi-types": ["@jitl/quickjs-ffi-types@0.32.0", "", {}, "sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg=="],
 
-    "@jitl/quickjs-singlefile-cjs-release-sync": ["@jitl/quickjs-singlefile-cjs-release-sync@0.31.0", "", { "dependencies": { "@jitl/quickjs-ffi-types": "0.31.0" } }, "sha512-TQ6WUsmdcdlXQKPyyGE/qNAoWY83mvjn+VNru6ug5ILv1D3Y+yaFXnMx+QyNX0onx9xSRGgVNZxXN0V0U+ZKpQ=="],
+    "@jitl/quickjs-singlefile-cjs-release-sync": ["@jitl/quickjs-singlefile-cjs-release-sync@0.32.0", "", { "dependencies": { "@jitl/quickjs-ffi-types": "0.32.0" } }, "sha512-NjUUcw26PoeJHND6nmflAH8nIvAJvxJ2qkSPi95wfiBqPim80GtcdWommroiWb8hh1/7fVettEwodAsGt2Mrsg=="],
 
     "@pixi/colord": ["@pixi/colord@2.9.6", "", {}, "sha512-nezytU2pw587fQstUu1AsJZDVEynjskwOL+kibwcdxsMBFqPsFFNA7xl0ii/gXuDi6M0xj3mfRJj8pBSc2jCfA=="],
 
@@ -48,7 +48,7 @@
 
     "pixi.js": ["pixi.js@8.21.0", "", { "dependencies": { "@pixi/colord": "^2.9.6", "@types/earcut": "^3.0.0", "@webgpu/types": "^0.1.69", "@xmldom/xmldom": "^0.8.15", "earcut": "^3.0.2", "eventemitter3": "^5.0.1", "gifuct-js": "^2.1.2", "ismobilejs": "^1.1.1", "parse-svg-path": "^0.2.0", "tiny-lru": "^11.4.7" } }, "sha512-GJ/KqBtUuWDBPMQu2D0ZHsRCYOcWRjjKrpyC+3jPQI5JTqHMC5dH8l9sSyvoUT4qJidvRzs1fwFWRWceno2Ltw=="],
 
-    "quickjs-emscripten-core": ["quickjs-emscripten-core@0.31.0", "", { "dependencies": { "@jitl/quickjs-ffi-types": "0.31.0" } }, "sha512-oQz8p0SiKDBc1TC7ZBK2fr0GoSHZKA0jZIeXxsnCyCs4y32FStzCW4d1h6E1sE0uHDMbGITbk2zhNaytaoJwXQ=="],
+    "quickjs-emscripten-core": ["quickjs-emscripten-core@0.32.0", "", { "dependencies": { "@jitl/quickjs-ffi-types": "0.32.0" } }, "sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg=="],
 
     "tiny-lru": ["tiny-lru@11.4.7", "", {}, "sha512-w/Te7uMUVeH0CR8vZIjr+XiN41V+30lkDdK+NRIDCUYKKuL9VcmaUEmaPISuwGhLlrTGh5yu18lENtR9axSxYw=="],
 
